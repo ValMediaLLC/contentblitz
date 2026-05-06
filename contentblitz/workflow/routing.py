@@ -89,6 +89,9 @@ def is_research_only_request(state: Mapping[str, Any]) -> bool:
 
 def route_from_query_handler(state: Mapping[str, Any]) -> str:
     """Primary router: clarification -> image-only -> research -> strategist."""
+    explicit_decision = str(state.get("routing_decision", "")).strip()
+    if explicit_decision in AUTHORITATIVE_NODE_SET:
+        return explicit_decision
     if _has_errors(state):
         return ERROR_HANDLER_NODE
     if should_clarify(state):
@@ -98,6 +101,11 @@ def route_from_query_handler(state: Mapping[str, Any]) -> str:
     if should_research(state):
         return RESEARCH_AGENT_NODE
     return CONTENT_STRATEGIST_NODE
+
+
+def route_after_query_handler(state: Mapping[str, Any]) -> str:
+    """Alias used by graph wiring for clarity in transition semantics."""
+    return route_from_query_handler(state)
 
 
 def route_from_research_agent(state: Mapping[str, Any]) -> str:
@@ -189,4 +197,3 @@ def validate_route_decision(decision: RouteDecision) -> bool:
             return False
         return all(item in AUTHORITATIVE_NODE_SET for item in decision)
     return False
-
