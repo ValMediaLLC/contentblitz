@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+coverage/
+htmlcov/
+scripts/validate_phase1.py
+docs/System_Build_Prompts.md

@@ -1,0 +1,5 @@
+langgraph
+openai
+pytest
+pytest-cov
+python-dotenv
