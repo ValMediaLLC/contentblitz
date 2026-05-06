@@ -27,7 +27,9 @@ def _normalize_outputs(value: Any) -> list[str]:
             found.append(key)
     return found
 
-
+# TODO(intent-classification):
+# Refine deterministic output classification so explicit LinkedIn-only
+# requests do not automatically include blog generation unless requested.
 def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw = response.get("output", "")
     if isinstance(raw, dict):
