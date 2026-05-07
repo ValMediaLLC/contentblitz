@@ -96,10 +96,10 @@ def main() -> None:
     print("research_report title:", research_report_title)
     print("research_report body length:", len(research_report_body))
 
-    print("\nblog draft should usually be empty before blog_writer_node:")
+    print("\nblog draft:")
     pprint(blog_draft)
 
-    print("\nlinkedin draft should usually be empty before linkedin_writer_node:")
+    print("\nlinkedin draft:")
     pprint(linkedin_draft)
 
     print_section("CACHE")
