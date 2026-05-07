@@ -115,6 +115,15 @@ def main() -> None:
     print("image_output_count:", len(image_outputs))
     pprint(image_outputs)
 
+    print_section("QUALITY SCORES")
+    pprint(result.get("quality_scores"))
+
+    print_section("BEST DRAFTS")
+    pprint(result.get("best_drafts"))
+
+    print_section("ATTEMPT HISTORY")
+    pprint(result.get("attempt_history"))
+
     print_section("CACHE")
 
     pprint(result.get("cache_metadata"))
