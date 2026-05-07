@@ -167,11 +167,31 @@ def _retry_target(state: Mapping[str, Any]) -> Tuple[str, str]:
     return target_map.get(target, (OUTPUT_ASSEMBLER_NODE, "output_assembler"))
 
 
-def route_from_retry_router(state: MutableMapping[str, Any]) -> str:
+def route_from_retry_router(state: MutableMapping[str, Any]) -> RouteDecision:
     """
     Retry router with ordering rule:
     retry counter increments before route decision.
     """
+    already_incremented = bool(state.get("_retry_counts_incremented", False))
+    if already_incremented:
+        raw_targets = state.get("retry_targets", [])
+        if isinstance(raw_targets, list):
+            routes: List[str] = []
+            for target in raw_targets:
+                target_node, _ = _retry_target({"retry_target": target})
+                if target_node in WRITER_NODE_SET and target_node not in routes:
+                    routes.append(target_node)
+            if len(routes) == 1:
+                return routes[0]
+            if routes:
+                return routes
+            return OUTPUT_ASSEMBLER_NODE
+
+        target_node, _ = _retry_target(state)
+        if target_node in WRITER_NODE_SET:
+            return target_node
+        return OUTPUT_ASSEMBLER_NODE
+
     target_node, agent_key = _retry_target(state)
     if target_node == OUTPUT_ASSEMBLER_NODE:
         return OUTPUT_ASSEMBLER_NODE

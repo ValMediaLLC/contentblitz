@@ -1,80 +1,143 @@
-from contentblitz.agents import blog_writer as blog_writer_module
-from contentblitz.agents import linkedin_writer as linkedin_writer_module
+from copy import deepcopy
+
 from contentblitz.agents import retry_router as retry_router_module
+from contentblitz.config import RETRY_POLICY
 from contentblitz.state import create_initial_state
+from contentblitz.workflow.routing import (
+    BLOG_WRITER_NODE,
+    LINKEDIN_WRITER_NODE,
+    OUTPUT_ASSEMBLER_NODE,
+    route_from_retry_router,
+)
 
 
-def test_retry_router_increments_total_retries_used_this_session() -> None:
+def _merge_updates(state, updates):
+    merged = deepcopy(state)
+    merged.update(updates)
+    return merged
+
+
+def _base_state(**overrides):
     state = create_initial_state(
         retry_requested=True,
+        quality_scores={},
+        retry_feedback={"blog": [], "linkedin": []},
         cost_controls={
             "tokens_used_this_session": 0,
             "search_queries_used_this_session": 0,
             "image_generations_used_this_session": 0,
-            "total_retries_used_this_session": 2,
+            "total_retries_used_this_session": 0,
+            "max_total_retries_per_session": 3,
+            "budget_exceeded": False,
+        },
+    )
+    state.update(overrides)
+    return state
+
+
+def test_blog_retry_increments_blog_writer_before_routing() -> None:
+    state = _base_state(
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.62}}
+    )
+    updates = retry_router_module.retry_router_node(state)
+    routed_state = _merge_updates(state, updates)
+
+    assert updates["retry_counts"]["blog_writer"] == 1
+    assert updates["cost_controls"]["total_retries_used_this_session"] == 1
+    assert route_from_retry_router(routed_state) == BLOG_WRITER_NODE
+
+
+def test_linkedin_retry_increments_linkedin_writer_before_routing() -> None:
+    state = _base_state(
+        quality_scores={
+            "linkedin": {"validation_status": "retry_needed", "composite": 0.61}
+        }
+    )
+    updates = retry_router_module.retry_router_node(state)
+    routed_state = _merge_updates(state, updates)
+
+    assert updates["retry_counts"]["linkedin_writer"] == 1
+    assert updates["cost_controls"]["total_retries_used_this_session"] == 1
+    assert route_from_retry_router(routed_state) == LINKEDIN_WRITER_NODE
+
+
+def test_both_retry_fan_out() -> None:
+    state = _base_state(
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.58},
+            "linkedin": {"validation_status": "retry_needed", "composite": 0.59},
+        }
+    )
+    updates = retry_router_module.retry_router_node(state)
+    routed_state = _merge_updates(state, updates)
+    route = route_from_retry_router(routed_state)
+
+    assert updates["retry_targets"] == ["blog", "linkedin"]
+    assert updates["retry_counts"]["blog_writer"] == 1
+    assert updates["retry_counts"]["linkedin_writer"] == 1
+    assert updates["cost_controls"]["total_retries_used_this_session"] == 2
+    assert route == [BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE]
+
+
+def test_max_retry_prevents_dispatch() -> None:
+    state = _base_state(
+        retry_counts={**create_initial_state()["retry_counts"], "blog_writer": RETRY_POLICY["blog_writer"]},
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+    )
+    updates = retry_router_module.retry_router_node(state)
+    routed_state = _merge_updates(state, updates)
+
+    assert updates["retry_requested"] is False
+    assert updates["retry_target"] == ""
+    assert updates["retry_targets"] == []
+    assert updates["_retry_counts_incremented"] is False
+    assert route_from_retry_router(routed_state) == OUTPUT_ASSEMBLER_NODE
+
+
+def test_session_retry_cap_routes_to_output_assembler() -> None:
+    state = _base_state(
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+        cost_controls={
+            "tokens_used_this_session": 0,
+            "search_queries_used_this_session": 0,
+            "image_generations_used_this_session": 0,
+            "total_retries_used_this_session": 1,
+            "max_total_retries_per_session": 1,
             "budget_exceeded": False,
         },
     )
     updates = retry_router_module.retry_router_node(state)
-    assert updates["cost_controls"]["total_retries_used_this_session"] == 3
+    routed_state = _merge_updates(state, updates)
+
+    assert updates["retry_requested"] is False
+    assert route_from_retry_router(routed_state) == OUTPUT_ASSEMBLER_NODE
 
 
-def test_retry_router_no_retry_request_returns_no_updates() -> None:
-    state = create_initial_state(retry_requested=False)
+def test_retry_feedback_populated() -> None:
+    state = _base_state(
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.63}}
+    )
     updates = retry_router_module.retry_router_node(state)
-    assert updates == {}
+
+    feedback_entries = updates["retry_feedback"]["blog"]
+    assert len(feedback_entries) == 1
+    assert "Retry needed for blog" in feedback_entries[0]
+    assert "composite=0.63" in feedback_entries[0]
 
 
-def test_writers_do_not_increment_total_retries_used_this_session(monkeypatch) -> None:
-    def fake_blog_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
-        return {"output": "Blog draft text."}
-
-    def fake_linkedin_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
-        return {"output": "Too short.\n\n#AI"}
-
-    monkeypatch.setattr(blog_writer_module, "generate_text", fake_blog_generate_text)
-    monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_linkedin_generate_text)
-
-    cost_controls = {
-        "tokens_used_this_session": 0,
-        "search_queries_used_this_session": 0,
-        "image_generations_used_this_session": 0,
-        "total_retries_used_this_session": 0,
-        "budget_exceeded": False,
-    }
-
-    blog_state = create_initial_state(
-        user_query="AI workflows in marketing",
-        content_brief={
-            "blog": {
-                "objective": "Educate teams.",
-                "audience": "marketing leaders",
-                "tone": "practical",
-                "angle": "playbook",
-                "outline": ["Problem", "Approach", "Steps"],
-            },
-            "linkedin": {},
-            "image": {},
-        },
-        cost_controls=cost_controls,
+def test_route_after_retry_router_sees_post_increment_counts() -> None:
+    state = _base_state(
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.61}}
     )
-    blog_updates = blog_writer_module.blog_writer_node(blog_state)
-    assert blog_updates["cost_controls"]["total_retries_used_this_session"] == 0
+    first_updates = retry_router_module.retry_router_node(state)
+    first_state = _merge_updates(state, first_updates)
+    first_route = route_from_retry_router(first_state)
 
-    linkedin_state = create_initial_state(
-        user_query="AI workflow systems for marketing teams",
-        content_brief={
-            "blog": {},
-            "linkedin": {
-                "objective": "Help teams operationalize AI content systems.",
-                "audience": "marketing leaders",
-                "tone": "direct and practical",
-                "angle": "operational playbook",
-                "structure": ["Hook", "Insight", "Framework", "CTA"],
-            },
-            "image": {},
-        },
-        cost_controls=cost_controls,
-    )
-    linkedin_updates = linkedin_writer_module.linkedin_writer_node(linkedin_state)
-    assert linkedin_updates["cost_controls"]["total_retries_used_this_session"] == 0
+    second_updates = retry_router_module.retry_router_node(first_state)
+    second_state = _merge_updates(first_state, second_updates)
+    second_route = route_from_retry_router(second_state)
+
+    assert first_updates["retry_counts"]["blog_writer"] == 1
+    assert first_route == BLOG_WRITER_NODE
+    assert second_updates["retry_requested"] is False
+    assert second_route == OUTPUT_ASSEMBLER_NODE
