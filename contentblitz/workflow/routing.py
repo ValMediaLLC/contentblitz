@@ -50,7 +50,15 @@ def _requested_outputs(state: Mapping[str, Any]) -> set[str]:
 
 def _has_errors(state: Mapping[str, Any]) -> bool:
     errors = state.get("errors", [])
-    return isinstance(errors, list) and len(errors) > 0
+    if not isinstance(errors, list) or not errors:
+        return False
+
+    for error in errors:
+        if not isinstance(error, Mapping):
+            return True
+        if not bool(error.get("recoverable", False)):
+            return True
+    return False
 
 
 def is_authoritative_node(node: str) -> bool:

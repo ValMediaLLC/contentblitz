@@ -104,6 +104,17 @@ def main() -> None:
     print("\ndraft_status:")
     pprint(result.get("draft_status") or {})
 
+    print_section("IMAGE OUTPUTS")
+
+    image_prompts = result.get("image_prompts") or []
+    image_outputs = result.get("image_outputs") or []
+
+    print("image_prompt_count:", len(image_prompts))
+    pprint(image_prompts)
+
+    print("image_output_count:", len(image_outputs))
+    pprint(image_outputs)
+
     print_section("CACHE")
 
     pprint(result.get("cache_metadata"))
