@@ -5,7 +5,7 @@ Purpose:
 - manually execute graph flows
 - validate routing behavior
 - inspect state transitions
-- smoke test research_agent_node behavior
+- smoke test query_handler_node, research_agent_node, and content_strategist_node
 
 Not part of production runtime.
 """
@@ -69,6 +69,38 @@ def main() -> None:
     for index, source in enumerate(sources[:5], start=1):
         print(f"\nSource {index}")
         pprint(source)
+
+    print_section("CONTENT BRIEF")
+
+    content_brief = result.get("content_brief") or {}
+    print("content_brief exists:", bool(content_brief))
+    print("blog brief:")
+    pprint(content_brief.get("blog", {}))
+    print("linkedin brief:")
+    pprint(content_brief.get("linkedin", {}))
+    print("image brief:")
+    pprint(content_brief.get("image", {}))
+
+    print_section("CONTENT DRAFTS")
+
+    content_drafts = result.get("content_drafts") or {}
+    research_report = (content_drafts.get("research_report") or {})
+    blog_draft = content_drafts.get("blog") or {}
+    linkedin_draft = content_drafts.get("linkedin") or {}
+
+    research_report_title = research_report.get("title")
+    research_report_body = (research_report.get("body") or "").strip()
+    research_report_populated = bool(research_report_title or research_report_body)
+
+    print("research_report populated:", research_report_populated)
+    print("research_report title:", research_report_title)
+    print("research_report body length:", len(research_report_body))
+
+    print("\nblog draft should usually be empty before blog_writer_node:")
+    pprint(blog_draft)
+
+    print("\nlinkedin draft should usually be empty before linkedin_writer_node:")
+    pprint(linkedin_draft)
 
     print_section("CACHE")
 

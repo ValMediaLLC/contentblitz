@@ -1,11 +1,244 @@
-"""Content strategist node scaffold."""
+"""Content strategist node implementation."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import json
+from copy import deepcopy
+from typing import Any, Dict, List, Mapping
+
+from contentblitz.tools.text import generate_text
+
+_SUPPORTED_OUTPUTS = {"blog", "linkedin", "image", "research"}
+
+
+def _safe_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _normalize_outputs(outputs: Any) -> List[str]:
+    raw = _safe_list(outputs)
+    normalized = [str(item).strip().lower() for item in raw if str(item).strip()]
+    deduped = list(dict.fromkeys(normalized))
+    return [item for item in deduped if item in _SUPPORTED_OUTPUTS]
+
+
+def _extract_tokens_used(response: Mapping[str, Any]) -> int:
+    usage = response.get("usage", {})
+    if isinstance(usage, Mapping):
+        total_tokens = usage.get("total_tokens")
+        if isinstance(total_tokens, (int, float)):
+            return max(0, int(total_tokens))
+
+    for key in ("tokens_used", "total_tokens", "token_count"):
+        value = response.get(key)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+
+    metadata = response.get("metadata", {})
+    if isinstance(metadata, Mapping):
+        meta_tokens = metadata.get("tokens_used")
+        if isinstance(meta_tokens, (int, float)):
+            return max(0, int(meta_tokens))
+    return 0
+
+
+def _fallback_brief(
+    output_type: str,
+    user_query: str,
+    intent: str,
+    brand_voice: Mapping[str, Any],
+    research_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    tone = str(brand_voice.get("tone", "clear and practical")).strip() or "clear and practical"
+    audience = str(brand_voice.get("audience", "professional audience")).strip() or "professional audience"
+    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
+        research_data.get("summary", "")
+    ).strip()
+    if not summary:
+        summary = f"Research context for '{user_query or 'the topic'}' is limited."
+
+    common = {
+        "objective": f"Support '{intent or 'content creation'}' for: {user_query or 'the requested topic'}",
+        "audience": audience,
+        "tone": tone,
+        "research_anchor": summary,
+    }
+
+    if output_type == "blog":
+        return {
+            **common,
+            "format": "blog",
+            "angle": "educational narrative with practical takeaways",
+            "outline": [
+                "Hook with the core problem",
+                "Explain current trend and implications",
+                "Conclude with actionable guidance",
+            ],
+        }
+    if output_type == "linkedin":
+        return {
+            **common,
+            "format": "linkedin",
+            "angle": "opinionated insight with concise credibility points",
+            "structure": [
+                "Opening insight",
+                "Two supporting points",
+                "Invitation for discussion",
+            ],
+        }
+    return {
+        **common,
+        "format": "image",
+        "angle": "single-scene visual concept",
+        "visual_direction": "clean, high contrast, modern composition",
+        "prompt_focus": f"Visualize '{user_query or 'the topic'}' with strategic clarity.",
+    }
+
+
+def _parse_brief_output(
+    llm_output: Any,
+    output_type: str,
+    user_query: str,
+    intent: str,
+    brand_voice: Mapping[str, Any],
+    research_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    payload: Any = None
+    if isinstance(llm_output, dict):
+        payload = llm_output
+    elif isinstance(llm_output, str) and llm_output.strip():
+        try:
+            payload = json.loads(llm_output)
+        except json.JSONDecodeError:
+            payload = None
+
+    if isinstance(payload, Mapping):
+        brief = dict(payload)
+        brief.setdefault("format", output_type)
+        return brief
+
+    return _fallback_brief(
+        output_type=output_type,
+        user_query=user_query,
+        intent=intent,
+        brand_voice=brand_voice,
+        research_data=research_data,
+    )
+
+
+def _build_brief_prompt(
+    output_type: str,
+    user_query: str,
+    intent: str,
+    brand_voice: Mapping[str, Any],
+    research_data: Mapping[str, Any],
+    sources: List[Mapping[str, Any]],
+) -> str:
+    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
+        research_data.get("summary", "")
+    ).strip()
+    tone = str(brand_voice.get("tone", "clear and practical")).strip() or "clear and practical"
+    audience = str(brand_voice.get("audience", "professional audience")).strip() or "professional audience"
+    return (
+        f"Create a JSON content brief for '{output_type}'.\n"
+        f"User query: {user_query}\n"
+        f"Intent: {intent}\n"
+        f"Brand voice tone: {tone}\n"
+        f"Audience: {audience}\n"
+        f"Research summary: {summary}\n"
+        f"Source count: {len(sources)}\n"
+        "Return JSON only."
+    )
+
+
+def _build_research_report(
+    user_query: str,
+    research_data: Mapping[str, Any],
+    sources: List[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
+        research_data.get("summary", "")
+    ).strip()
+    if not summary:
+        summary = f"Research context for '{user_query or 'the topic'}' is limited."
+    title = f"Research Report: {user_query or 'Requested Topic'}"
+    body = (
+        f"Research report for '{user_query or 'the requested topic'}'. "
+        f"{summary} Sources reviewed: {len(sources)}."
+    )
+    sections = [
+        "Executive Summary",
+        "Key Findings",
+        "Source Notes",
+    ]
+    return {
+        "title": title,
+        "body": body,
+        "sections": sections,
+    }
 
 
 def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Phase 1 scaffold: no strategy generation logic yet."""
-    return state
+    """Generate channel briefs from research context without writing final drafts."""
+    outputs = _normalize_outputs(state.get("requested_outputs", []))
+    user_query = str(state.get("user_query", "")).strip()
+    intent = str(state.get("intent", "")).strip()
+    brand_voice = _safe_dict(state.get("brand_voice", {}))
+    research_data = _safe_dict(state.get("research_data", {}))
+    sources = [item for item in _safe_list(state.get("sources", [])) if isinstance(item, Mapping)]
 
+    content_brief = deepcopy(_safe_dict(state.get("content_brief", {})))
+    content_brief.setdefault("blog", {})
+    content_brief.setdefault("linkedin", {})
+    content_brief.setdefault("image", {})
+
+    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
+    tokens_used = int(cost_controls.get("tokens_used_this_session", 0))
+
+    for output_type in ("blog", "linkedin", "image"):
+        if output_type not in outputs:
+            continue
+        prompt = _build_brief_prompt(
+            output_type=output_type,
+            user_query=user_query,
+            intent=intent,
+            brand_voice=brand_voice,
+            research_data=research_data,
+            sources=sources,
+        )
+        llm_response = _safe_dict(generate_text(prompt=prompt, agent_key="content_strategist"))
+        tokens_used += _extract_tokens_used(llm_response)
+        content_brief[output_type] = _parse_brief_output(
+            llm_output=llm_response.get("output", ""),
+            output_type=output_type,
+            user_query=user_query,
+            intent=intent,
+            brand_voice=brand_voice,
+            research_data=research_data,
+        )
+
+    updates: Dict[str, Any] = {
+        "content_brief": content_brief,
+        "cost_controls": {
+            **cost_controls,
+            "tokens_used_this_session": tokens_used,
+        },
+        "workflow_status": "strategy_complete",
+        "final_response": None,
+    }
+
+    if "research" in outputs and any(item in outputs for item in ("blog", "linkedin", "image")):
+        content_drafts = deepcopy(_safe_dict(state.get("content_drafts", {})))
+        content_drafts.setdefault("research_report", {"body": ""})
+        content_drafts["research_report"] = _build_research_report(
+            user_query=user_query,
+            research_data=research_data,
+            sources=sources,
+        )
+        updates["content_drafts"] = content_drafts
+
+    return updates
