@@ -101,6 +101,8 @@ def main() -> None:
 
     print("\nlinkedin draft:")
     pprint(linkedin_draft)
+    print("\ndraft_status:")
+    pprint(result.get("draft_status") or {})
 
     print_section("CACHE")
 

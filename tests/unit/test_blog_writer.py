@@ -112,6 +112,7 @@ def test_token_counter_increments(monkeypatch) -> None:
     )
     updates = blog_writer_module.blog_writer_node(state)
     assert updates["cost_controls"]["tokens_used_this_session"] == 43
+    assert updates["cost_controls"]["total_retries_used_this_session"] == 0
 
 
 def test_near_token_cap_uses_gpt4o_mini(monkeypatch) -> None:
@@ -166,3 +167,11 @@ def test_attempt_history_not_written_and_quality_not_scored(monkeypatch) -> None
     assert "attempt_history" not in updates
     assert "quality_scores" not in updates
 
+
+def test_blog_writer_sets_draft_status_complete(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {"output": "Main draft."}
+
+    monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
+    updates = blog_writer_module.blog_writer_node(_base_state())
+    assert updates["draft_status"]["blog"] == "complete"

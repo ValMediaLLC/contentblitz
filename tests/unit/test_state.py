@@ -19,6 +19,7 @@ def test_state_contains_all_top_level_fields_from_spec() -> None:
         "sources",
         "content_brief",
         "content_drafts",
+        "draft_status",
         "best_drafts",
         "attempt_history",
         "retry_feedback",
@@ -45,6 +46,7 @@ def test_state_nested_shapes_match_spec_defaults() -> None:
     assert state["content_drafts"]["blog"] == {"body": "", "version": 0}
     assert state["content_drafts"]["linkedin"] == {"body": "", "version": 0}
     assert state["content_drafts"]["research_report"] == {"body": ""}
+    assert state["draft_status"] == {}
     assert state["best_drafts"] == {"blog": None, "linkedin": None}
     assert set(state["attempt_history"].keys()) == {"blog", "linkedin", "image"}
     assert set(state["retry_feedback"].keys()) == {"blog", "linkedin"}

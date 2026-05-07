@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, TypedDict
+from typing import Annotated, Any, Callable, Dict, List, Mapping, TypedDict
 
 from langgraph.graph import END as LANGGRAPH_END
 from langgraph.graph import START as LANGGRAPH_START
@@ -49,6 +49,38 @@ END = "END"
 WORKFLOW_NODES: List[str] = list(AUTHORITATIVE_NODES)
 
 
+def merge_content_drafts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer for concurrent content_drafts updates from writer fan-out."""
+    merged = dict(left or {})
+    for key, value in (right or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            nested = dict(merged[key])
+            nested.update(value)
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
+
+
+def merge_cost_controls(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Reducer for concurrent cost_controls updates from writer fan-out.
+
+    This preserves all keys and applies deterministic last-update behavior per key,
+    while preventing InvalidUpdateError on parallel writes.
+    """
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
+def merge_draft_status(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer for concurrent draft_status updates from writer fan-out."""
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class WorkflowState(TypedDict, total=False):
     session_id: str
     user_id: str
@@ -63,7 +95,8 @@ class WorkflowState(TypedDict, total=False):
     research_data: dict[str, Any]
     sources: list[dict[str, Any]]
     content_brief: dict[str, dict[str, Any]]
-    content_drafts: dict[str, dict[str, Any]]
+    content_drafts: Annotated[dict[str, dict[str, Any]], merge_content_drafts]
+    draft_status: Annotated[dict[str, str], merge_draft_status]
     best_drafts: dict[str, Any]
     attempt_history: dict[str, list[dict[str, Any]]]
     retry_feedback: dict[str, list[str]]
@@ -78,7 +111,7 @@ class WorkflowState(TypedDict, total=False):
     export_requested: bool
     export_metadata: dict[str, Any]
     cache_metadata: dict[str, Any]
-    cost_controls: dict[str, Any]
+    cost_controls: Annotated[dict[str, Any], merge_cost_controls]
     retry_requested: bool
     retry_target: str
 

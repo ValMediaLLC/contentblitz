@@ -4,13 +4,33 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from contentblitz.config import (
     RETRY_POLICY,
     build_cache_metadata_defaults,
     build_cost_controls_defaults,
 )
+
+
+def merge_content_drafts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer-compatible merge for parallel content_drafts updates."""
+    merged = dict(left or {})
+    for key, value in (right or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            nested = dict(merged[key])
+            nested.update(value)
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
+
+
+def merge_draft_status(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer-compatible merge for parallel draft status updates."""
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
 
 
 @dataclass
@@ -40,12 +60,15 @@ class ContentBlitzState:
         }
     )
 
-    content_drafts: Dict[str, Dict[str, Any]] = field(
+    content_drafts: Annotated[Dict[str, Dict[str, Any]], merge_content_drafts] = field(
         default_factory=lambda: {
             "blog": {"body": "", "version": 0},
             "linkedin": {"body": "", "version": 0},
             "research_report": {"body": ""},
         }
+    )
+    draft_status: Annotated[Dict[str, str], merge_draft_status] = field(
+        default_factory=dict
     )
 
     best_drafts: Dict[str, Optional[Dict[str, Any]]] = field(
@@ -110,4 +133,3 @@ def create_initial_state(**overrides: Any) -> Dict[str, Any]:
     if overrides:
         state.update(deepcopy(overrides))
     return state
-

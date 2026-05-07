@@ -98,3 +98,30 @@ def test_error_path_executes_when_errors_present() -> None:
     compiled = build_langgraph()
     executed = _executed_nodes(compiled, state)
     assert executed == ["query_handler_node", "error_handler_node"]
+
+
+def test_parallel_blog_linkedin_drafts_have_clear_status_and_zero_retries() -> None:
+    state = create_initial_state(
+        user_query="",
+        intent="content_creation",
+        requested_outputs=["blog", "linkedin"],
+        research_required=True,
+        retry_requested=False,
+        cost_controls={
+            "tokens_used_this_session": 0,
+            "search_queries_used_this_session": 0,
+            "image_generations_used_this_session": 0,
+            "total_retries_used_this_session": 0,
+            "budget_exceeded": False,
+        },
+    )
+
+    compiled = build_langgraph()
+    result = compiled.invoke(state)
+
+    assert result["content_drafts"]["blog"]["version"] >= 1
+    assert result["content_drafts"]["linkedin"]["version"] >= 1
+    assert result["draft_status"]["blog"] == "complete"
+    assert result["draft_status"]["linkedin"] == "complete"
+    assert result["cost_controls"]["total_retries_used_this_session"] == 0
+    assert result.get("workflow_status") != "blog_draft_complete"

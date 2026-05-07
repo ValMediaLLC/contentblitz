@@ -129,7 +129,7 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     blog_brief = _safe_dict(content_brief.get("blog", {}))
     user_query = str(state.get("user_query", "")).strip()
 
-    content_drafts = deepcopy(_safe_dict(state.get("content_drafts", {})))
+    content_drafts = _safe_dict(state.get("content_drafts", {}))
     existing_blog = _safe_dict(content_drafts.get("blog", {}))
     current_version = int(existing_blog.get("version", 0))
     next_version = current_version + 1
@@ -180,9 +180,9 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     tokens_used_delta = _extract_tokens_used(llm_response)
     tokens_used_total = int(cost_controls.get("tokens_used_this_session", 0)) + tokens_used_delta
+    draft_status = _safe_dict(state.get("draft_status", {}))
 
-    content_drafts.setdefault("blog", {})
-    content_drafts["blog"] = {
+    blog_update = {
         **existing_blog,
         "body": draft_body,
         "version": next_version,
@@ -192,12 +192,13 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     return {
-        "content_drafts": content_drafts,
+        "content_drafts": {"blog": blog_update},
+        "draft_status": {
+            **draft_status,
+            "blog": "complete",
+        },
         "cost_controls": {
             **cost_controls,
             "tokens_used_this_session": tokens_used_total,
         },
-        "workflow_status": "blog_draft_complete",
-        "final_response": None,
     }
-

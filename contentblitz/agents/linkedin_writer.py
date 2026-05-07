@@ -1,11 +1,432 @@
-"""LinkedIn writer node scaffold."""
+"""LinkedIn writer node implementation."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import math
+import re
+from copy import deepcopy
+from typing import Any, Dict, List, Mapping
+
+from contentblitz.config import RETRY_POLICY
+from contentblitz.tools.text import generate_text
+
+_DEFAULT_TOKEN_BUDGET = 10000
+_NEAR_CAP_RATIO = 0.90
+_MIN_LINKEDIN_CHARS = 1300
+_MAX_LINKEDIN_CHARS = 1600
+
+_CTA_HINTS = (
+    "comment",
+    "share",
+    "reply",
+    "follow",
+    "dm",
+    "tell me",
+    "let me know",
+    "what do you think",
+    "drop",
+)
+
+
+def _safe_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _extract_tokens_used(response: Mapping[str, Any]) -> int:
+    usage = response.get("usage", {})
+    if isinstance(usage, Mapping):
+        total_tokens = usage.get("total_tokens")
+        if isinstance(total_tokens, (int, float)):
+            return max(0, int(total_tokens))
+
+    for key in ("tokens_used", "total_tokens", "token_count"):
+        value = response.get(key)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+
+    metadata = response.get("metadata", {})
+    if isinstance(metadata, Mapping):
+        meta_tokens = metadata.get("tokens_used")
+        if isinstance(meta_tokens, (int, float)):
+            return max(0, int(meta_tokens))
+    return 0
+
+
+def _select_model(cost_controls: Mapping[str, Any]) -> str:
+    used = int(cost_controls.get("tokens_used_this_session", 0))
+    budget = int(cost_controls.get("token_budget_per_session", _DEFAULT_TOKEN_BUDGET))
+    if budget > 0 and used >= int(math.floor(budget * _NEAR_CAP_RATIO)):
+        return "gpt-4o-mini"
+    return "gpt-4o"
+
+
+def _build_prompt(
+    user_query: str,
+    linkedin_brief: Mapping[str, Any],
+    retry_feedback: List[str],
+    previous_char_count: int = 0,
+) -> str:
+    objective = str(linkedin_brief.get("objective", "")).strip() or "Create a strong LinkedIn post."
+    audience = str(linkedin_brief.get("audience", "")).strip() or "professional audience"
+    tone = str(linkedin_brief.get("tone", "")).strip() or "clear, direct, and practical"
+    angle = str(linkedin_brief.get("angle", "")).strip() or "insight-driven and actionable"
+    structure = linkedin_brief.get("structure", [])
+    structure_lines = []
+    if isinstance(structure, list):
+        structure_lines = [f"- {str(item).strip()}" for item in structure if str(item).strip()]
+    feedback_lines = [f"- {item}" for item in retry_feedback if str(item).strip()]
+
+    prompt = (
+        "Write a LinkedIn post in plain text.\n"
+        f"Topic: {user_query or 'Requested topic'}\n"
+        f"Objective: {objective}\n"
+        f"Audience: {audience}\n"
+        f"Tone: {tone}\n"
+        f"Angle: {angle}\n"
+        "Constraints:\n"
+        "- Include a strong opening hook.\n"
+        "- Include one clear CTA near the end.\n"
+        "- Include 3-6 relevant hashtags.\n"
+        f"- Keep total length between {_MIN_LINKEDIN_CHARS}-{_MAX_LINKEDIN_CHARS} characters when possible.\n"
+    )
+    if previous_char_count > 0:
+        prompt += (
+            f"Previous draft length was {previous_char_count} characters. "
+            "Expand with concrete detail and examples while staying concise.\n"
+        )
+    if structure_lines:
+        prompt += "Suggested structure:\n" + "\n".join(structure_lines) + "\n"
+    if feedback_lines:
+        prompt += "Retry feedback to address:\n" + "\n".join(feedback_lines) + "\n"
+    prompt += "Return only the post text."
+    return prompt
+
+
+def _fallback_hashtags(user_query: str) -> List[str]:
+    words = re.findall(r"[A-Za-z0-9]+", user_query or "")
+    tags: List[str] = []
+    for word in words:
+        cleaned = word.strip()
+        if len(cleaned) < 3:
+            continue
+        tag = f"#{cleaned[0].upper()}{cleaned[1:]}"
+        if tag.lower() not in {item.lower() for item in tags}:
+            tags.append(tag)
+        if len(tags) >= 6:
+            break
+    if len(tags) < 3:
+        defaults = ["#MarketingStrategy", "#ContentOps", "#AIWorkflows"]
+        for tag in defaults:
+            if tag.lower() not in {item.lower() for item in tags}:
+                tags.append(tag)
+            if len(tags) >= 3:
+                break
+    return tags
+
+
+def _extract_hashtags(text: str, user_query: str) -> List[str]:
+    found = re.findall(r"#([A-Za-z0-9_]+)", text or "")
+    tags: List[str] = []
+    seen = set()
+    for raw in found:
+        tag = f"#{raw}"
+        key = tag.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+    if tags:
+        return tags
+    return _fallback_hashtags(user_query)
+
+
+def _extract_hook(text: str, user_query: str) -> str:
+    for line in (text or "").splitlines():
+        clean = line.strip()
+        if not clean:
+            continue
+        if clean.startswith("#"):
+            continue
+        return clean
+
+    fallback_query = user_query.strip() or "AI-driven content operations"
+    return f"{fallback_query} is changing faster than most teams can execute."
+
+
+def _extract_cta(text: str) -> str:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        lower = line.lower()
+        if any(hint in lower for hint in _CTA_HINTS) or line.endswith("?"):
+            return line
+    return "What are you seeing in your own team right now? Share in the comments."
+
+
+def _truncate_clean(text: str, limit: int) -> str:
+    """Truncate at sentence or whitespace boundary, avoiding mid-word cuts."""
+    if limit <= 0:
+        return ""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+
+    candidate = text[:limit]
+
+    sentence_matches = list(re.finditer(r"[.!?](?=\s|$)", candidate))
+    if sentence_matches:
+        return candidate[: sentence_matches[-1].end()].rstrip()
+
+    whitespace_matches = list(re.finditer(r"\s+", candidate))
+    if whitespace_matches:
+        return candidate[: whitespace_matches[-1].start()].rstrip()
+
+    return candidate.rstrip()
+
+
+def _truncate_with_tail(text: str, tail: str, max_chars: int) -> str:
+    """
+    Truncate text cleanly while preserving CTA/hashtags tail whenever possible.
+    """
+    if len(text) <= max_chars:
+        return text
+
+    tail = (tail or "").strip()
+    if not tail:
+        return _truncate_clean(text, max_chars)
+
+    if len(tail) >= max_chars:
+        return _truncate_clean(tail, max_chars)
+
+    separator = "\n\n"
+    head_budget = max_chars - len(tail) - len(separator)
+    if head_budget <= 0:
+        return _truncate_clean(tail, max_chars)
+
+    head = _truncate_clean(text, head_budget)
+    if not head:
+        return _truncate_clean(tail, max_chars)
+
+    combined = f"{head}{separator}{tail}".strip()
+    if len(combined) <= max_chars:
+        return combined
+
+    adjusted_head_budget = max(0, head_budget - (len(combined) - max_chars))
+    head = _truncate_clean(text, adjusted_head_budget)
+    combined = f"{head}{separator}{tail}".strip() if head else tail
+    if len(combined) <= max_chars:
+        return combined
+
+    return _truncate_clean(combined, max_chars)
+
+
+def _fallback_post(
+    user_query: str,
+    linkedin_brief: Mapping[str, Any],
+    hook: str,
+    cta: str,
+    hashtags: List[str],
+) -> str:
+    objective = str(linkedin_brief.get("objective", "Deliver practical insight")).strip()
+    audience = str(linkedin_brief.get("audience", "operators and leaders")).strip()
+    angle = str(linkedin_brief.get("angle", "execution-focused perspective")).strip()
+    topic = user_query.strip() or "AI content execution"
+
+    return (
+        f"{hook}\n\n"
+        f"Most teams are still treating {topic} as a one-off experiment.\n\n"
+        f"Here is a better pattern: define a narrow outcome, assign clear ownership, and measure one weekly signal that proves progress.\n\n"
+        f"When your objective is {objective.lower()}, speed matters less than consistency. "
+        f"Audience fit ({audience}) and message clarity should drive every draft.\n\n"
+        f"My view: strong systems outperform isolated prompts. Build a repeatable loop, keep it simple, and improve from live feedback.\n\n"
+        f"This angle works best when you optimize for {angle.lower()} and keep roles explicit.\n\n"
+        f"{cta}\n"
+        f"{' '.join(hashtags)}"
+    ).strip()
+
+
+def _compose_final_post(
+    body: str,
+    hook: str,
+    cta: str,
+    hashtags: List[str],
+    user_query: str,
+    linkedin_brief: Mapping[str, Any],
+) -> str:
+    text = body.strip()
+    if not text:
+        text = _fallback_post(
+            user_query=user_query,
+            linkedin_brief=linkedin_brief,
+            hook=hook,
+            cta=cta,
+            hashtags=hashtags,
+        )
+
+    if hook not in text[:240]:
+        text = f"{hook}\n\n{text}".strip()
+
+    if cta not in text:
+        text = f"{text}\n\n{cta}".strip()
+
+    hashtags_line = " ".join(hashtags)
+    if hashtags_line and hashtags_line not in text:
+        text = f"{text}\n{hashtags_line}".strip()
+
+    # Keep required CTA + hashtags when trimming (when feasible).
+    tail = cta
+    if hashtags_line:
+        tail = f"{cta}\n{hashtags_line}"
+    if len(text) > _MAX_LINKEDIN_CHARS:
+        text = _truncate_with_tail(text=text, tail=tail, max_chars=_MAX_LINKEDIN_CHARS)
+
+    # Deterministically expand if still too short.
+    if len(text) < _MIN_LINKEDIN_CHARS:
+        topic = user_query.strip() or "AI workflow execution"
+        objective = str(linkedin_brief.get("objective", "operational consistency")).strip()
+        expansion = (
+            f" Practical detail: align your team around one weekly priority tied to {topic}. "
+            f"Then turn that into a repeatable operating step, and evaluate outcomes against {objective.lower()}."
+        )
+        while len(text) < _MIN_LINKEDIN_CHARS:
+            text = f"{text}\n\n{expansion}".strip()
+
+    if len(text) > _MAX_LINKEDIN_CHARS:
+        text = _truncate_clean(text, _MAX_LINKEDIN_CHARS)
+
+    return text
+
+
+def _retry_allowed(state: Mapping[str, Any]) -> bool:
+    retry_counts = _safe_dict(state.get("retry_counts", {}))
+    used = int(retry_counts.get("linkedin_writer", 0))
+    limit = int(RETRY_POLICY.get("linkedin_writer", 0))
+    return used < limit
+
+
+def _increment_retry_counts(state: Mapping[str, Any]) -> Dict[str, int]:
+    retry_counts = deepcopy(_safe_dict(state.get("retry_counts", {})))
+    retry_counts["linkedin_writer"] = int(retry_counts.get("linkedin_writer", 0)) + 1
+    return retry_counts
 
 
 def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Phase 1 scaffold: no draft generation logic yet."""
-    return state
+    """Generate a LinkedIn draft from the strategist brief."""
+    user_query = str(state.get("user_query", "")).strip()
+    content_brief = _safe_dict(state.get("content_brief", {}))
+    linkedin_brief = _safe_dict(content_brief.get("linkedin", {}))
 
+    content_drafts = _safe_dict(state.get("content_drafts", {}))
+    existing_draft = _safe_dict(content_drafts.get("linkedin", {}))
+    current_version = int(existing_draft.get("version", 0))
+    next_version = current_version + 1
+
+    retry_feedback_state = _safe_dict(state.get("retry_feedback", {}))
+    raw_feedback = retry_feedback_state.get("linkedin", [])
+    retry_feedback = [str(item).strip() for item in _safe_list(raw_feedback) if str(item).strip()]
+    draft_status = _safe_dict(state.get("draft_status", {}))
+
+    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
+    tokens_used_total = int(cost_controls.get("tokens_used_this_session", 0))
+    errors = deepcopy(_safe_list(state.get("errors", [])))
+
+    model = _select_model(cost_controls)
+    prompt = _build_prompt(
+        user_query=user_query,
+        linkedin_brief=linkedin_brief,
+        retry_feedback=retry_feedback,
+    )
+    first_response = _safe_dict(
+        generate_text(
+            prompt=prompt,
+            agent_key="linkedin_writer",
+            model=model,
+        )
+    )
+    tokens_used_total += _extract_tokens_used(first_response)
+    body = str(first_response.get("output", "")).strip()
+
+    retry_counts_update: Dict[str, int] | None = None
+    if len(body) < _MIN_LINKEDIN_CHARS and _retry_allowed(state):
+        retry_counts_update = _increment_retry_counts(state)
+        retry_model = _select_model(
+            {
+                **cost_controls,
+                "tokens_used_this_session": tokens_used_total,
+            }
+        )
+        retry_prompt = _build_prompt(
+            user_query=user_query,
+            linkedin_brief=linkedin_brief,
+            retry_feedback=retry_feedback,
+            previous_char_count=len(body),
+        )
+        retry_response = _safe_dict(
+            generate_text(
+                prompt=retry_prompt,
+                agent_key="linkedin_writer",
+                model=retry_model,
+            )
+        )
+        tokens_used_total += _extract_tokens_used(retry_response)
+        retry_body = str(retry_response.get("output", "")).strip()
+        if len(retry_body) >= len(body):
+            body = retry_body
+        model = retry_model
+    elif len(body) < _MIN_LINKEDIN_CHARS and not _retry_allowed(state):
+        errors.append(
+            {
+                "node": "linkedin_writer_node",
+                "type": "retry_exhausted",
+                "message": "LinkedIn draft below preferred length and retry budget is exhausted.",
+            }
+        )
+
+    hook = _extract_hook(body, user_query)
+    cta = _extract_cta(body)
+    hashtags = _extract_hashtags(body, user_query)
+
+    final_body = _compose_final_post(
+        body=body,
+        hook=hook,
+        cta=cta,
+        hashtags=hashtags,
+        user_query=user_query,
+        linkedin_brief=linkedin_brief,
+    )
+
+    # Re-extract after composition to keep metadata aligned with final body.
+    hook = _extract_hook(final_body, user_query)
+    cta = _extract_cta(final_body)
+    hashtags = _extract_hashtags(final_body, user_query)
+
+    linkedin_update = {
+        **existing_draft,
+        "body": final_body,
+        "version": next_version,
+        "character_count": len(final_body),
+        "hook": hook,
+        "cta": cta,
+        "hashtags": hashtags,
+        "model_used": model,
+    }
+
+    updates: Dict[str, Any] = {
+        "content_drafts": {"linkedin": linkedin_update},
+        "draft_status": {
+            **draft_status,
+            "linkedin": "complete",
+        },
+        "cost_controls": {
+            **cost_controls,
+            "tokens_used_this_session": tokens_used_total,
+        },
+    }
+    if retry_counts_update is not None:
+        updates["retry_counts"] = retry_counts_update
+    if errors:
+        updates["errors"] = errors
+    return updates
