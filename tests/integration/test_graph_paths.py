@@ -70,11 +70,18 @@ def test_clarification_routes_to_end() -> None:
     assert executed == ["query_handler_node", CLARIFICATION_NODE]
 
 
-def test_retry_router_routes_only_to_writers_or_output_assembler() -> None:
+def test_retry_router_routes_only_to_writers_or_output_assembler(monkeypatch) -> None:
     allowed = {BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, OUTPUT_ASSEMBLER_NODE}
     assert set(GRAPH_STRUCTURE[RETRY_ROUTER_NODE]).issubset(allowed)
 
-    state = create_initial_state(requested_outputs=["blog"], retry_requested=True, retry_target="blog")
+    from contentblitz.agents import quality_validator as quality_validator_module
+
+    def fake_validate_content(content_type, draft_body, context=None):
+        return {"composite": 0.60}
+
+    monkeypatch.setattr(quality_validator_module, "validate_content", fake_validate_content)
+
+    state = create_initial_state(requested_outputs=["blog"])
     compiled = build_langgraph()
     executed = _executed_nodes(compiled, state)
     assert RETRY_ROUTER_NODE in executed

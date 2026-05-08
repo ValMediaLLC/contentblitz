@@ -148,3 +148,15 @@ def test_node_does_not_route_directly(monkeypatch) -> None:
 
     assert "routing_decision" not in updates
     assert "next_node" not in updates
+
+
+def test_incoming_retry_flag_does_not_force_retry_when_score_passes(monkeypatch) -> None:
+    def fake_validate_content(content_type, draft_body, context=None):
+        return {"composite": 0.80}
+
+    monkeypatch.setattr(quality_validator_module, "validate_content", fake_validate_content)
+    state = _base_state(retry_requested=True, retry_target="blog")
+    updates = quality_validator_module.quality_validator_node(state)
+    assert updates["quality_scores"]["blog"]["validation_status"] == "passed"
+    assert updates["retry_requested"] is False
+    assert updates["retry_target"] == ""

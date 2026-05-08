@@ -141,3 +141,13 @@ def test_route_after_retry_router_sees_post_increment_counts() -> None:
     assert first_route == BLOG_WRITER_NODE
     assert second_updates["retry_requested"] is False
     assert second_route == OUTPUT_ASSEMBLER_NODE
+
+
+def test_explicit_retry_target_without_retry_needed_score_does_not_increment() -> None:
+    state = _base_state(
+        retry_requested=True,
+        retry_target="blog",
+        quality_scores={},
+    )
+    updates = retry_router_module.retry_router_node(state)
+    assert updates == {}

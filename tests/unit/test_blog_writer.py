@@ -28,6 +28,7 @@ def test_version_starts_at_1(monkeypatch) -> None:
     monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
     updates = blog_writer_module.blog_writer_node(_base_state())
     assert updates["content_drafts"]["blog"]["version"] == 1
+    assert "retry_counts" not in updates
 
 
 def test_retry_increments_version(monkeypatch) -> None:
@@ -44,6 +45,15 @@ def test_retry_increments_version(monkeypatch) -> None:
     )
     updates = blog_writer_module.blog_writer_node(state)
     assert updates["content_drafts"]["blog"]["version"] == 2
+    assert "retry_counts" not in updates
+
+
+def test_normal_blog_generation_does_not_increment_retry_counts() -> None:
+    state = _base_state(
+        retry_counts={**create_initial_state()["retry_counts"], "blog_writer": 0}
+    )
+    updates = blog_writer_module.blog_writer_node(state)
+    assert "retry_counts" not in updates
 
 
 def test_citations_included_when_available(monkeypatch) -> None:
@@ -152,10 +162,11 @@ def test_retry_feedback_included_in_prompt(monkeypatch) -> None:
             "linkedin": [],
         }
     )
-    blog_writer_module.blog_writer_node(state)
+    updates = blog_writer_module.blog_writer_node(state)
     assert "Retry feedback to address" in seen["prompt"]
     assert "Improve SEO keyword density." in seen["prompt"]
     assert "Use a stronger CTA." in seen["prompt"]
+    assert "retry_counts" not in updates
 
 
 def test_attempt_history_not_written_and_quality_not_scored(monkeypatch) -> None:

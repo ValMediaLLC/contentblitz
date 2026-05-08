@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, MutableMapping, Tuple, Union
 
-from contentblitz.core.router import route_with_retry
-
 QUERY_HANDLER_NODE = "query_handler_node"
 CLARIFICATION_NODE = "clarification_node"
 RESEARCH_AGENT_NODE = "research_agent_node"
@@ -192,18 +190,12 @@ def route_from_retry_router(state: MutableMapping[str, Any]) -> RouteDecision:
             return target_node
         return OUTPUT_ASSEMBLER_NODE
 
-    target_node, agent_key = _retry_target(state)
-    if target_node == OUTPUT_ASSEMBLER_NODE:
+    if not bool(state.get("retry_requested", False)):
         return OUTPUT_ASSEMBLER_NODE
 
-    route = route_with_retry(
-        state=state,
-        agent_key=agent_key,
-        retry_node=target_node,
-        exhausted_node=OUTPUT_ASSEMBLER_NODE,
-    )
-    if route in WRITER_NODE_SET or route == OUTPUT_ASSEMBLER_NODE:
-        return route
+    target_node, _ = _retry_target(state)
+    if target_node in WRITER_NODE_SET:
+        return target_node
     return OUTPUT_ASSEMBLER_NODE
 
 

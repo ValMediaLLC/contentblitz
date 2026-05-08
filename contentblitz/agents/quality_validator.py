@@ -166,19 +166,7 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if validation_status == "retry_needed":
             retry_candidates.append(content_type)
 
-    incoming_retry_requested = bool(state.get("retry_requested", False))
-    incoming_retry_target = str(state.get("retry_target", "")).strip().lower()
-
-    if incoming_retry_requested and incoming_retry_target in {"blog", "linkedin"}:
-        target = incoming_retry_target
-        target_score = _safe_dict(quality_scores.get(target, {}))
-        if target_score:
-            target_score["validation_status"] = "retry_needed"
-            target_score["passed"] = False
-            quality_scores[target] = target_score
-        retry_requested = True
-        retry_target = target
-    elif retry_candidates:
+    if retry_candidates:
         retry_requested = True
         retry_target = retry_candidates[0]
     else:

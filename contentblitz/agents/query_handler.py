@@ -223,10 +223,6 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             preclassified["clarification_message"] = _DEFAULT_CLARIFICATION_MESSAGE
         if not preclassified["clarification_needed"]:
             preclassified["clarification_message"] = None
-        if "retry_requested" in state:
-            preclassified["retry_requested"] = bool(state.get("retry_requested", False))
-        if "retry_target" in state:
-            preclassified["retry_target"] = str(state.get("retry_target", "")).strip().lower()
         preclassified["routing_decision"] = _determine_routing_decision(preclassified)
         return _with_lifecycle_fields(preclassified)
 
@@ -241,9 +237,5 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if classified is None:
         classified = _deterministic_fallback(query)
 
-    if "retry_requested" in state:
-        classified["retry_requested"] = bool(state.get("retry_requested", False))
-    if "retry_target" in state:
-        classified["retry_target"] = str(state.get("retry_target", "")).strip().lower()
     classified["routing_decision"] = _determine_routing_decision(classified)
     return _with_lifecycle_fields(classified)

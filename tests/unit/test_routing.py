@@ -103,15 +103,23 @@ def test_quality_validator_routes_retry_or_output_or_error() -> None:
 
 
 def test_retry_router_respects_retry_ordering_rule() -> None:
-    state = create_initial_state(retry_target="blog")
+    state = create_initial_state(retry_requested=True, retry_target="blog")
     first = route_from_retry_router(state)
     second = route_from_retry_router(state)
 
     assert first == BLOG_WRITER_NODE
-    assert second == OUTPUT_ASSEMBLER_NODE
-    assert state["retry_counts"]["blog_writer"] == 2
+    assert second == BLOG_WRITER_NODE
+    assert state["retry_counts"]["blog_writer"] == 0
     _assert_route_valid(first)
     _assert_route_valid(second)
+
+
+def test_retry_router_route_function_does_not_increment_counters() -> None:
+    state = create_initial_state(retry_requested=True, retry_target="linkedin")
+    before = dict(state["retry_counts"])
+    route = route_from_retry_router(state)
+    assert route == LINKEDIN_WRITER_NODE
+    assert state["retry_counts"] == before
 
 
 def test_retry_router_routes_only_writer_nodes_or_output_assembler() -> None:

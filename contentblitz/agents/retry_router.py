@@ -36,11 +36,6 @@ def _determine_retry_types(state: Dict[str, Any]) -> List[str]:
         score = _safe_dict(quality_scores.get(content_type, {}))
         if score and _needs_retry(score):
             candidates.append(content_type)
-
-    # Preserve explicit target as deterministic fallback when scores are missing/incomplete.
-    explicit_target = str(state.get("retry_target", "")).strip().lower()
-    if explicit_target in _AGENT_KEY_BY_TYPE and explicit_target not in candidates:
-        candidates.append(explicit_target)
     return candidates
 
 

@@ -52,6 +52,7 @@ def test_version_starts_at_1(monkeypatch) -> None:
     monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
     updates = linkedin_writer_module.linkedin_writer_node(_base_state())
     assert updates["content_drafts"]["linkedin"]["version"] == 1
+    assert "retry_counts" not in updates
 
 
 def test_retry_increments_version(monkeypatch) -> None:
@@ -68,6 +69,19 @@ def test_retry_increments_version(monkeypatch) -> None:
     )
     updates = linkedin_writer_module.linkedin_writer_node(state)
     assert updates["content_drafts"]["linkedin"]["version"] == 2
+    assert "retry_counts" not in updates
+
+
+def test_normal_linkedin_generation_does_not_increment_retry_counts(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {"output": _long_linkedin_post()}
+
+    monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
+    state = _base_state(
+        retry_counts={**create_initial_state()["retry_counts"], "linkedin_writer": 0}
+    )
+    updates = linkedin_writer_module.linkedin_writer_node(state)
+    assert "retry_counts" not in updates
 
 
 def test_hook_extracted(monkeypatch) -> None:
@@ -194,11 +208,12 @@ def test_retry_feedback_is_included_in_prompt(monkeypatch) -> None:
             "linkedin": ["Strengthen opening contrast.", "Use a sharper CTA."],
         }
     )
-    linkedin_writer_module.linkedin_writer_node(state)
+    updates = linkedin_writer_module.linkedin_writer_node(state)
 
     assert "Retry feedback to address" in seen["prompt"]
     assert "Strengthen opening contrast." in seen["prompt"]
     assert "Use a sharper CTA." in seen["prompt"]
+    assert "retry_counts" not in updates
 
 
 def test_token_counter_increments(monkeypatch) -> None:

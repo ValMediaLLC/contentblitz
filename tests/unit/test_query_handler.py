@@ -124,3 +124,24 @@ def test_node_returns_only_state_updates(monkeypatch) -> None:
     assert "user_id" not in updates
     assert "conversation_history" not in updates
 
+
+def test_query_handler_does_not_propagate_stale_retry_flags(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "intent": "content_creation",
+            "requested_outputs": ["blog"],
+            "research_required": True,
+            "clarification_needed": False,
+            "clarification_message": None,
+            "export_requested": False,
+        }
+    )
+    _mock_llm(monkeypatch, payload)
+    state = create_initial_state(
+        user_query="Write a blog post about AI workflows",
+        retry_requested=True,
+        retry_target="blog",
+    )
+    updates = query_handler_module.query_handler_node(state)
+    assert "retry_requested" not in updates
+    assert "retry_target" not in updates
