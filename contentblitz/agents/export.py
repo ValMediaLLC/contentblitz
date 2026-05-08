@@ -1,11 +1,5 @@
-"""Export node scaffold."""
+"""Compatibility wrapper for export node."""
 
-from __future__ import annotations
+from contentblitz.agents.export_node import export_content, export_node
 
-from typing import Any, Dict
-
-
-def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Phase 1 scaffold: no file export behavior yet."""
-    return state
-
+__all__ = ["export_node", "export_content"]

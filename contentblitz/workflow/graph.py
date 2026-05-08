@@ -108,6 +108,7 @@ class WorkflowState(TypedDict, total=False):
     errors: list[dict[str, Any]]
     final_response: str
     assembled_outputs: dict[str, Any]
+    export_outputs: dict[str, Any]
     workflow_status: str
     export_requested: bool
     export_metadata: dict[str, Any]
@@ -166,7 +167,7 @@ GRAPH_STRUCTURE: Dict[str, List[str]] = {
     IMAGE_AGENT_NODE: [QUALITY_VALIDATOR_NODE],
     QUALITY_VALIDATOR_NODE: [RETRY_ROUTER_NODE, OUTPUT_ASSEMBLER_NODE, ERROR_HANDLER_NODE],
     RETRY_ROUTER_NODE: [BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, OUTPUT_ASSEMBLER_NODE],
-    OUTPUT_ASSEMBLER_NODE: [EXPORT_NODE, END, ERROR_HANDLER_NODE],
+    OUTPUT_ASSEMBLER_NODE: [EXPORT_NODE, ERROR_HANDLER_NODE],
     EXPORT_NODE: [END],
     ERROR_HANDLER_NODE: [END],
 }
@@ -191,16 +192,14 @@ class WorkflowGraph:
 def _route_from_output_assembler_for_graph(state: Mapping[str, Any]) -> str:
     """
     Convert routing decision to graph edge target.
-    - export requested -> export_node
     - error state -> error_handler_node
-    - otherwise -> END
+    - otherwise -> export_node
+      (export node is responsible for no-op behavior when nothing is exportable)
     """
     decision = route_from_output_assembler(state)
-    if decision == EXPORT_NODE:
-        return EXPORT_NODE
     if decision == ERROR_HANDLER_NODE:
         return ERROR_HANDLER_NODE
-    return LANGGRAPH_END
+    return EXPORT_NODE
 
 
 def build_workflow_graph() -> WorkflowGraph:
