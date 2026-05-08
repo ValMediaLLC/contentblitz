@@ -40,6 +40,17 @@ def _assert_clarification_route(result: dict[str, Any]) -> None:
     assert result["attempt_history"]["linkedin"] == []
     assert result["attempt_history"]["image"] == []
 
+    assert result["workflow_status"] == "awaiting_clarification"
+    assert result.get("final_response")
+    assert "?" in result["final_response"]
+
+    assert result.get("assembled_outputs") == {}
+    assert result.get("export_outputs") == {}
+
+    assert result["cost_controls"]["search_queries_used_this_session"] == 0
+    assert result["cost_controls"]["image_generations_used_this_session"] == 0
+    assert result["cost_controls"]["total_retries_used_this_session"] == 0
+
     assert _errors_are_nonfatal(result)
 
 
@@ -121,3 +132,16 @@ def test_vague_content_prompt_routes_to_clarification_or_safe_fallback() -> None
         _assert_clarification_route(result)
     else:
         assert result["workflow_status"] != "failed"
+
+def test_clarification_path_appends_conversation_history() -> None:
+    result = _run_prompt("blog")
+
+    _assert_clarification_route(result)
+
+    history = result.get("conversation_history") or []
+
+    assert history
+    assert any(
+        item.get("role") == "user" and item.get("content") == "blog"
+        for item in history
+    )
