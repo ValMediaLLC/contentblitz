@@ -39,8 +39,10 @@ def _select_text_draft(
     best_body = str(best.get("body", "")).strip()
     best_score = _as_float(best.get("composite", best.get("composite_score")), default=-1.0)
 
-    if best_body and (not current_body or best_score > current_score):
+    if best_body:
+        # Best drafts are preferred when available.
         return best_body
+    # Fallback to current draft if best draft is unavailable.
     return current_body
 
 
@@ -177,6 +179,72 @@ def _image_summary(image_outputs: List[Dict[str, Any]], errors: List[Dict[str, A
     return "", failed
 
 
+def _assemble_image_output(
+    image_prompts: List[str],
+    image_outputs: List[Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+) -> str:
+    success_assets: List[str] = []
+    failed = False
+
+    for output in image_outputs:
+        if not isinstance(output, Mapping):
+            continue
+        status = str(output.get("status", "")).strip().lower()
+        if status == "success":
+            url = output.get("url")
+            if isinstance(url, str) and url.strip():
+                success_assets.append(url.strip())
+            else:
+                image_id = str(output.get("id", "")).strip()
+                if image_id:
+                    success_assets.append(image_id)
+        elif status == "failed":
+            failed = True
+
+    for error in errors:
+        if not isinstance(error, Mapping):
+            continue
+        if (
+            str(error.get("agent", "")).strip() == "image_agent"
+            and str(error.get("type", "")).strip() == "image_generation_failed"
+            and bool(error.get("recoverable", False))
+        ):
+            failed = True
+
+    if success_assets:
+        return "Image assets: " + ", ".join(success_assets)
+    if failed:
+        prompt_hint = image_prompts[-1] if image_prompts else "the requested concept"
+        return (
+            "Image generation is temporarily unavailable for "
+            f"'{prompt_hint}'. Recoverable failure recorded."
+        )
+    if image_prompts:
+        return f"Image concept prepared: {image_prompts[-1]}"
+    return ""
+
+
+def _assemble_research_output(state: Mapping[str, Any]) -> str:
+    research_data = _safe_dict(state.get("research_data", {}))
+    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
+        research_data.get("summary", "")
+    ).strip()
+    if not summary:
+        query = str(state.get("user_query", "")).strip() or "requested topic"
+        summary = f"Research summary is limited for '{query}'."
+
+    key_facts = [
+        str(item).strip()
+        for item in _safe_list(research_data.get("key_facts", []))
+        if str(item).strip()
+    ]
+    if key_facts:
+        facts_text = "; ".join(key_facts[:3])
+        return f"{summary} Key facts: {facts_text}."
+    return summary
+
+
 def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Assemble final response deterministically from existing state only."""
     outputs = _requested_outputs(state)
@@ -185,10 +253,15 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     quality_scores = _safe_dict(state.get("quality_scores", {}))
     errors = deepcopy(_safe_list(state.get("errors", [])))
     sources = deepcopy([item for item in _safe_list(state.get("sources", [])) if isinstance(item, Mapping)])
+    image_prompts = deepcopy(_safe_list(state.get("image_prompts", [])))
+    image_outputs = [
+        dict(item) for item in _safe_list(state.get("image_outputs", [])) if isinstance(item, Mapping)
+    ]
 
     deduped_sources = _dedupe_sources([dict(item) for item in sources])
 
     sections: List[str] = []
+    assembled_outputs: Dict[str, Any] = {}
     usable_content = False
     partial_success = False
 
@@ -196,18 +269,21 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         research_report = _render_research_inline_report(state, deduped_sources)
         if research_report:
             sections.append(research_report)
+            assembled_outputs["research"] = _assemble_research_output(state)
             usable_content = True
     else:
         if "blog" in outputs:
             blog_body = _select_text_draft("blog", content_drafts, best_drafts, quality_scores)
             if blog_body:
                 sections.append("## Blog Draft\n" + blog_body)
+                assembled_outputs["blog"] = blog_body
                 usable_content = True
 
         if "linkedin" in outputs:
             linkedin_body = _select_text_draft("linkedin", content_drafts, best_drafts, quality_scores)
             if linkedin_body:
                 sections.append("## LinkedIn Draft\n" + linkedin_body)
+                assembled_outputs["linkedin"] = linkedin_body
                 usable_content = True
 
         if "research" in outputs:
@@ -216,12 +292,20 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             report_body = str(report.get("body", "")).strip()
             if report_body:
                 sections.append(f"## {report_title}\n{report_body}")
+                assembled_outputs["research"] = report_body
                 usable_content = True
 
     image_section, image_failed = _image_summary(
-        image_outputs=[dict(item) for item in _safe_list(state.get("image_outputs", [])) if isinstance(item, Mapping)],
+        image_outputs=image_outputs,
         errors=[dict(item) for item in errors if isinstance(item, Mapping)],
     )
+    image_output_text = _assemble_image_output(
+        image_prompts=image_prompts,
+        image_outputs=image_outputs,
+        errors=[dict(item) for item in errors if isinstance(item, Mapping)],
+    )
+    if image_output_text:
+        assembled_outputs["image"] = image_output_text
     if image_section:
         sections.append(image_section)
         usable_content = True
@@ -268,6 +352,7 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "final_response": final_response,
+        "assembled_outputs": assembled_outputs,
         "workflow_status": workflow_status,
         "export_requested": export_requested,
     }

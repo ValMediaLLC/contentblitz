@@ -107,6 +107,7 @@ class WorkflowState(TypedDict, total=False):
     tool_outputs: dict[str, Any]
     errors: list[dict[str, Any]]
     final_response: str
+    assembled_outputs: dict[str, Any]
     workflow_status: str
     export_requested: bool
     export_metadata: dict[str, Any]

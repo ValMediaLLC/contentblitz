@@ -124,6 +124,15 @@ def main() -> None:
     print_section("ATTEMPT HISTORY")
     pprint(result.get("attempt_history"))
 
+    print_section("FINAL OUTPUT")
+
+    print("workflow_status:", result.get("workflow_status"))
+    print("final_response:")
+    print(result.get("final_response"))
+
+    print("assembled_outputs:")
+    pprint(result.get("assembled_outputs"))    
+
     print_section("CACHE")
 
     pprint(result.get("cache_metadata"))
