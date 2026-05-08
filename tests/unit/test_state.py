@@ -30,6 +30,8 @@ def test_state_contains_all_top_level_fields_from_spec() -> None:
         "tool_outputs",
         "errors",
         "final_response",
+        "assembled_outputs",
+        "export_outputs",
         "workflow_status",
         "export_requested",
         "export_metadata",
@@ -50,6 +52,8 @@ def test_state_nested_shapes_match_spec_defaults() -> None:
     assert state["best_drafts"] == {"blog": None, "linkedin": None}
     assert set(state["attempt_history"].keys()) == {"blog", "linkedin", "image"}
     assert set(state["retry_feedback"].keys()) == {"blog", "linkedin"}
+    assert state["assembled_outputs"] == {}
+    assert state["export_outputs"] == {}
 
     assert set(state["retry_counts"].keys()) == set(RETRY_POLICY.keys())
     assert all(value == 0 for value in state["retry_counts"].values())

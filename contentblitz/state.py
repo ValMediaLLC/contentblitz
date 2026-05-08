@@ -106,6 +106,8 @@ class ContentBlitzState:
     errors: List[Dict[str, Any]] = field(default_factory=list)
 
     final_response: str = ""
+    assembled_outputs: Dict[str, Any] = field(default_factory=dict)
+    export_outputs: Dict[str, Any] = field(default_factory=dict)
     workflow_status: str = ""
 
     export_requested: bool = False
