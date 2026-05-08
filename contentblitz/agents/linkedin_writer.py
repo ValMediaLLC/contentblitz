@@ -7,7 +7,6 @@ import re
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
-from contentblitz.config import RETRY_POLICY
 from contentblitz.tools.text import generate_text
 
 _DEFAULT_TOKEN_BUDGET = 10000
@@ -300,19 +299,6 @@ def _compose_final_post(
     return text
 
 
-def _retry_allowed(state: Mapping[str, Any]) -> bool:
-    retry_counts = _safe_dict(state.get("retry_counts", {}))
-    used = int(retry_counts.get("linkedin_writer", 0))
-    limit = int(RETRY_POLICY.get("linkedin_writer", 0))
-    return used < limit
-
-
-def _increment_retry_counts(state: Mapping[str, Any]) -> Dict[str, int]:
-    retry_counts = deepcopy(_safe_dict(state.get("retry_counts", {})))
-    retry_counts["linkedin_writer"] = int(retry_counts.get("linkedin_writer", 0)) + 1
-    return retry_counts
-
-
 def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate a LinkedIn draft from the strategist brief."""
     user_query = str(state.get("user_query", "")).strip()
@@ -349,9 +335,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     tokens_used_total += _extract_tokens_used(first_response)
     body = str(first_response.get("output", "")).strip()
 
-    retry_counts_update: Dict[str, int] | None = None
-    if len(body) < _MIN_LINKEDIN_CHARS and _retry_allowed(state):
-        retry_counts_update = _increment_retry_counts(state)
+    if len(body) < _MIN_LINKEDIN_CHARS:
         retry_model = _select_model(
             {
                 **cost_controls,
@@ -376,14 +360,6 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if len(retry_body) >= len(body):
             body = retry_body
         model = retry_model
-    elif len(body) < _MIN_LINKEDIN_CHARS and not _retry_allowed(state):
-        errors.append(
-            {
-                "node": "linkedin_writer_node",
-                "type": "retry_exhausted",
-                "message": "LinkedIn draft below preferred length and retry budget is exhausted.",
-            }
-        )
 
     hook = _extract_hook(body, user_query)
     cta = _extract_cta(body)
@@ -425,8 +401,6 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "tokens_used_this_session": tokens_used_total,
         },
     }
-    if retry_counts_update is not None:
-        updates["retry_counts"] = retry_counts_update
     if errors:
         updates["errors"] = errors
     return updates

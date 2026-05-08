@@ -174,7 +174,7 @@ def test_under_length_post_triggers_retry_behavior(monkeypatch) -> None:
     monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
     updates = linkedin_writer_module.linkedin_writer_node(_base_state())
     assert calls["count"] == 2
-    assert updates["retry_counts"]["linkedin_writer"] == 1
+    assert "retry_counts" not in updates
     assert updates["content_drafts"]["linkedin"]["character_count"] >= 1300
     assert updates["cost_controls"]["total_retries_used_this_session"] == 0
 
