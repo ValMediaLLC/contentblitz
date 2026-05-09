@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.config import RETRY_POLICY
+from contentblitz.core.cost_controls import normalize_cost_controls, retry_cap_reached
 
 _RETRY_TYPE_ORDER = ("blog", "linkedin", "image")
 _AGENT_KEY_BY_TYPE = {
@@ -55,17 +56,24 @@ def retry_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Compute retry dispatch updates before retry routing executes."""
     retry_counts = deepcopy(_safe_dict(state.get("retry_counts", {})))
     retry_feedback = deepcopy(_safe_dict(state.get("retry_feedback", {})))
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
     quality_scores = _safe_dict(state.get("quality_scores", {}))
 
     retry_types = _determine_retry_types(state)
     if not retry_types:
         return {}
 
+    if bool(cost_controls.get("budget_exceeded", False)) or retry_cap_reached(cost_controls):
+        return {
+            "retry_requested": False,
+            "retry_target": "",
+            "retry_targets": [],
+            "_retry_counts_incremented": False,
+            "cost_controls": cost_controls,
+        }
+
     total_retries_used = int(cost_controls.get("total_retries_used_this_session", 0))
-    max_total_retries = int(
-        cost_controls.get("max_total_retries_per_session", _DEFAULT_MAX_TOTAL_RETRIES)
-    )
+    max_total_retries = int(cost_controls.get("max_total_retries_per_session", _DEFAULT_MAX_TOTAL_RETRIES))
     remaining_session_retries = max(0, max_total_retries - total_retries_used)
 
     dispatch_types: List[str] = []

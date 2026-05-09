@@ -7,6 +7,13 @@ import re
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    normalize_cost_controls,
+    preferred_text_model,
+    search_cap_reached,
+    token_budget_exceeded,
+)
 from contentblitz.tools.cache import (
     build_research_cache_key,
     get_cached_research,
@@ -160,9 +167,13 @@ def _parse_query_suggestions(response: Mapping[str, Any], fallback_query: str) -
     return cleaned[:_MAX_SEARCH_QUERIES]
 
 
-def _synthesize_summary(query: str, sources: List[Dict[str, Any]]) -> str:
+def _synthesize_summary(
+    query: str,
+    sources: List[Dict[str, Any]],
+    cost_controls: Mapping[str, Any],
+) -> tuple[str, Dict[str, Any]]:
     if not sources:
-        return f"Limited research results were found for '{query}'."
+        return f"Limited research results were found for '{query}'.", {}
 
     top = sources[:5]
     bullets = "\n".join([f"- {item.get('title')}: {item.get('snippet')}" for item in top])
@@ -171,11 +182,17 @@ def _synthesize_summary(query: str, sources: List[Dict[str, Any]]) -> str:
         f"Topic: {query}\n"
         f"Findings:\n{bullets}"
     )
-    llm_response = generate_text(prompt=prompt, agent_key="research_agent")
+    llm_response = _safe_dict(
+        generate_text(
+            prompt=prompt,
+            agent_key="research_agent",
+            model=preferred_text_model(cost_controls),
+        )
+    )
     summary = str(_safe_dict(llm_response).get("output", "")).strip()
     if summary:
-        return summary
-    return f"Research findings compiled for '{query}' from {len(sources)} sources."
+        return summary, llm_response
+    return f"Research findings compiled for '{query}' from {len(sources)} sources.", llm_response
 
 
 def _make_degraded_perplexity_source(query: str) -> Dict[str, Any]:
@@ -301,6 +318,33 @@ def _sanitize_sources_for_output(query: str, sources: List[Dict[str, Any]]) -> L
     return sanitized
 
 
+def _degraded_research_payload(query: str, reason: str = "") -> Dict[str, Any]:
+    sources: List[Dict[str, Any]] = []
+    quality = "degraded"
+    summary = _fallback_summary(query=query, quality=quality)
+    keywords = _build_keywords(query=query, sources=sources)
+    key_facts = _build_key_facts(query=query, sources=sources, quality=quality)
+    entities = _build_entities(query=query, keywords=keywords)
+    payload = {
+        "status": "degraded",
+        "degraded": True,
+        "quality": quality,
+        "cache_hit": False,
+        "fallback_used": False,
+        "queries": [],
+        "query_count": 0,
+        "source_count": 0,
+        "synthesized_summary": summary,
+        "summary": summary,
+        "key_facts": key_facts,
+        "keywords": keywords,
+        "entities": entities,
+    }
+    if reason:
+        payload["degraded_reason"] = reason
+    return payload
+
+
 def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Run cache-first research retrieval with deterministic fallback behavior."""
     query = str(state.get("user_query", "")).strip()
@@ -341,7 +385,27 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         updates.update(touch_cached_research_key(state, cache_key))
         return updates
 
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls")))
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls")))
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        return {
+            "research_data": _degraded_research_payload(query, reason="token_budget_exceeded"),
+            "sources": [],
+            "cost_controls": cost_controls,
+            "workflow_status": "research_complete",
+            "final_response": None,
+        }
+    if search_cap_reached(cost_controls):
+        degraded_payload = _degraded_research_payload(query, reason="search_cap_reached")
+        degraded_payload["search_cap_reached"] = True
+        return {
+            "research_data": degraded_payload,
+            "sources": [],
+            "cost_controls": cost_controls,
+            "workflow_status": "research_complete",
+            "final_response": None,
+        }
+
     used_queries = int(cost_controls.get("search_queries_used_this_session", 0))
     query_cap = int(cost_controls.get("search_query_cap_per_session", _DEFAULT_SEARCH_QUERY_CAP))
     remaining_calls = max(0, query_cap - used_queries)
@@ -353,7 +417,22 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     query_generation = generate_text(
         prompt=query_generation_prompt,
         agent_key="research_agent",
+        model=preferred_text_model(cost_controls),
     )
+    cost_controls = apply_text_tokens(cost_controls, _safe_dict(query_generation))
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        return {
+            "research_data": _degraded_research_payload(
+                query,
+                reason="token_budget_exceeded_after_query_planning",
+            ),
+            "sources": [],
+            "cost_controls": cost_controls,
+            "workflow_status": "research_complete",
+            "final_response": None,
+        }
+
     search_queries = _parse_query_suggestions(query_generation, fallback_query=query)
 
     executed_queries: List[str] = []
@@ -412,7 +491,12 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     deduped_sources = _sanitize_sources_for_output(query=query, sources=deduped_sources)
     quality = "degraded" if degraded else "standard"
-    summary = _synthesize_summary(query=query, sources=deduped_sources)
+    summary, summary_response = _synthesize_summary(
+        query=query,
+        sources=deduped_sources,
+        cost_controls=cost_controls,
+    )
+    cost_controls = apply_text_tokens(cost_controls, summary_response)
     if not summary.strip():
         summary = _fallback_summary(query=query, quality=quality)
     if quality == "degraded":
@@ -439,6 +523,8 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     cost_controls["search_queries_used_this_session"] = used_queries + search_calls_used
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
 
     updates: Dict[str, Any] = {
         "research_data": research_data,

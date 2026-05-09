@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import math
 import re
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    normalize_cost_controls,
+    preferred_text_model,
+    token_budget_exceeded,
+)
 from contentblitz.tools.text import generate_text
 
-_DEFAULT_TOKEN_BUDGET = 10000
-_NEAR_CAP_RATIO = 0.90
 _MIN_LINKEDIN_CHARS = 1300
 _MAX_LINKEDIN_CHARS = 1600
 
@@ -33,34 +36,6 @@ def _safe_dict(value: Any) -> Dict[str, Any]:
 
 def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
-
-
-def _extract_tokens_used(response: Mapping[str, Any]) -> int:
-    usage = response.get("usage", {})
-    if isinstance(usage, Mapping):
-        total_tokens = usage.get("total_tokens")
-        if isinstance(total_tokens, (int, float)):
-            return max(0, int(total_tokens))
-
-    for key in ("tokens_used", "total_tokens", "token_count"):
-        value = response.get(key)
-        if isinstance(value, (int, float)):
-            return max(0, int(value))
-
-    metadata = response.get("metadata", {})
-    if isinstance(metadata, Mapping):
-        meta_tokens = metadata.get("tokens_used")
-        if isinstance(meta_tokens, (int, float)):
-            return max(0, int(meta_tokens))
-    return 0
-
-
-def _select_model(cost_controls: Mapping[str, Any]) -> str:
-    used = int(cost_controls.get("tokens_used_this_session", 0))
-    budget = int(cost_controls.get("token_budget_per_session", _DEFAULT_TOKEN_BUDGET))
-    if budget > 0 and used >= int(math.floor(budget * _NEAR_CAP_RATIO)):
-        return "gpt-4o-mini"
-    return "gpt-4o"
 
 
 def _build_prompt(
@@ -299,6 +274,19 @@ def _compose_final_post(
     return text
 
 
+def _append_budget_error(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    errors = deepcopy(_safe_list(state.get("errors", [])))
+    errors.append(
+        {
+            "agent": "linkedin_writer",
+            "type": "budget_exceeded",
+            "message": "LinkedIn generation used deterministic fallback due to token budget limits.",
+            "recoverable": True,
+        }
+    )
+    return errors
+
+
 def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate a LinkedIn draft from the strategist brief."""
     user_query = str(state.get("user_query", "")).strip()
@@ -315,11 +303,43 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     retry_feedback = [str(item).strip() for item in _safe_list(raw_feedback) if str(item).strip()]
     draft_status = _safe_dict(state.get("draft_status", {}))
 
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
-    tokens_used_total = int(cost_controls.get("tokens_used_this_session", 0))
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
     errors = deepcopy(_safe_list(state.get("errors", [])))
 
-    model = _select_model(cost_controls)
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        hook = _extract_hook("", user_query)
+        cta = _extract_cta("")
+        hashtags = _fallback_hashtags(user_query)
+        final_body = _compose_final_post(
+            body="",
+            hook=hook,
+            cta=cta,
+            hashtags=hashtags,
+            user_query=user_query,
+            linkedin_brief=linkedin_brief,
+        )
+        linkedin_update = {
+            **existing_draft,
+            "body": final_body,
+            "version": next_version,
+            "character_count": len(final_body),
+            "hook": _extract_hook(final_body, user_query),
+            "cta": _extract_cta(final_body),
+            "hashtags": _extract_hashtags(final_body, user_query),
+            "model_used": "budget_fallback",
+        }
+        return {
+            "content_drafts": {"linkedin": linkedin_update},
+            "draft_status": {
+                **draft_status,
+                "linkedin": "complete",
+            },
+            "cost_controls": cost_controls,
+            "errors": _append_budget_error(state),
+        }
+
+    model = preferred_text_model(cost_controls)
     prompt = _build_prompt(
         user_query=user_query,
         linkedin_brief=linkedin_brief,
@@ -332,16 +352,11 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             model=model,
         )
     )
-    tokens_used_total += _extract_tokens_used(first_response)
+    cost_controls = apply_text_tokens(cost_controls, first_response)
     body = str(first_response.get("output", "")).strip()
 
-    if len(body) < _MIN_LINKEDIN_CHARS:
-        retry_model = _select_model(
-            {
-                **cost_controls,
-                "tokens_used_this_session": tokens_used_total,
-            }
-        )
+    if len(body) < _MIN_LINKEDIN_CHARS and not token_budget_exceeded(cost_controls):
+        retry_model = preferred_text_model(cost_controls)
         retry_prompt = _build_prompt(
             user_query=user_query,
             linkedin_brief=linkedin_brief,
@@ -355,11 +370,13 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 model=retry_model,
             )
         )
-        tokens_used_total += _extract_tokens_used(retry_response)
+        cost_controls = apply_text_tokens(cost_controls, retry_response)
         retry_body = str(retry_response.get("output", "")).strip()
         if len(retry_body) >= len(body):
             body = retry_body
         model = retry_model
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
 
     hook = _extract_hook(body, user_query)
     cta = _extract_cta(body)
@@ -398,7 +415,6 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         },
         "cost_controls": {
             **cost_controls,
-            "tokens_used_this_session": tokens_used_total,
         },
     }
     if errors:

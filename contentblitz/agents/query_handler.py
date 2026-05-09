@@ -9,6 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    normalize_cost_controls,
+    preferred_text_model,
+    token_budget_exceeded,
+)
 from contentblitz.tools.text import generate_text
 
 _ALLOWED_OUTPUTS = {"blog", "linkedin", "image", "research"}
@@ -26,6 +32,11 @@ def _normalize_outputs(value: Any) -> list[str]:
         if any(str(item).strip().lower() == key for item in value):
             found.append(key)
     return found
+
+
+def _safe_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
 
 # TODO(intent-classification):
 # Refine deterministic output classification so explicit LinkedIn-only
@@ -167,6 +178,20 @@ def _with_lifecycle_fields(updates: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+def _append_budget_error(state: Dict[str, Any], message: str) -> list[dict[str, Any]]:
+    existing_errors = state.get("errors", [])
+    if not isinstance(existing_errors, list):
+        existing_errors = []
+    return [
+        *existing_errors,
+        {
+            "node": "query_handler_node",
+            "type": "budget_exceeded",
+            "message": message,
+        },
+    ]
+
+
 def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Classify the user query and return state updates only.
@@ -174,24 +199,27 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     This function never performs real API calls in Phase 1; generate_text is a
     local/mocked dependency.
     """
-    cost_controls = state.get("cost_controls", {})
-    budget_exceeded = bool(
-        isinstance(cost_controls, dict) and cost_controls.get("budget_exceeded", False)
-    )
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
+    budget_exceeded = bool(cost_controls.get("budget_exceeded", False))
+
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        return _with_lifecycle_fields({
+            "cost_controls": cost_controls,
+            "errors": _append_budget_error(
+                state,
+                "Session token budget exceeded before query classification.",
+            ),
+            "routing_decision": "error_handler_node",
+        })
 
     if budget_exceeded:
-        existing_errors = state.get("errors", [])
-        if not isinstance(existing_errors, list):
-            existing_errors = []
         return _with_lifecycle_fields({
-            "errors": [
-                *existing_errors,
-                {
-                    "node": "query_handler_node",
-                    "type": "budget_exceeded",
-                    "message": "Session budget exceeded before query classification.",
-                },
-            ],
+            "cost_controls": cost_controls,
+            "errors": _append_budget_error(
+                state,
+                "Session budget exceeded before query classification.",
+            ),
             "routing_decision": "error_handler_node",
         })
 
@@ -224,6 +252,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not preclassified["clarification_needed"]:
             preclassified["clarification_message"] = None
         preclassified["routing_decision"] = _determine_routing_decision(preclassified)
+        preclassified["cost_controls"] = cost_controls
         return _with_lifecycle_fields(preclassified)
 
     prompt = (
@@ -232,10 +261,27 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "clarification_needed, clarification_message, export_requested.\n\n"
         f"User query: {query}"
     )
-    llm_response = generate_text(prompt=prompt, agent_key="query_handler")
+    model = preferred_text_model(cost_controls)
+    llm_response = generate_text(
+        prompt=prompt,
+        agent_key="query_handler",
+        model=model,
+    )
+    cost_controls = apply_text_tokens(cost_controls, llm_response)
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        return _with_lifecycle_fields({
+            "cost_controls": cost_controls,
+            "errors": _append_budget_error(
+                state,
+                "Session token budget exceeded during query classification.",
+            ),
+            "routing_decision": "error_handler_node",
+        })
     classified = _parse_llm_classification(llm_response)
     if classified is None:
         classified = _deterministic_fallback(query)
 
     classified["routing_decision"] = _determine_routing_decision(classified)
+    classified["cost_controls"] = cost_controls
     return _with_lifecycle_fields(classified)

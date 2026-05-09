@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import math
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    normalize_cost_controls,
+    preferred_text_model,
+    token_budget_exceeded,
+)
 from contentblitz.tools.text import generate_text
-
-_DEFAULT_TOKEN_BUDGET = 10000
-_NEAR_CAP_RATIO = 0.90
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -18,34 +20,6 @@ def _safe_dict(value: Any) -> Dict[str, Any]:
 
 def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
-
-
-def _extract_tokens_used(response: Mapping[str, Any]) -> int:
-    usage = response.get("usage", {})
-    if isinstance(usage, Mapping):
-        total_tokens = usage.get("total_tokens")
-        if isinstance(total_tokens, (int, float)):
-            return max(0, int(total_tokens))
-
-    for key in ("tokens_used", "total_tokens", "token_count"):
-        value = response.get(key)
-        if isinstance(value, (int, float)):
-            return max(0, int(value))
-
-    metadata = response.get("metadata", {})
-    if isinstance(metadata, Mapping):
-        meta_tokens = metadata.get("tokens_used")
-        if isinstance(meta_tokens, (int, float)):
-            return max(0, int(meta_tokens))
-    return 0
-
-
-def _select_model(cost_controls: Mapping[str, Any]) -> str:
-    used = int(cost_controls.get("tokens_used_this_session", 0))
-    budget = int(cost_controls.get("token_budget_per_session", _DEFAULT_TOKEN_BUDGET))
-    if budget > 0 and used >= int(math.floor(budget * _NEAR_CAP_RATIO)):
-        return "gpt-4o-mini"
-    return "gpt-4o"
 
 
 def _build_prompt(
@@ -123,6 +97,19 @@ def _readability_score(text: str) -> float:
     return round(score, 2)
 
 
+def _append_budget_error(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    errors = deepcopy(_safe_list(state.get("errors", [])))
+    errors.append(
+        {
+            "agent": "blog_writer",
+            "type": "budget_exceeded",
+            "message": "Blog generation used deterministic fallback due to token budget limits.",
+            "recoverable": True,
+        }
+    )
+    return errors
+
+
 def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate a blog draft using content brief + available citations."""
     content_brief = _safe_dict(state.get("content_brief", {}))
@@ -149,8 +136,40 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(blog_feedback, list):
         retry_feedback = [str(item).strip() for item in blog_feedback if str(item).strip()]
 
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
-    model = _select_model(cost_controls)
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
+    draft_status = _safe_dict(state.get("draft_status", {}))
+
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        draft_body = _fallback_draft(user_query=user_query, blog_brief=blog_brief)
+        citations_block = _render_citations(citations)
+        if citations_block:
+            draft_body = f"{draft_body}\n\n{citations_block}"
+        else:
+            draft_body = (
+                f"{draft_body}\n\n"
+                "Disclaimer: No verifiable external citations were available for this draft."
+            )
+
+        blog_update = {
+            **existing_blog,
+            "body": draft_body,
+            "version": next_version,
+            "word_count": _word_count(draft_body),
+            "readability_score": _readability_score(draft_body),
+            "model_used": "budget_fallback",
+        }
+        return {
+            "content_drafts": {"blog": blog_update},
+            "draft_status": {
+                **draft_status,
+                "blog": "complete",
+            },
+            "cost_controls": cost_controls,
+            "errors": _append_budget_error(state),
+        }
+
+    model = preferred_text_model(cost_controls)
     prompt = _build_prompt(
         user_query=user_query,
         blog_brief=blog_brief,
@@ -178,9 +197,9 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "Disclaimer: No verifiable external citations were available for this draft."
         )
 
-    tokens_used_delta = _extract_tokens_used(llm_response)
-    tokens_used_total = int(cost_controls.get("tokens_used_this_session", 0)) + tokens_used_delta
-    draft_status = _safe_dict(state.get("draft_status", {}))
+    cost_controls = apply_text_tokens(cost_controls, llm_response)
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
 
     blog_update = {
         **existing_blog,
@@ -197,8 +216,5 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             **draft_status,
             "blog": "complete",
         },
-        "cost_controls": {
-            **cost_controls,
-            "tokens_used_this_session": tokens_used_total,
-        },
+        "cost_controls": cost_controls,
     }

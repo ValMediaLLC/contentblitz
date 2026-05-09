@@ -5,10 +5,16 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    image_cap_reached,
+    normalize_cost_controls,
+    preferred_text_model,
+    token_budget_exceeded,
+)
 from contentblitz.tools.image import generate_image
 from contentblitz.tools.text import generate_text
 
-_DEFAULT_IMAGE_GENERATION_CAP = 3
 _IMAGE_FAILURE_MESSAGE = "No image assets returned."
 
 
@@ -70,17 +76,23 @@ def _derive_visual_concept(state: Dict[str, Any]) -> str:
     return concept.strip()
 
 
-def _enhance_prompt(concept: str) -> str:
+def _enhance_prompt(concept: str, cost_controls: Mapping[str, Any]) -> tuple[str, Dict[str, Any]]:
     prompt = (
         "Enhance this image generation prompt for clarity and visual detail. "
         "Return only the improved prompt.\n\n"
         f"Prompt: {concept}"
     )
-    response = _safe_dict(generate_text(prompt=prompt, agent_key="image_agent"))
+    response = _safe_dict(
+        generate_text(
+            prompt=prompt,
+            agent_key="image_agent",
+            model=preferred_text_model(cost_controls),
+        )
+    )
     enhanced = str(response.get("output", "")).strip()
     if enhanced:
-        return enhanced
-    return f"{concept} High detail, clean composition, and strong contrast."
+        return enhanced, response
+    return f"{concept} High detail, clean composition, and strong contrast.", response
 
 
 def _sanitize_image_payload(payload: Any) -> Dict[str, Any]:
@@ -115,12 +127,17 @@ def _normalize_provider(response: Mapping[str, Any]) -> str:
     return "dall-e-3"
 
 
-def _append_recoverable_image_error(state: Dict[str, Any], message: str) -> List[Dict[str, Any]]:
+def _append_recoverable_image_error(
+    state: Dict[str, Any],
+    message: str,
+    *,
+    error_type: str = "image_generation_failed",
+) -> List[Dict[str, Any]]:
     existing_errors = deepcopy(_safe_list(state.get("errors", [])))
     existing_errors.append(
         {
             "agent": "image_agent",
-            "type": "image_generation_failed",
+            "type": error_type,
             "message": message,
             "recoverable": True,
         }
@@ -132,11 +149,27 @@ def _append_recoverable_image_error(state: Dict[str, Any], message: str) -> List
 # once real image provider integration is implemented.
 def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate images via deterministic prompt enhancement + stateless tool calls."""
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
-    used = int(cost_controls.get("image_generations_used_this_session", 0))
-    cap = int(cost_controls.get("image_generation_cap_per_session", _DEFAULT_IMAGE_GENERATION_CAP))
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
+        tool_outputs["image_agent"] = {
+            "status": "skipped",
+            "reason": "token_budget_exceeded",
+            "attempted": False,
+        }
+        return {
+            "tool_outputs": tool_outputs,
+            "draft_status": {"image": "skipped"},
+            "errors": _append_recoverable_image_error(
+                state,
+                "Image generation skipped because session token budget is exceeded.",
+                error_type="budget_exceeded",
+            ),
+            "cost_controls": cost_controls,
+        }
 
-    if used >= cap:
+    if image_cap_reached(cost_controls):
         tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
         tool_outputs["image_agent"] = {
             "status": "skipped",
@@ -145,10 +178,36 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
         return {
             "tool_outputs": tool_outputs,
+            "draft_status": {"image": "skipped"},
+            "errors": _append_recoverable_image_error(
+                state,
+                "Image generation skipped because the image generation cap was reached.",
+                error_type="image_generation_cap_reached",
+            ),
+            "cost_controls": cost_controls,
         }
 
     concept = _derive_visual_concept(state)
-    enhanced_prompt = _enhance_prompt(concept)
+    enhanced_prompt, enhancement_response = _enhance_prompt(concept, cost_controls)
+    cost_controls = apply_text_tokens(cost_controls, enhancement_response)
+    if token_budget_exceeded(cost_controls):
+        cost_controls["budget_exceeded"] = True
+        tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
+        tool_outputs["image_agent"] = {
+            "status": "skipped",
+            "reason": "token_budget_exceeded_after_prompt_enhancement",
+            "attempted": False,
+        }
+        return {
+            "tool_outputs": tool_outputs,
+            "draft_status": {"image": "skipped"},
+            "errors": _append_recoverable_image_error(
+                state,
+                "Image generation skipped because token budget was exhausted.",
+                error_type="budget_exceeded",
+            ),
+            "cost_controls": cost_controls,
+        }
 
     content_brief = _safe_dict(state.get("content_brief", {}))
     image_brief = _safe_dict(content_brief.get("image", {}))
@@ -159,6 +218,8 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     image_outputs = deepcopy(_safe_list(state.get("image_outputs", [])))
     tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
+
+    used = int(cost_controls.get("image_generations_used_this_session", 0))
 
     try:
         image_response = _safe_dict(generate_image(prompt=enhanced_prompt, style=style))

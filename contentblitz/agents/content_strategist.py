@@ -6,6 +6,12 @@ import json
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.cost_controls import (
+    apply_text_tokens,
+    normalize_cost_controls,
+    preferred_text_model,
+    token_budget_exceeded,
+)
 from contentblitz.tools.text import generate_text
 
 _SUPPORTED_OUTPUTS = {"blog", "linkedin", "image", "research"}
@@ -24,26 +30,6 @@ def _normalize_outputs(outputs: Any) -> List[str]:
     normalized = [str(item).strip().lower() for item in raw if str(item).strip()]
     deduped = list(dict.fromkeys(normalized))
     return [item for item in deduped if item in _SUPPORTED_OUTPUTS]
-
-
-def _extract_tokens_used(response: Mapping[str, Any]) -> int:
-    usage = response.get("usage", {})
-    if isinstance(usage, Mapping):
-        total_tokens = usage.get("total_tokens")
-        if isinstance(total_tokens, (int, float)):
-            return max(0, int(total_tokens))
-
-    for key in ("tokens_used", "total_tokens", "token_count"):
-        value = response.get(key)
-        if isinstance(value, (int, float)):
-            return max(0, int(value))
-
-    metadata = response.get("metadata", {})
-    if isinstance(metadata, Mapping):
-        meta_tokens = metadata.get("tokens_used")
-        if isinstance(meta_tokens, (int, float)):
-            return max(0, int(meta_tokens))
-    return 0
 
 
 def _fallback_brief(
@@ -196,11 +182,20 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     content_brief.setdefault("linkedin", {})
     content_brief.setdefault("image", {})
 
-    cost_controls = deepcopy(_safe_dict(state.get("cost_controls", {})))
-    tokens_used = int(cost_controls.get("tokens_used_this_session", 0))
+    cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
 
     for output_type in ("blog", "linkedin", "image"):
         if output_type not in outputs:
+            continue
+        if token_budget_exceeded(cost_controls):
+            cost_controls["budget_exceeded"] = True
+            content_brief[output_type] = _fallback_brief(
+                output_type=output_type,
+                user_query=user_query,
+                intent=intent,
+                brand_voice=brand_voice,
+                research_data=research_data,
+            )
             continue
         prompt = _build_brief_prompt(
             output_type=output_type,
@@ -210,8 +205,14 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
             research_data=research_data,
             sources=sources,
         )
-        llm_response = _safe_dict(generate_text(prompt=prompt, agent_key="content_strategist"))
-        tokens_used += _extract_tokens_used(llm_response)
+        llm_response = _safe_dict(
+            generate_text(
+                prompt=prompt,
+                agent_key="content_strategist",
+                model=preferred_text_model(cost_controls),
+            )
+        )
+        cost_controls = apply_text_tokens(cost_controls, llm_response)
         content_brief[output_type] = _parse_brief_output(
             llm_output=llm_response.get("output", ""),
             output_type=output_type,
@@ -223,10 +224,7 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     updates: Dict[str, Any] = {
         "content_brief": content_brief,
-        "cost_controls": {
-            **cost_controls,
-            "tokens_used_this_session": tokens_used,
-        },
+        "cost_controls": cost_controls,
         "workflow_status": "strategy_complete",
         "final_response": None,
     }

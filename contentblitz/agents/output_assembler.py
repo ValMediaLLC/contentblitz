@@ -167,7 +167,6 @@ def _image_summary(image_outputs: List[Dict[str, Any]], errors: List[Dict[str, A
             continue
         if (
             str(error.get("agent", "")).strip() == "image_agent"
-            and str(error.get("type", "")).strip() == "image_generation_failed"
             and bool(error.get("recoverable", False))
         ):
             failed = True
@@ -207,7 +206,6 @@ def _assemble_image_output(
             continue
         if (
             str(error.get("agent", "")).strip() == "image_agent"
-            and str(error.get("type", "")).strip() == "image_generation_failed"
             and bool(error.get("recoverable", False))
         ):
             failed = True
