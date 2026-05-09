@@ -3,11 +3,10 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Add project root to Python path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
 
 import pytest
 
@@ -30,7 +29,18 @@ def test_live_generate_text_openai():
         max_tokens=20,
     )
 
+    print("\nTEXT RESULT")
+    print("-----------")
+    print("Provider:", result.provider)
+    print("Model:", result.model)
+    print("Degraded:", result.degraded)
+    print("Input tokens:", result.input_tokens)
+    print("Output tokens:", result.output_tokens)
+    print("Total tokens:", result.total_tokens)
+    print("Error code:", result.error.get("code") if result.error else None)
+
     assert result.degraded is False
+    assert result.text.strip()
     assert "ContentBlitz" in result.text
     assert result.provider == "openai"
     assert result.total_tokens >= 0
