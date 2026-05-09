@@ -1,12 +1,19 @@
 import sys
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-load_dotenv()
+if os.getenv("CONTENTBLITZ_RUN_LIVE_TESTS") != "1":
+    print(
+        "Live API execution is disabled. "
+        "Set CONTENTBLITZ_RUN_LIVE_TESTS=1 in .env to enable."
+    )
+    sys.exit(0)
 
 from contentblitz.state import create_initial_state
 from contentblitz.agents.query_handler import query_handler_node
