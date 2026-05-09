@@ -11,6 +11,7 @@ from contentblitz.tools.cache import (
     build_research_cache_key,
     get_cached_research,
     set_cached_research,
+    touch_cached_research_key,
 )
 from contentblitz.tools.text import generate_text
 from contentblitz.tools.web_search import search_web
@@ -331,12 +332,14 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         research_data["entities"] = cached_entities
         research_data["degraded"] = cached_quality == "degraded"
         research_data["status"] = "degraded" if cached_quality == "degraded" else "complete"
-        return {
+        updates = {
             "research_data": research_data,
             "sources": cached_sources,
             "workflow_status": "research_complete",
             "final_response": None,
         }
+        updates.update(touch_cached_research_key(state, cache_key))
+        return updates
 
     cost_controls = deepcopy(_safe_dict(state.get("cost_controls")))
     used_queries = int(cost_controls.get("search_queries_used_this_session", 0))
@@ -446,8 +449,10 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     if not degraded and deduped_sources:
+        cacheable_research_data = deepcopy(research_data)
+        cacheable_research_data.pop("queries", None)
         cache_payload = {
-            "research_data": deepcopy(research_data),
+            "research_data": cacheable_research_data,
             "sources": deepcopy(deduped_sources),
         }
         updates.update(set_cached_research(state, cache_key, cache_payload))
