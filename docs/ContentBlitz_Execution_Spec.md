@@ -500,10 +500,54 @@ Deliverable:
 
 ---
 
-## PHASE 3 (OPTIONAL): UI + EXPORT
+## PHASE 3: UI + EXPORT
+
+Goal: Make system user-facing and export-capable
+
+Implement:
 
 - Streamlit UI
-- export system (PDF, HTML, etc.)
+- export system (PDF, HTML, Markdown, DOCX)
+- lightweight AI/content guardrails
+- export sanitization
+- output validation
+- citation validation
+- optional persistent cache evaluation
+- Phase 2 stabilization items
+
+Deliverable:
+- usable frontend with validated exports and basic guardrails
+
+---
+
+## PHASE 4+: TRUST + SAFETY SYSTEMS
+
+Goal: Improve trustworthiness, observability, governance, and advanced safety
+
+Implement:
+
+- advanced prompt injection defense
+- AI safety/moderation layer
+- multi-stage validation/review pipelines
+- AI judge/review systems
+- persistent audit + observability tooling
+- optional human review workflows
+- advanced trust scoring and citation analysis
+
+Deliverable:
+- enterprise-grade trust, safety, and governance infrastructure
+
+---
+
+## POST-PHASE STABILIZATION
+
+Planned stabilization work after Phase 2 completion:
+
+- improve clarification flow coverage
+- improve provider edge-case coverage
+- improve cache TTL/delete/serialization coverage
+- review reducer merge edge cases
+- evaluate persistent/distributed cache backend
 
 ---
 
