@@ -263,6 +263,10 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     usable_content = False
     partial_success = False
 
+    research_data = _safe_dict(state.get("research_data", {}))
+    if "research" in outputs and bool(research_data.get("degraded", False)):
+        partial_success = True
+
     if outputs == ["research"]:
         research_report = _render_research_inline_report(state, deduped_sources)
         if research_report:
