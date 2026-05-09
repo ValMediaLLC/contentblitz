@@ -3,3 +3,4 @@ openai
 pytest
 pytest-cov
 python-dotenv
+streamlit

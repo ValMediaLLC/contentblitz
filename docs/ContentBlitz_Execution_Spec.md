@@ -526,7 +526,7 @@ Goal: Improve trustworthiness, observability, governance, and advanced safety
 
 Implement:
 
-- advanced prompt injection defense
+- advanced prompt injection defense (Guardrails.ai)
 - AI safety/moderation layer
 - multi-stage validation/review pipelines
 - AI judge/review systems

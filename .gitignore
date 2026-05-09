@@ -5,7 +5,9 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 .coverage
+.coverage.*
 coverage*
 coverage.*
 htmlcov/
+.streamlit/secrets.toml
 scripts/validate_phase1.py
