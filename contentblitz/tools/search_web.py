@@ -8,10 +8,12 @@ from typing import Any, Dict, List, Mapping, Optional
 from urllib import parse, request
 from urllib.error import HTTPError, URLError
 
+from contentblitz.tools.perplexity import search_perplexity
 from contentblitz.tools.provider_types import SearchResult, SearchWebResult
 
 _SERP_PROVIDER = "serp"
 _PERPLEXITY_PROVIDER = "perplexity"
+_AUTO_PROVIDER = "auto"
 _SERP_ENDPOINT = "https://serpapi.com/search.json"
 _DEFAULT_TIMEOUT_SECONDS = 15
 _DEFAULT_MAX_RESULTS = 5
@@ -248,13 +250,61 @@ def _search_serp(query: str, *, max_results: int) -> SearchWebResult:
 
 
 def _search_perplexity_placeholder(query: str, *, max_results: int) -> SearchWebResult:
-    _ = max_results
-    return _degraded_result(
-        provider=_PERPLEXITY_PROVIDER,
+    return search_perplexity(query=query, max_results=max_results)
+
+
+def _is_unusable(result: SearchWebResult) -> bool:
+    if result.degraded:
+        return True
+    if not result.results:
+        return True
+    for item in result.results:
+        if str(item.snippet).strip():
+            return False
+    return True
+
+
+def _search_auto(query: str, *, max_results: int) -> SearchWebResult:
+    try:
+        serp_result = _search_serp(query=query, max_results=max_results)
+    except Exception:
+        serp_result = _degraded_result(
+            provider=_SERP_PROVIDER,
+            query=query,
+            code="provider_error",
+            message="SERP provider request failed.",
+            recoverable=True,
+        )
+    if not _is_unusable(serp_result):
+        return serp_result
+
+    try:
+        perplexity_result = _search_perplexity_placeholder(query=query, max_results=max_results)
+    except Exception:
+        perplexity_result = _degraded_result(
+            provider=_PERPLEXITY_PROVIDER,
+            query=query,
+            code="provider_error",
+            message="Perplexity provider request failed.",
+            recoverable=True,
+        )
+    if not _is_unusable(perplexity_result):
+        return perplexity_result
+
+    return SearchWebResult(
+        provider=_AUTO_PROVIDER,
         query=query,
-        code="provider_not_implemented",
-        message="Perplexity search provider is not wired yet.",
-        recoverable=True,
+        results=[],
+        degraded=True,
+        error={
+            "code": "all_providers_failed",
+            "message": "SERP and Perplexity providers failed or returned unusable results.",
+            "provider": _AUTO_PROVIDER,
+            "recoverable": True,
+            "providers_attempted": [_SERP_PROVIDER, _PERPLEXITY_PROVIDER],
+            "serp_error": serp_result.error,
+            "perplexity_error": perplexity_result.error,
+        },
     )
 
 
@@ -262,7 +312,7 @@ def search_web(
     query: str,
     *,
     max_results: int = _DEFAULT_MAX_RESULTS,
-    provider: str = _SERP_PROVIDER,
+    provider: str = _AUTO_PROVIDER,
 ) -> SearchWebResult:
     """Run a provider-backed web search and return normalized results."""
     safe_query = _sanitize_query(query)
@@ -286,6 +336,8 @@ def search_web(
         return _search_serp(safe_query, max_results=bounded_max_results)
     if provider_name == _PERPLEXITY_PROVIDER:
         return _search_perplexity_placeholder(safe_query, max_results=bounded_max_results)
+    if provider_name == _AUTO_PROVIDER:
+        return _search_auto(safe_query, max_results=bounded_max_results)
 
     return _degraded_result(
         provider=provider_name,

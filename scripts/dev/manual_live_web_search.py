@@ -18,12 +18,13 @@ if os.getenv("CONTENTBLITZ_RUN_LIVE_TESTS") != "1":
 from contentblitz.tools.search_web import search_web
 
 def main():
+    provider = input("Provider [auto/serp/perplexity]: ").strip().lower() or "auto"
     query = input("Enter search query: ").strip()
 
     result = search_web(
         query=query,
         max_results=5,
-        provider="serp",
+        provider=provider,
     )
 
     print("\nRESULT")

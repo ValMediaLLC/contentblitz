@@ -401,16 +401,6 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         ]
         if not fallback_sources:
             fallback_sources = [_make_degraded_perplexity_source(search_query)]
-        else:
-            fallback_sources = [
-                {
-                    **item,
-                    "url": None,
-                    "citation_available": False,
-                    "credibility_score": item.get("credibility_score", 0.35),
-                }
-                for item in fallback_sources
-            ]
         collected_sources.extend(fallback_sources)
 
     deduped_sources = _dedupe_sources(collected_sources)
