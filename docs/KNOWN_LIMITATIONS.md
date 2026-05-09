@@ -1,125 +1,78 @@
 # Known Limitations
 
-## Overview
+## Scope
 
-This document tracks known limitations and intentional constraints within the current Phase 1 implementation.
+This document tracks known implementation and operational limits in the current Phase 2 codebase.
 
----
+## Provider/Network Variability
 
-# Deterministic Provider Behavior
+Live provider behavior depends on external network and provider availability.
 
-Phase 1 intentionally avoids real external provider integrations.
+Implications:
 
-The following systems currently use deterministic fallback behavior:
+- optional live tests may fail even when unit/integration tests are healthy
+- degraded provider responses can appear during transient outages
+- CI-safe coverage focuses on mocked deterministic tests
 
-- research synthesis
-- image generation
-- clarification fallback
-- export formatting
+## Cache Backend Is Process-Local
 
----
+Research caching currently uses an in-memory process store.
 
-# Image Generation
+Implications:
 
-Image generation currently does not return real generated image assets.
+- cache is not shared across process restarts
+- no persistent datastore is used
+- horizontal scaling cache coherence is not implemented
 
-Current behavior:
+## Counter Merge Edge Case in Parallel Fan-Out
 
-- image prompts are generated
-- recoverable failures are returned safely
-- orchestration continues without crashing
+Cost control updates use dictionary merge reducers for parallel node writes.
 
-Future phases will introduce:
+Known edge case:
 
-- real provider integration
-- placeholder asset support
-- image persistence/storage
+- in some multimodal fan-out flows, last-write behavior can undercount a subset of counters
+- tests validate deterministic behavior, but this remains a known accounting limitation
 
----
+## Query Classification Bias
 
-# Research Quality
+Deterministic fallback classification remains conservative.
 
-Degraded research paths currently use deterministic fallback summaries.
+Known behavior:
 
-This behavior prioritizes:
+- some prompts can over-select outputs (for example, certain LinkedIn requests may also select blog output)
 
-- stability
-- deterministic testing
-- recoverable orchestration behavior
+## Research Quality in Degraded Paths
 
----
+When providers return limited/unusable snippets:
 
-# Query Classification
+- research agent returns structured degraded payloads
+- summaries may fall back to deterministic synthesis language
+- directional quality can be lower than fully cited SERP-backed paths
 
-Some prompts may over-request outputs due to conservative routing logic.
+## No Persistent Storage Layer
 
-Example:
+Workflow state and cache are in-memory only.
 
-- LinkedIn-oriented prompts may also trigger blog output generation.
+Not implemented:
 
-Planned improvements:
+- database persistence
+- durable artifact storage
+- distributed cache invalidation
 
-- improved intent classification
-- confidence scoring
-- semantic routing refinement
+## Optional Live Tests Are Not CI Gate
 
----
+`tests/live` are intentionally optional and skip-gated by flags.
 
-# LangGraph Warning
+Implications:
 
-Current LangGraph serializer configuration produces a deprecation warning related to:
+- live smoke checks are useful for manual operational validation
+- release safety is enforced primarily through unit/integration contract suites
 
-```text
-allowed_objects
-```
+## LangGraph Warning
 
-This does not affect orchestration correctness but should be addressed in a future cleanup phase.
+A LangGraph serializer deprecation warning related to `allowed_objects` may appear during test runs.
 
----
+Current impact:
 
-# Documentation Gaps
-
-Some architecture and operational documentation remains incomplete.
-
-Planned additions include:
-
-- persistence architecture
-- provider integration architecture
-- deployment documentation
-- performance benchmarking documentation
-
----
-
-# No Persistence Layer
-
-Phase 1 currently uses in-memory orchestration state.
-
-No database or persistent storage layer is implemented yet.
-
----
-
-# No Real Provider Integrations
-
-Phase 1 intentionally avoids:
-
-- real OpenAI calls
-- real image provider calls
-- external vector stores
-- external databases
-
-This constraint exists to maintain deterministic testing behavior.
-
----
-
-# Future Improvements
-
-Planned Phase 2 improvements include:
-
-- real provider integrations
-- persistence support
-- advanced retries
-- streaming outputs
-- human review workflows
-- performance optimization
-- observability tooling
-- analytics support
+- does not affect test pass/fail logic
+- should be resolved in a future dependency/serializer cleanup

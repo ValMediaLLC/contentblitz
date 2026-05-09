@@ -1,197 +1,126 @@
 # ContentBlitz
 
-ContentBlitz is a deterministic multi-agent content orchestration system built with LangGraph.
+ContentBlitz is a LangGraph-based multi-agent content orchestration system with Phase 2 provider integrations for text, web research, and image generation.
 
-It orchestrates classification, research, strategy, writing, quality validation, retry routing, output assembly, and export through explicit state updates and deterministic routing rules.
+## Current State
 
-## Current Project State (May 8, 2026)
+- 12-node workflow is implemented and active.
+- Provider-backed tools are implemented for:
+  - OpenAI text generation
+  - SERP web search with Perplexity fallback support
+  - OpenAI DALL-E image generation with model fallback
+- Research caching and cost controls are integrated.
+- Unit and integration tests are deterministic and non-live by default.
 
-- Phase 1 scope is implemented end-to-end for orchestration.
-- 12 workflow nodes are implemented and wired in the graph.
-- Test status: `233 passed` (`pytest -q`).
-- Coverage status: `92% total` (`coverage report -m`).
-- External providers are intentionally stubbed in this phase (no live network API calls by default).
+## Phase 2 Integrations
 
-## What Is Implemented
+- `contentblitz/tools/generate_text.py`
+  - Primary: `gpt-4o`
+  - Fallback: `gpt-4o-mini`
+  - Retries: `RETRY_POLICY[agent_key] + 1` attempts per model
+- `contentblitz/tools/search_web.py`
+  - Providers: `serp`, `perplexity`, `auto`
+  - `auto` tries SERP first, then Perplexity when SERP is degraded/unusable
+  - Normalized result schema via `SearchWebResult`
+- `contentblitz/tools/generate_image.py`
+  - Primary: `dall-e-3`
+  - Fallback: `dall-e-2`
+  - Returns URL or provider file reference only (no base64 payloads)
 
-- Deterministic LangGraph workflow with conditional and fan-out routing.
-- Explicit global state model with merge reducers for parallel writer updates.
-- Query classification with deterministic fallback behavior.
-- Research agent with cache-first behavior, source dedupe, and degraded fallback summaries.
-- Blog and LinkedIn draft generation with retry feedback integration.
-- Image path orchestration with prompt enhancement and recoverable failure handling.
-- Quality validator scoring with best-draft tracking.
-- Retry router with per-agent and session-level retry caps.
-- Output assembler with source dedupe and partial-success handling.
-- Export node with deterministic format handling (`markdown`, `html`, `pdf` fallback behavior).
-- Extensive unit and integration test coverage for routing and prompt regression scenarios.
+## Cache and Cost Controls
 
-## What Is Intentionally Stubbed In Phase 1
+- Research cache key format:
+  - `research:{sha256_normalized_query}:{depth}`
+- Default cache backend:
+  - in-memory, process-local
+- Default cache TTL:
+  - 1800 seconds
+- Cost control counters:
+  - `tokens_used_this_session`
+  - `search_queries_used_this_session`
+  - `image_generations_used_this_session`
+  - `total_retries_used_this_session`
+  - `budget_exceeded`
 
-- `contentblitz/tools/text.py` returns deterministic scaffold payloads (no live OpenAI calls).
-- `contentblitz/tools/web_search.py` returns deterministic empty-result payloads (no live SERP/Perplexity calls).
-- `contentblitz/tools/image.py` returns deterministic placeholder payloads (no live image generation calls).
-- Cache and exports are state-driven/deterministic scaffolds, not production persistence/output I/O pipelines.
+## Security Baseline
 
-## Workflow Overview
-
-```text
-START
-  -> query_handler_node
-     -> clarification_node (if clarification_needed) -> END
-     -> image_agent_node (image-only route)
-     -> research_agent_node (if research_required)
-     -> content_strategist_node
-          -> blog_writer_node
-          -> linkedin_writer_node
-          -> image_agent_node (if requested)
-  -> quality_validator_node
-     -> retry_router_node (if retry_needed)
-     -> output_assembler_node
-  -> export_node (if export_requested)
-  -> END
-```
-
-## Repository Layout
-
-```text
-contentblitz/
-  contentblitz/
-    agents/        # 12 workflow nodes + compatibility wrappers
-    core/          # retry utility helpers
-    tools/         # deterministic Phase 1 tool interfaces
-    workflow/      # graph wiring + routing logic
-    config.py
-    state.py
-  docs/
-    ContentBlitz_Execution_Spec.md
-    TESTING_STRATEGY.md
-    KNOWN_LIMITATIONS.md
-    PHASE1_REVIEW_SUMMARY.md
-    RETRY_ROUTER_ARCHITECTURE.md
-  scripts/
-    validate_phase1.py
-    dev/
-      smoke_query_handler.py
-      force_retry_scenarios.py
-  tests/
-    unit/
-    integration/
-  requirements.txt
-  README.md
-```
+- `.env` is never committed.
+- API keys are read only from environment variables.
+- Tools are stateless.
+- State never stores secrets.
+- Provider errors are normalized.
+- Base64 image data is never stored in state.
 
 ## Setup
 
-### 1. Clone
-
 ```bash
-git clone https://github.com/ValMediaLLC/contentblitz.git
-cd contentblitz
+python -m venv .venv
 ```
-
-### 2. Create and Activate Virtual Environment
 
 Windows (PowerShell):
 
 ```powershell
-python -m venv .venv
 .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 macOS/Linux:
 
 ```bash
-python -m venv .venv
 source .venv/bin/activate
-```
-
-### 3. Install Dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
 ## Environment Variables
 
-Create a `.env` file:
+Create `.env` for optional live checks:
 
 ```env
 OPENAI_API_KEY=
 SERP_API_KEY=
 PERPLEXITY_API_KEY=
+CONTENTBLITZ_RUN_LIVE_TESTS=0
+CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
 ```
 
-Note: these are part of the target architecture, but current Phase 1 tool modules are deterministic stubs.
+## Validation and Testing
 
-## Run Validation and Tests
-
-Structural validation:
-
-```powershell
-$env:PYTHONUTF8='1'; python scripts\validate_phase1.py
-```
-
-Unit + integration tests:
+Safe Phase 2 validation (non-live):
 
 ```bash
-pytest tests/unit tests/integration
+python scripts/validate_phase2.py
 ```
 
-Quick full run:
+Unit and integration suite:
 
 ```bash
-pytest -q
+pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
 ```
 
-Coverage:
+Live tests should skip when flags are off:
 
 ```bash
-pytest --cov=contentblitz --cov-report=term-missing
+pytest tests/live -rs
 ```
 
-## Development Smoke Utilities
+Optional live smoke:
 
-End-to-end workflow smoke run:
-
-```powershell
-python scripts/dev/smoke_query_handler.py
+```bash
+python scripts/dev/smoke_phase2_live.py --dry-run
+CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py -s -rs
+CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_search_web.py -s -rs
+CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 pytest tests/live/test_live_generate_image.py -s -rs
 ```
 
-Forced retry scenarios:
+Note: live smoke tests are optional and environment/network dependent. This README does not claim successful live provider execution.
 
-```powershell
-python scripts/dev/force_retry_scenarios.py
-```
+## Key Docs
 
-## Minimal Programmatic Usage
-
-```python
-from contentblitz.state import create_initial_state
-from contentblitz.workflow.graph import build_langgraph
-
-graph = build_langgraph()
-state = create_initial_state(
-    user_query="Write a blog and LinkedIn post about AI workflow automation."
-)
-result = graph.invoke(state)
-
-print(result["workflow_status"])
-print(result["final_response"])
-```
-
-## Key Documentation
-
-- `docs/ContentBlitz_Execution_Spec.md` - canonical architecture and constraints
-- `docs/TESTING_STRATEGY.md` - testing layers and release-gate philosophy
-- `docs/KNOWN_LIMITATIONS.md` - current limitations and planned improvements
-- `docs/RETRY_ROUTER_ARCHITECTURE.md` - retry ownership and safety model
-- `docs/PHASE1_REVIEW_SUMMARY.md` - phase review and readiness summary
-
-## License
-
-MIT License
-
-## Author
-
-ValMedia LLC
+- `docs/ContentBlitz_Execution_Spec.md`
+- `docs/PHASE2_INTEGRATIONS.md`
+- `docs/PROVIDER_CONTRACTS.md`
+- `docs/CACHE_ARCHITECTURE.md`
+- `docs/COST_CONTROLS.md`
+- `docs/TESTING_STRATEGY.md`
+- `docs/KNOWN_LIMITATIONS.md`
+- `docs/PHASE2_LIVE_SMOKE_TESTS.md`

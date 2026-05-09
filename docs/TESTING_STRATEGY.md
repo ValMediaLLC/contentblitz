@@ -2,140 +2,102 @@
 
 ## Overview
 
-ContentBlitz uses a layered testing strategy designed to validate:
+ContentBlitz uses layered testing to validate routing, contracts, state ownership, provider failure handling, cache behavior, and cost-control safety.
 
-- deterministic orchestration behavior
-- graph routing correctness
-- state ownership integrity
-- regression protection
-- retry safety
-- recoverable failure handling
+## Test Layers
 
----
+### Unit Tests (`tests/unit`)
 
-# Test Layers
+Validate isolated behavior for:
 
-## Unit Tests
+- tool contracts and error normalization
+- cache key generation and TTL behavior
+- cost control helpers
+- individual agent node state updates
+- retry and routing logic
 
-Unit tests validate isolated agent and utility behavior.
+### Integration Tests (`tests/integration`)
 
-Examples:
+Validate multi-agent orchestration and end-to-end behavior for:
 
-- query handler classification
-- retry router decisions
-- quality validator scoring
-- export formatting
-- clarification handling
+- graph path correctness
+- provider contract regressions (mocked)
+- cache read/write integration
+- cost control enforcement
+- output assembly and export compatibility
+- no-real-network behavior by default
 
-Location:
+### Optional Live Tests (`tests/live`)
 
-```text
-tests/unit/
-```
+Validate real provider connectivity when explicitly enabled.
 
----
+Rules:
 
-## Integration Tests
+- skip by default
+- never required for normal developer validation
+- may fail due to provider/network conditions
 
-Integration tests validate full orchestration flows and multi-agent interactions.
+## Default Validation Path (Non-Live)
 
-Examples:
-
-- prompt regression flows
-- retry routing
-- output assembly
-- export generation
-- clarification routing
-- error handling
-
-Location:
-
-```text
-tests/integration/
-```
-
----
-
-## Prompt Regression Testing
-
-Prompt regression tests ensure that:
-
-- routing remains stable
-- expected outputs are generated
-- retry behavior remains deterministic
-- fallback behavior remains safe
-
-These tests act as release gates.
-
----
-
-## Smoke Testing
-
-Smoke testing validates end-to-end execution manually using representative prompts.
-
-Script:
+Recommended command:
 
 ```bash
-python scripts/dev/smoke_query_handler.py
+python scripts/validate_phase2.py
 ```
 
----
+This script runs:
 
-# Retry Validation
+1. unit/integration suite with coverage
+2. live tests in skip-validation mode
+3. live smoke script in `--dry-run` mode
 
-Retry behavior is validated through:
+## Direct Commands
 
-- integration retry scenarios
-- forced retry state testing
-- retry counter validation
-- retry cap enforcement
+Unit + integration with coverage:
 
----
-
-# Failure Handling Validation
-
-Failure paths validated include:
-
-- degraded research synthesis
-- image generation failures
-- clarification fallback
-- fatal error handling
-- retry exhaustion
-
----
-
-# Coverage Goals
-
-Target coverage:
-
-```text
-90%+
+```bash
+pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
 ```
 
-Critical orchestration/state modules should maintain high coverage.
+Verify live tests skip when flags are off:
 
-Wrapper modules and compatibility layers may be excluded or lightly tested.
+```bash
+pytest tests/live -rs
+```
 
----
+Live smoke audit dry-run:
 
-# Deterministic Testing Rules
+```bash
+python scripts/dev/smoke_phase2_live.py --dry-run
+```
 
-Tests must:
+## Optional Live Smoke Commands
 
-- avoid real external APIs
-- remain deterministic
-- avoid flaky provider behavior
-- avoid network dependencies
+Text and search:
 
----
+```bash
+CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py -s -rs
+CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_search_web.py -s -rs
+```
 
-# Future Testing Areas
+Image:
 
-Planned Phase 2 additions:
+```bash
+CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 pytest tests/live/test_live_generate_image.py -s -rs
+```
 
-- performance benchmarking
-- concurrency testing
-- persistence testing
-- streaming validation
-- provider integration testing
-- load testing
+## Deterministic Safety Rules
+
+- unit/integration tests must not require API keys
+- unit/integration tests must not call live providers
+- provider clients are mocked in contract and failure suites
+- live tests are opt-in only
+
+## Coverage
+
+Coverage is enforced on `contentblitz` modules in standard validation flows.
+
+Note:
+
+- on some Windows/OneDrive setups, `.coverage` file locks can occur
+- `scripts/validate_phase2.py` uses a temp `COVERAGE_FILE` path to avoid local lock failures
