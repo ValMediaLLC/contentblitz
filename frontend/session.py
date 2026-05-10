@@ -14,6 +14,8 @@ KEY_INITIALIZED = f"{SESSION_PREFIX}initialized"
 KEY_LAST_RESULT = f"{SESSION_PREFIX}last_result"
 KEY_LAST_ERROR = f"{SESSION_PREFIX}last_error"
 KEY_RUN_HISTORY = f"{SESSION_PREFIX}run_history"
+KEY_EXECUTION_STATUS = f"{SESSION_PREFIX}execution_status"
+KEY_LAST_SUBMISSION = f"{SESSION_PREFIX}last_submission"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ def initialize_session_state() -> None:
     st.session_state[KEY_LAST_RESULT] = None
     st.session_state[KEY_LAST_ERROR] = None
     st.session_state[KEY_RUN_HISTORY] = []
+    st.session_state[KEY_EXECUTION_STATUS] = "idle"
+    st.session_state[KEY_LAST_SUBMISSION] = {}
     st.session_state[KEY_INITIALIZED] = True
 
 
@@ -43,6 +47,26 @@ def set_last_result(result: Mapping[str, Any]) -> None:
 
 def set_last_error(message: str) -> None:
     st.session_state[KEY_LAST_ERROR] = str(message).strip()
+
+
+def set_execution_status(status: str) -> None:
+    normalized = str(status).strip().lower() or "idle"
+    st.session_state[KEY_EXECUTION_STATUS] = normalized
+
+
+def get_execution_status() -> str:
+    return str(st.session_state.get(KEY_EXECUTION_STATUS, "idle")).strip().lower() or "idle"
+
+
+def set_last_submission(submission: Mapping[str, Any]) -> None:
+    st.session_state[KEY_LAST_SUBMISSION] = deepcopy(dict(submission))
+
+
+def get_last_submission() -> Dict[str, Any]:
+    value = st.session_state.get(KEY_LAST_SUBMISSION, {})
+    if isinstance(value, dict):
+        return deepcopy(value)
+    return {}
 
 
 def add_history_entry(
@@ -82,4 +106,3 @@ def get_run_history() -> List[Dict[str, Any]]:
         if isinstance(item, dict):
             cleaned.append(deepcopy(item))
     return cleaned
-

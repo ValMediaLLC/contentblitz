@@ -14,7 +14,8 @@ class FrontendConfig:
     default_query_placeholder: str = "Write a short LinkedIn post about AI content workflows."
     default_outputs: Tuple[str, ...] = ("blog", "linkedin")
     available_outputs: Tuple[str, ...] = ("research", "blog", "linkedin", "image")
+    export_formats: Tuple[str, ...] = ("markdown", "html", "pdf")
+    default_export_formats: Tuple[str, ...] = ("markdown",)
 
 
 FRONTEND_CONFIG = FrontendConfig()
-
