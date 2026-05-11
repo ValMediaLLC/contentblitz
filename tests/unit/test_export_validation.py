@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contentblitz.tools.exports.validation import (
     normalize_validation_result,
+    validate_html_export,
     validate_markdown_export,
 )
 
@@ -74,3 +75,40 @@ def test_normalize_validation_result_strips_empty_fields() -> None:
         "warnings": ["warning"],
         "errors": ["error"],
     }
+
+
+def test_validate_html_export_accepts_safe_html() -> None:
+    html = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>ContentBlitz Export</title></head>
+<body>
+  <h1>ContentBlitz Export</h1>
+  <h2>Workflow Summary</h2>
+  <h2>Sources</h2>
+</body>
+</html>
+"""
+    result = validate_html_export(html, sources_exist=True)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_html_export_rejects_unsafe_html_payloads() -> None:
+    html = """<!doctype html>
+<html>
+<body onload="alert(1)">
+<script>alert(1)</script>
+<a href="javascript:alert(1)">x</a>
+OPENAI_API_KEY=sk-secret
+<iframe src="https://evil.example"></iframe>
+</body>
+</html>
+"""
+    result = validate_html_export(html, sources_exist=False)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "script tags" in joined
+    assert "inline javascript handlers" in joined
+    assert "javascript: urls" in joined
+    assert "environment variable" in joined
+    assert "unsafe embed tags" in joined

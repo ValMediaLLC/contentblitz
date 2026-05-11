@@ -8,13 +8,21 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List
 
-from contentblitz.tools.exports.filenames import resolve_markdown_export_path
+from contentblitz.tools.exports.filenames import (
+    resolve_html_export_path,
+    resolve_markdown_export_path,
+)
+from contentblitz.tools.exports.html import (
+    build_html_export_document,
+    sanitize_html_content,
+)
 from contentblitz.tools.exports.markdown import (
     build_markdown_export_document,
     sanitize_markdown_content,
 )
 from contentblitz.tools.exports.validation import (
     normalize_validation_result,
+    validate_html_export,
     validate_markdown_export,
 )
 
@@ -101,7 +109,7 @@ def export_content(content: str, format_name: str) -> Dict[str, Any]:
     """
     Deterministic export helper.
 
-    Markdown writes a local file for download compatibility.
+    Markdown/HTML write local files for download compatibility.
     Other formats remain deterministic path stubs for compatibility.
     """
     normalized = str(format_name or "").strip().lower()
@@ -111,6 +119,11 @@ def export_content(content: str, format_name: str) -> Dict[str, Any]:
 
     if normalized == "markdown":
         resolved_path = resolve_markdown_export_path(content or "content")
+        resolved_path.write_text(_safe_text(content), encoding="utf-8")
+        return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
+
+    if normalized == "html":
+        resolved_path = resolve_html_export_path(content or "content")
         resolved_path.write_text(_safe_text(content), encoding="utf-8")
         return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
 
@@ -141,16 +154,18 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     export_outputs = _build_export_outputs(assembled_outputs, default_export_format)
 
     markdown_document = ""
+    html_document = ""
+    markdown_validation = {"valid": True, "warnings": [], "errors": []}
     if any(fmt in {"markdown", "pdf"} for fmt in formats_requested):
         markdown_document = build_markdown_export_document(state)
         markdown_document = sanitize_markdown_content(markdown_document)
-        validation_result = normalize_validation_result(
+        markdown_validation = normalize_validation_result(
             validate_markdown_export(
                 markdown_document,
                 sources_exist=bool(_safe_list(state.get("sources", []))),
             )
         )
-        for warning in validation_result["warnings"]:
+        for warning in markdown_validation["warnings"]:
             error_log.append(
                 _safe_error_entry(
                     format_name="markdown",
@@ -158,12 +173,39 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     message=warning,
                 )
             )
-        if not validation_result["valid"]:
-            for issue in validation_result["errors"]:
+        if not markdown_validation["valid"]:
+            for issue in markdown_validation["errors"]:
                 error_log.append(
                     _safe_error_entry(
                         format_name="markdown",
                         code="markdown_validation_error",
+                        message=issue,
+                    )
+                )
+
+    if "html" in formats_requested:
+        html_document = build_html_export_document(state)
+        html_document = sanitize_html_content(html_document)
+        html_validation = normalize_validation_result(
+            validate_html_export(
+                html_document,
+                sources_exist=bool(_safe_list(state.get("sources", []))),
+            )
+        )
+        for warning in html_validation["warnings"]:
+            error_log.append(
+                _safe_error_entry(
+                    format_name="html",
+                    code="html_validation_warning",
+                    message=warning,
+                )
+            )
+        if not html_validation["valid"]:
+            for issue in html_validation["errors"]:
+                error_log.append(
+                    _safe_error_entry(
+                        format_name="html",
+                        code="html_validation_error",
                         message=issue,
                     )
                 )
@@ -237,6 +279,34 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                             message=f"PDF fallback failed: {fallback_exc}",
                         )
                     )
+            continue
+
+        if fmt == "html":
+            try:
+                content_to_export = html_document or final_response
+                result = export_content(content_to_export, "html")
+                path = _safe_text(_safe_dict(result).get("path", ""))
+                if path:
+                    export_paths["html"] = _path_for_metadata(path)
+                    export_status["html"] = "completed"
+                else:
+                    export_status["html"] = "failed"
+                    error_log.append(
+                        _safe_error_entry(
+                            format_name="html",
+                            code="html_export_path_missing",
+                            message="HTML export returned no output path.",
+                        )
+                    )
+            except Exception:
+                export_status["html"] = "failed"
+                error_log.append(
+                    _safe_error_entry(
+                        format_name="html",
+                        code="html_export_failed",
+                        message="HTML export failed safely.",
+                    )
+                )
             continue
 
         try:

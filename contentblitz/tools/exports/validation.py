@@ -30,6 +30,12 @@ _TOKEN_PATTERNS = (
     re.compile(r"\bserp_[A-Za-z0-9\-_]{8,}\b", flags=re.IGNORECASE),
 )
 _NONE_NULL_RE = re.compile(r"\b(?:none|null)\b", flags=re.IGNORECASE)
+_SCRIPT_TAG_RE = re.compile(r"(?is)<script\b[^>]*>.*?</script>")
+_UNSAFE_HTML_TAG_RE = re.compile(r"(?is)</?(?:iframe|object|embed)\b[^>]*>")
+_EVENT_HANDLER_ATTR_RE = re.compile(
+    r"""(?is)\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"""
+)
+_JAVASCRIPT_URL_RE = re.compile(r"(?i)javascript:")
 
 
 def _safe_text(value: Any) -> str:
@@ -79,6 +85,63 @@ def validate_markdown_export(
     if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
         errors.append("Raw provider/configuration payload content is not allowed in exports.")
     if sources_exist and "## sources" not in lowered:
+        errors.append("Sources section is required when sources are present.")
+
+    return {
+        "valid": len(errors) == 0,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def validate_html_export(
+    html_text: str,
+    *,
+    sources_exist: bool = False,
+) -> Dict[str, Any]:
+    """
+    Validate html export payload for structure and safety.
+
+    Returns structured validation metadata:
+    {"valid": bool, "warnings": [...], "errors": [...]}
+    """
+    text = _safe_text(html_text)
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    if not text:
+        errors.append("Export content is empty.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+
+    lowered = text.lower()
+    if "<!doctype html>" not in lowered:
+        errors.append("Missing html doctype.")
+    if "<html" not in lowered or "</html>" not in lowered:
+        errors.append("Malformed html document wrapper.")
+    if "<body" not in lowered or "</body>" not in lowered:
+        errors.append("Malformed html body wrapper.")
+
+    if _NONE_NULL_RE.search(text):
+        warnings.append("Found null-like placeholder text.")
+    if _contains_stack_trace(text):
+        errors.append("Stack trace content is not allowed in exports.")
+    if "data:image/" in lowered or "base64" in lowered or "b64_json" in lowered:
+        errors.append("Base64 image payload is not allowed in exports.")
+    if any(env_name in lowered for env_name in _ENV_NAME_PATTERNS):
+        errors.append("Environment variable names are not allowed in exports.")
+    if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
+        errors.append("Credential-like token content is not allowed in exports.")
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+    if _SCRIPT_TAG_RE.search(text):
+        errors.append("Script tags are not allowed in exports.")
+    if _UNSAFE_HTML_TAG_RE.search(text):
+        errors.append("Unsafe embed tags are not allowed in exports.")
+    if _EVENT_HANDLER_ATTR_RE.search(text):
+        errors.append("Inline javascript handlers are not allowed in exports.")
+    if _JAVASCRIPT_URL_RE.search(text):
+        errors.append("javascript: URLs are not allowed in exports.")
+    if sources_exist and "<h2>sources</h2>" not in lowered:
         errors.append("Sources section is required when sources are present.")
 
     return {

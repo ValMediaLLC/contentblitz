@@ -21,8 +21,19 @@ _STACK_TRACE_MARKERS = (
     "stack trace",
     "  file \"",
 )
+_RAW_PROVIDER_PAYLOAD_MARKERS = (
+    "{'code':",
+    '"code":',
+    "configuration_error",
+    "provider':",
+    '"provider":',
+    "recoverable': false",
+    '"recoverable": false',
+)
 _GENERIC_IMAGE_ERROR_RECOVERABLE = "Image generation encountered a recoverable issue."
 _GENERIC_IMAGE_ERROR_FATAL = "Image generation failed safely."
+_GENERIC_RECOVERABLE_WARNING = "A recoverable workflow issue was encountered."
+_GENERIC_FATAL_ERROR = "The workflow ended due to an internal error."
 _WARNING_KEYWORDS = (
     "degraded",
     "recoverable",
@@ -74,13 +85,29 @@ def _normalize_error_message(error: Any) -> str:
         message = _safe_text(error)
         recoverable = False
     if not message:
-        return "A recoverable workflow error occurred." if recoverable else "The workflow ended due to an internal error."
+        return _GENERIC_RECOVERABLE_WARNING if recoverable else _GENERIC_FATAL_ERROR
     lowered = message.lower()
     if any(marker in lowered for marker in _STACK_TRACE_MARKERS):
-        return "A recoverable workflow error occurred." if recoverable else "The workflow ended due to an internal error."
+        return _GENERIC_RECOVERABLE_WARNING if recoverable else _GENERIC_FATAL_ERROR
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        return _GENERIC_RECOVERABLE_WARNING if recoverable else _GENERIC_FATAL_ERROR
     message = _ENV_NAME_RE.sub("[REDACTED]", message)
     message = _TOKEN_RE.sub("[REDACTED]", message)
     return message
+
+
+def _sanitize_warning_text(value: Any) -> str:
+    text = _safe_text(value)
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(marker in lowered for marker in _STACK_TRACE_MARKERS):
+        return ""
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        return _GENERIC_RECOVERABLE_WARNING
+    text = _ENV_NAME_RE.sub("[REDACTED]", text)
+    text = _TOKEN_RE.sub("[REDACTED]", text)
+    return text
 
 
 def _normalize_image_error_message(error: Any) -> str:
@@ -200,8 +227,7 @@ def sanitize_markdown_content(markdown_text: str) -> str:
 
 
 def _render_workflow_summary(state: Mapping[str, Any]) -> str:
-    warnings = _collect_export_warnings(state)
-    workflow_status = _aggregate_export_workflow_status(state, warnings)
+    workflow_status = derive_export_workflow_status(state)
     routing_decision = _safe_text(state.get("routing_decision")) or "unknown"
     requested_outputs = [
         _safe_text(item).lower()
@@ -230,12 +256,12 @@ def _message_indicates_warning(message: str) -> bool:
 def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
     warnings: List[str] = []
     for value in _safe_list(state.get("warnings", [])):
-        text = _safe_text(value)
+        text = _sanitize_warning_text(value)
         if text:
             warnings.append(text)
 
     for value in _safe_list(state.get("status_messages", [])):
-        text = _safe_text(value)
+        text = _sanitize_warning_text(value)
         if text and _message_indicates_warning(text) and text not in warnings:
             warnings.append(text)
 
@@ -253,6 +279,11 @@ def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
             warnings.append(message)
 
     return list(dict.fromkeys(item for item in warnings if item))
+
+
+def collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
+    """Public helper for export renderers to share warning aggregation."""
+    return _collect_export_warnings(state)
 
 
 def _render_warnings_section(state: Mapping[str, Any]) -> str:
@@ -311,6 +342,14 @@ def _aggregate_export_workflow_status(state: Mapping[str, Any], warnings: List[s
     if workflow_status == "success":
         return "success"
     return "success"
+
+
+def derive_export_workflow_status(state: Mapping[str, Any]) -> str:
+    """Public helper for export renderers to share workflow status aggregation."""
+    return _aggregate_export_workflow_status(
+        state,
+        _collect_export_warnings(state),
+    )
 
 
 def _render_text_section(title: str, content: str) -> str:

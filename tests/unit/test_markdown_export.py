@@ -198,6 +198,27 @@ def test_markdown_export_removes_sensitive_and_base64_payloads(tmp_path, monkeyp
     assert "data:image/" not in content.lower()
 
 
+def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        warnings=[],
+        status_messages=[],
+        errors=[
+            {
+                "message": "{'code': 'configuration_error', 'provider': 'openai', 'recoverable': False}",
+                "recoverable": True,
+            }
+        ],
+    )
+    markdown = build_markdown_export_document(state)
+    lowered = markdown.lower()
+    assert "configuration_error" not in lowered
+    assert "provider': 'openai'" not in lowered
+    assert "{'code':" not in lowered
+    assert "a recoverable workflow issue was encountered." in lowered
+
+
 def test_resolve_markdown_export_path_stays_inside_export_dir(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     path = resolve_markdown_export_path("../unsafe/../../attempt")
