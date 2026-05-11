@@ -16,6 +16,9 @@ KEY_LAST_ERROR = f"{SESSION_PREFIX}last_error"
 KEY_RUN_HISTORY = f"{SESSION_PREFIX}run_history"
 KEY_EXECUTION_STATUS = f"{SESSION_PREFIX}execution_status"
 KEY_LAST_SUBMISSION = f"{SESSION_PREFIX}last_submission"
+KEY_PROGRESS_EVENTS = f"{SESSION_PREFIX}progress_events"
+KEY_NODE_STATUSES = f"{SESSION_PREFIX}node_statuses"
+KEY_STATUS_MESSAGES = f"{SESSION_PREFIX}status_messages"
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,9 @@ def initialize_session_state() -> None:
     st.session_state[KEY_RUN_HISTORY] = []
     st.session_state[KEY_EXECUTION_STATUS] = "idle"
     st.session_state[KEY_LAST_SUBMISSION] = {}
+    st.session_state[KEY_PROGRESS_EVENTS] = []
+    st.session_state[KEY_NODE_STATUSES] = {}
+    st.session_state[KEY_STATUS_MESSAGES] = []
     st.session_state[KEY_INITIALIZED] = True
 
 
@@ -106,3 +112,44 @@ def get_run_history() -> List[Dict[str, Any]]:
         if isinstance(item, dict):
             cleaned.append(deepcopy(item))
     return cleaned
+
+
+def set_progress_events(events: List[Mapping[str, Any]]) -> None:
+    cleaned: list[dict[str, Any]] = []
+    for item in events:
+        if isinstance(item, Mapping):
+            cleaned.append(deepcopy(dict(item)))
+    st.session_state[KEY_PROGRESS_EVENTS] = cleaned
+
+
+def get_progress_events() -> List[Dict[str, Any]]:
+    value = st.session_state.get(KEY_PROGRESS_EVENTS, [])
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            cleaned.append(deepcopy(item))
+    return cleaned
+
+
+def set_node_statuses(statuses: Mapping[str, str]) -> None:
+    st.session_state[KEY_NODE_STATUSES] = deepcopy(dict(statuses))
+
+
+def get_node_statuses() -> Dict[str, str]:
+    value = st.session_state.get(KEY_NODE_STATUSES, {})
+    if isinstance(value, dict):
+        return deepcopy({str(key): str(val) for key, val in value.items()})
+    return {}
+
+
+def set_status_messages(messages: List[str]) -> None:
+    st.session_state[KEY_STATUS_MESSAGES] = [str(item).strip() for item in messages if str(item).strip()]
+
+
+def get_status_messages() -> List[str]:
+    value = st.session_state.get(KEY_STATUS_MESSAGES, [])
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
