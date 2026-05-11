@@ -48,7 +48,7 @@ def test_html_export_writes_path() -> None:
     assert metadata["exported_at"]
 
 
-def test_pdf_failure_falls_back_to_markdown(monkeypatch) -> None:
+def test_pdf_failure_marks_pdf_failed_safely(monkeypatch) -> None:
     def fake_export_content(content: str, format_name: str):
         if format_name == "pdf":
             raise RuntimeError("pdf export unavailable")
@@ -66,8 +66,9 @@ def test_pdf_failure_falls_back_to_markdown(monkeypatch) -> None:
     updates = export_node_module.export_node(state)
     metadata = updates["export_metadata"]
 
-    assert metadata["export_paths"]["pdf"].endswith(".md")
-    assert metadata["export_paths"]["markdown"].endswith(".md")
+    assert "pdf" not in metadata["export_paths"]
+    assert metadata["export_status"]["pdf"] == "failed"
+    assert "markdown" not in metadata["export_paths"]
     assert metadata["error_log"]
     assert metadata["error_log"][0]["format"] == "pdf"
 

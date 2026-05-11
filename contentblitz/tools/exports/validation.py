@@ -36,6 +36,7 @@ _EVENT_HANDLER_ATTR_RE = re.compile(
     r"""(?is)\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"""
 )
 _JAVASCRIPT_URL_RE = re.compile(r"(?i)javascript:")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
 
 def _safe_text(value: Any) -> str:
@@ -142,6 +143,73 @@ def validate_html_export(
     if _JAVASCRIPT_URL_RE.search(text):
         errors.append("javascript: URLs are not allowed in exports.")
     if sources_exist and "<h2>sources</h2>" not in lowered:
+        errors.append("Sources section is required when sources are present.")
+
+    return {
+        "valid": len(errors) == 0,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def validate_pdf_export(
+    pdf_payload: bytes | str,
+    *,
+    sources_exist: bool = False,
+) -> Dict[str, Any]:
+    """
+    Validate pdf export payload for structure and safety.
+
+    Returns structured validation metadata:
+    {"valid": bool, "warnings": [...], "errors": [...]}
+    """
+    if isinstance(pdf_payload, bytes):
+        binary = pdf_payload
+        text = pdf_payload.decode("latin-1", errors="ignore")
+    else:
+        text = _safe_text(pdf_payload)
+        binary = text.encode("latin-1", errors="ignore")
+
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    if not binary:
+        errors.append("Export content is empty.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+
+    if not binary.startswith(b"%PDF-"):
+        errors.append("Missing pdf header.")
+    if b"xref" not in binary:
+        errors.append("Missing pdf cross-reference table.")
+    if b"trailer" not in binary:
+        errors.append("Missing pdf trailer.")
+    if b"%%EOF" not in binary:
+        errors.append("Missing pdf EOF marker.")
+
+    lowered = text.lower()
+    if _NONE_NULL_RE.search(text):
+        warnings.append("Found null-like placeholder text.")
+    if _contains_stack_trace(text):
+        errors.append("Stack trace content is not allowed in exports.")
+    if "data:image/" in lowered or "base64" in lowered or "b64_json" in lowered:
+        errors.append("Base64 image payload is not allowed in exports.")
+    if any(env_name in lowered for env_name in _ENV_NAME_PATTERNS):
+        errors.append("Environment variable names are not allowed in exports.")
+    if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
+        errors.append("Credential-like token content is not allowed in exports.")
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+    if _SCRIPT_TAG_RE.search(text):
+        errors.append("Script tags are not allowed in exports.")
+    if _UNSAFE_HTML_TAG_RE.search(text):
+        errors.append("Unsafe embed tags are not allowed in exports.")
+    if _EVENT_HANDLER_ATTR_RE.search(text):
+        errors.append("Inline javascript handlers are not allowed in exports.")
+    if _JAVASCRIPT_URL_RE.search(text):
+        errors.append("javascript: URLs are not allowed in exports.")
+    if _CONTROL_CHARS_RE.search(text):
+        warnings.append("Found control characters in export content.")
+    if sources_exist and "sources" not in lowered:
         errors.append("Sources section is required when sources are present.")
 
     return {

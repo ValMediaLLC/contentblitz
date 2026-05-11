@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 from contentblitz.tools.exports.filenames import (
     resolve_html_export_path,
     resolve_markdown_export_path,
+    resolve_pdf_export_path,
 )
 from contentblitz.tools.exports.html import (
     build_html_export_document,
@@ -20,10 +21,15 @@ from contentblitz.tools.exports.markdown import (
     build_markdown_export_document,
     sanitize_markdown_content,
 )
+from contentblitz.tools.exports.pdf import (
+    build_pdf_document_bytes_from_text,
+    build_pdf_export_document,
+)
 from contentblitz.tools.exports.validation import (
     normalize_validation_result,
     validate_html_export,
     validate_markdown_export,
+    validate_pdf_export,
 )
 
 _SUPPORTED_EXPORT_FORMATS = {"markdown", "html", "pdf"}
@@ -105,11 +111,11 @@ def _path_for_metadata(path_value: str) -> str:
         return path_text.replace("\\", "/")
 
 
-def export_content(content: str, format_name: str) -> Dict[str, Any]:
+def export_content(content: Any, format_name: str) -> Dict[str, Any]:
     """
     Deterministic export helper.
 
-    Markdown/HTML write local files for download compatibility.
+    Markdown/HTML/PDF write local files for download compatibility.
     Other formats remain deterministic path stubs for compatibility.
     """
     normalized = str(format_name or "").strip().lower()
@@ -127,7 +133,23 @@ def export_content(content: str, format_name: str) -> Dict[str, Any]:
         resolved_path.write_text(_safe_text(content), encoding="utf-8")
         return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
 
-    digest = sha256((content or "").encode("utf-8")).hexdigest()[:12]
+    if normalized == "pdf":
+        if isinstance(content, bytes):
+            pdf_bytes = content
+            seed = sha256(content).hexdigest()
+        else:
+            text_content = _safe_text(content)
+            seed = text_content or "content"
+            pdf_bytes = build_pdf_document_bytes_from_text(text_content)
+        resolved_path = resolve_pdf_export_path(seed or "content")
+        resolved_path.write_bytes(pdf_bytes)
+        return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
+
+    if isinstance(content, bytes):
+        digest_source = content
+    else:
+        digest_source = _safe_text(content).encode("utf-8")
+    digest = sha256(digest_source).hexdigest()[:12]
     path = f"exports/content_{digest}.{extension_map[normalized]}"
     return {"format": normalized, "path": path.replace("\\", "/")}
 
@@ -155,6 +177,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     markdown_document = ""
     html_document = ""
+    pdf_document = b""
     markdown_validation = {"valid": True, "warnings": [], "errors": []}
     if any(fmt in {"markdown", "pdf"} for fmt in formats_requested):
         markdown_document = build_markdown_export_document(state)
@@ -210,6 +233,32 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     )
                 )
 
+    if "pdf" in formats_requested:
+        pdf_document = build_pdf_export_document(state)
+        pdf_validation = normalize_validation_result(
+            validate_pdf_export(
+                pdf_document,
+                sources_exist=bool(_safe_list(state.get("sources", []))),
+            )
+        )
+        for warning in pdf_validation["warnings"]:
+            error_log.append(
+                _safe_error_entry(
+                    format_name="pdf",
+                    code="pdf_validation_warning",
+                    message=warning,
+                )
+            )
+        if not pdf_validation["valid"]:
+            for issue in pdf_validation["errors"]:
+                error_log.append(
+                    _safe_error_entry(
+                        format_name="pdf",
+                        code="pdf_validation_error",
+                        message=issue,
+                    )
+                )
+
     for fmt in formats_requested:
         if fmt not in _SUPPORTED_EXPORT_FORMATS:
             export_status[fmt] = "failed"
@@ -252,33 +301,32 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if fmt == "pdf":
             try:
-                result = export_content(markdown_document or final_response, "pdf")
-                export_paths["pdf"] = str(_safe_dict(result).get("path", "")).strip()
-                export_status["pdf"] = "completed"
-            except Exception as exc:
+                content_to_export = pdf_document if pdf_document else build_pdf_document_bytes_from_text(
+                    markdown_document or final_response
+                )
+                result = export_content(content_to_export, "pdf")
+                path = _safe_text(_safe_dict(result).get("path", ""))
+                if path:
+                    export_paths["pdf"] = _path_for_metadata(path)
+                    export_status["pdf"] = "completed"
+                else:
+                    export_status["pdf"] = "failed"
+                    error_log.append(
+                        _safe_error_entry(
+                            format_name="pdf",
+                            code="pdf_export_path_missing",
+                            message="PDF export returned no output path.",
+                        )
+                    )
+            except Exception:
                 error_log.append(
                     _safe_error_entry(
                         format_name="pdf",
                         code="pdf_export_failed",
-                        message=str(exc),
+                        message="PDF export failed safely.",
                     )
                 )
                 export_status["pdf"] = "failed"
-                try:
-                    fallback = export_content(markdown_document or final_response, "markdown")
-                    fallback_path = str(_safe_dict(fallback).get("path", "")).strip()
-                    if fallback_path:
-                        export_paths["pdf"] = fallback_path
-                        export_paths.setdefault("markdown", fallback_path)
-                        export_status.setdefault("markdown", "completed")
-                except Exception as fallback_exc:
-                    error_log.append(
-                        _safe_error_entry(
-                            format_name="markdown",
-                            code="pdf_markdown_fallback_failed",
-                            message=f"PDF fallback failed: {fallback_exc}",
-                        )
-                    )
             continue
 
         if fmt == "html":

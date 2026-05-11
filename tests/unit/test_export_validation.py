@@ -4,6 +4,7 @@ from contentblitz.tools.exports.validation import (
     normalize_validation_result,
     validate_html_export,
     validate_markdown_export,
+    validate_pdf_export,
 )
 
 
@@ -112,3 +113,36 @@ OPENAI_API_KEY=sk-secret
     assert "javascript: urls" in joined
     assert "environment variable" in joined
     assert "unsafe embed tags" in joined
+
+
+def test_validate_pdf_export_accepts_safe_pdf() -> None:
+    payload = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
+        b"xref\n0 3\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n"
+        b"trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n100\n%%EOF\n"
+    )
+    result = validate_pdf_export(payload, sources_exist=False)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_pdf_export_rejects_sensitive_payloads() -> None:
+    payload = (
+        b"%PDF-1.4\n"
+        b"Traceback (most recent call last):\n"
+        b"OPENAI_API_KEY=sk-secret\n"
+        b"data:image/png;base64,AAAA\n"
+        b"<script>alert(1)</script>\n"
+        b"<a href=\"javascript:alert(1)\">x</a>\n"
+        b"xref\ntrailer\n%%EOF\n"
+    )
+    result = validate_pdf_export(payload, sources_exist=False)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "stack trace" in joined
+    assert "environment variable" in joined
+    assert "base64" in joined
+    assert "script tags" in joined
+    assert "javascript: urls" in joined
