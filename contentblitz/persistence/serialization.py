@@ -126,16 +126,25 @@ def _sanitize_export_metadata(export_metadata: Any) -> Dict[str, Any]:
     meta = _safe_dict(export_metadata)
     formats = [token for token in [_safe_text(item).lower() for item in _safe_list(meta.get("formats_requested", []))] if token]
     raw_paths = _safe_dict(meta.get("export_paths", {}))
+    raw_status = _safe_dict(meta.get("export_status", {}))
     paths: Dict[str, str] = {}
+    status: Dict[str, str] = {}
     for key, value in raw_paths.items():
         fmt = _safe_text(key).lower()
         path_value = _safe_text(value)
         if not fmt or not path_value:
             continue
         paths[fmt] = path_value
+    for key, value in raw_status.items():
+        fmt = _safe_text(key).lower()
+        status_value = _safe_text(value).lower()
+        if not fmt or not status_value:
+            continue
+        status[fmt] = status_value
     return {
         "formats_requested": formats,
         "export_paths": paths,
+        "export_status": status,
     }
 
 

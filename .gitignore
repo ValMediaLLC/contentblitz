@@ -6,6 +6,7 @@ __pycache__/
 .pytest_tmp*/
 .pytest_basetemp*/
 .tmp/
+/exports/
 pytest-cache-files-*/
 .coverage
 .coverage.*
