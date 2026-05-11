@@ -1,0 +1,13 @@
+[client]
+showSidebarNavigation = false
+
+[theme]
+base = "light"
+primaryColor = "#0d9488"
+backgroundColor = "#f4f8fc"
+secondaryBackgroundColor = "#eaf1f9"
+textColor = "#0f172a"
+linkColor = "#0369a1"
+showWidgetBorder = false
+baseRadius = "0.85rem"
+buttonRadius = "0.85rem"

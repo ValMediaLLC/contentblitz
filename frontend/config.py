@@ -16,6 +16,8 @@ class FrontendConfig:
     available_outputs: Tuple[str, ...] = ("research", "blog", "linkedin", "image")
     export_formats: Tuple[str, ...] = ("markdown", "html", "pdf")
     default_export_formats: Tuple[str, ...] = ("markdown",)
+    logo_path: str = "frontend/assets/contentblitz_logo.svg"
+    logo_icon_path: str = "frontend/assets/contentblitz_icon.svg"
 
 
 FRONTEND_CONFIG = FrontendConfig()

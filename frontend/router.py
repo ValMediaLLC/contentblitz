@@ -23,9 +23,26 @@ ROUTES: List[PageRoute] = [
     PageRoute(key="about", title="About", renderer=about.render),
 ]
 
+ROUTE_LABELS: Dict[str, str] = {
+    "run": ":material/rocket_launch: Run Workflow",
+    "history": ":material/history: History",
+    "about": ":material/info: About",
+}
+
 
 def render_router() -> None:
-    route_map: Dict[str, Callable[[], None]] = {route.title: route.renderer for route in ROUTES}
-    selected_title = st.sidebar.radio("Navigation", list(route_map.keys()), index=0)
-    route_map[selected_title]()
+    route_by_key: Dict[str, PageRoute] = {route.key: route for route in ROUTES}
+    route_keys = [route.key for route in ROUTES]
 
+    selected_key = st.segmented_control(
+        label="Navigation",
+        options=route_keys,
+        default=route_keys[0],
+        format_func=lambda route_key: ROUTE_LABELS.get(route_key, route_key.title()),
+        key="cbx_route_nav",
+        selection_mode="single",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    active_key = selected_key if selected_key in route_by_key else route_keys[0]
+    route_by_key[active_key].renderer()
