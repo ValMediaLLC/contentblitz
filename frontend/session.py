@@ -52,7 +52,14 @@ def set_last_result(result: Mapping[str, Any]) -> None:
 
 
 def set_last_error(message: str) -> None:
-    st.session_state[KEY_LAST_ERROR] = str(message).strip()
+    raw = message
+    if raw is None:
+        st.session_state[KEY_LAST_ERROR] = ""
+        return
+    cleaned = str(raw).strip()
+    if cleaned.lower() in {"none", "null"}:
+        cleaned = ""
+    st.session_state[KEY_LAST_ERROR] = cleaned
 
 
 def set_execution_status(status: str) -> None:
@@ -100,7 +107,13 @@ def get_last_result() -> Dict[str, Any] | None:
 
 
 def get_last_error() -> str:
-    return str(st.session_state.get(KEY_LAST_ERROR, "")).strip()
+    value = st.session_state.get(KEY_LAST_ERROR, "")
+    if value is None:
+        return ""
+    cleaned = str(value).strip()
+    if cleaned.lower() in {"none", "null"}:
+        return ""
+    return cleaned
 
 
 def get_run_history() -> List[Dict[str, Any]]:
@@ -145,11 +158,27 @@ def get_node_statuses() -> Dict[str, str]:
 
 
 def set_status_messages(messages: List[str]) -> None:
-    st.session_state[KEY_STATUS_MESSAGES] = [str(item).strip() for item in messages if str(item).strip()]
+    cleaned_messages: list[str] = []
+    for item in messages:
+        if item is None:
+            continue
+        cleaned = str(item).strip()
+        if not cleaned or cleaned.lower() in {"none", "null"}:
+            continue
+        cleaned_messages.append(cleaned)
+    st.session_state[KEY_STATUS_MESSAGES] = cleaned_messages
 
 
 def get_status_messages() -> List[str]:
     value = st.session_state.get(KEY_STATUS_MESSAGES, [])
     if not isinstance(value, list):
         return []
-    return [str(item).strip() for item in value if str(item).strip()]
+    cleaned_messages: list[str] = []
+    for item in value:
+        if item is None:
+            continue
+        cleaned = str(item).strip()
+        if not cleaned or cleaned.lower() in {"none", "null"}:
+            continue
+        cleaned_messages.append(cleaned)
+    return cleaned_messages

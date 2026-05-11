@@ -100,7 +100,11 @@ def _status_from_node_update(node_name: str, updates: Mapping[str, Any]) -> str:
         return "completed"
 
     if node_name == EXPORT_NODE:
-        error_log = _safe_list(_safe_dict(updates.get("export_metadata", {})).get("error_log", []))
+        export_metadata = _safe_dict(updates.get("export_metadata", {}))
+        formats_requested = _safe_list(export_metadata.get("formats_requested", []))
+        if not formats_requested:
+            return "skipped"
+        error_log = _safe_list(export_metadata.get("error_log", []))
         if error_log:
             return "degraded"
         return "completed"

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
+from contentblitz.agents import image_agent as image_agent_module
+from contentblitz.agents import query_handler as query_handler_module
 from contentblitz.ui.progress import create_progress_event
 from contentblitz.ui.rendering import build_render_payload
-from contentblitz.ui.status import build_status_messages, derive_node_statuses, summarize_workflow_status
+from contentblitz.ui.status import (
+    apply_optional_node_skips,
+    build_status_messages,
+    derive_node_statuses,
+    summarize_workflow_status,
+)
+from frontend.services.orchestrator_client import stream_workflow_progress
 
 
 def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> None:
@@ -141,3 +151,75 @@ def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> 
     assert all("sk-secret" not in item["message"] for item in render_payload["errors"])
     assert any("degraded" in warning.lower() for warning in render_payload["warnings"])
     assert any("Image generation encountered a recoverable issue" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "create futuristic cyberpunk hoodie artwork for streetwear branding",
+        "create futuristic shark-themed beachwear image concepts",
+    ],
+)
+def test_image_only_routing_and_rendering_remain_deterministic(query: str, monkeypatch) -> None:
+    def fail_query_classification(*args, **kwargs):
+        raise AssertionError("query_handler.generate_text should not run for explicit image-only requests.")
+
+    def fake_prompt_enhancer(*args, **kwargs):
+        return {"output": "Enhanced image prompt", "total_tokens": 0}
+
+    def fake_image_provider(*args, **kwargs):
+        return {
+            "images": [],
+            "provider_primary": "dall-e-3",
+            "provider_fallback": "dall-e-2",
+            "provider_used": "dall-e-2",
+            "degraded": True,
+            "error": {"code": "provider_failure"},
+        }
+
+    monkeypatch.setattr(query_handler_module, "generate_text", fail_query_classification)
+    monkeypatch.setattr(image_agent_module, "generate_text", fake_prompt_enhancer)
+    monkeypatch.setattr(image_agent_module, "generate_image", fake_image_provider)
+
+    events: list[dict] = []
+    final_result: dict = {}
+    for event in stream_workflow_progress(
+        user_query=query,
+        requested_outputs=["image"],
+        export_requested=False,
+        export_formats=[],
+    ):
+        if event.get("type") == "progress":
+            raw = event.get("event")
+            if isinstance(raw, dict):
+                events.append(raw)
+        elif event.get("type") == "final":
+            payload = event.get("result")
+            if isinstance(payload, dict):
+                final_result = payload
+
+    node_statuses = apply_optional_node_skips(
+        state=final_result,
+        node_statuses=derive_node_statuses(events),
+    )
+    render_payload = build_render_payload(state=final_result, node_statuses=node_statuses)
+    summary = summarize_workflow_status(
+        node_statuses,
+        workflow_status=str(final_result.get("workflow_status", "")),
+    )
+    executed_nodes = {str(event.get("node_name", "")).strip() for event in events}
+
+    assert "image_agent_node" in executed_nodes
+    assert "research_agent_node" not in executed_nodes
+    assert "blog_writer_node" not in executed_nodes
+    assert "linkedin_writer_node" not in executed_nodes
+
+    assert node_statuses["blog_writer_node"] in {"pending", "skipped"}
+    assert node_statuses["linkedin_writer_node"] in {"pending", "skipped"}
+    assert node_statuses["export_node"] == "skipped"
+
+    assert summary == "partial_success"
+    assert render_payload["partial_outputs"]["blog"] == ""
+    assert render_payload["partial_outputs"]["linkedin"] == ""
+    assert render_payload["image_prompts"]
+    assert any("recoverable issue" in msg.lower() for msg in build_status_messages(state=final_result, node_statuses=node_statuses))

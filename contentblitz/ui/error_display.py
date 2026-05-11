@@ -62,6 +62,8 @@ def _safe_message(
     )
     fallback = _safe_text(default_message) or base_default
     candidate = _safe_text(raw_message) or fallback
+    if candidate.strip().lower() in {"none", "null"}:
+        candidate = fallback
 
     if _contains_stack_trace(candidate):
         candidate = fallback
@@ -123,4 +125,3 @@ def normalize_errors_for_display(errors: Any) -> list[dict[str, Any]]:
     for item in errors:
         normalized.append(normalize_error_for_display(item))
     return normalized
-

@@ -39,6 +39,7 @@ def test_partial_blog_renders_only_after_blog_writer_completion() -> None:
     statuses["blog_writer_node"] = "completed"
     payload_after = build_render_payload(state=state, node_statuses=statuses)
     assert payload_after["partial_outputs"]["blog"] == "Blog draft body"
+    assert payload_after["partial_output_mode"] == "blog_only"
 
 
 def test_partial_linkedin_renders_only_after_linkedin_writer_completion() -> None:
@@ -47,6 +48,7 @@ def test_partial_linkedin_renders_only_after_linkedin_writer_completion() -> Non
     statuses["linkedin_writer_node"] = "completed"
     payload = build_render_payload(state=state, node_statuses=statuses)
     assert payload["partial_outputs"]["linkedin"] == "LinkedIn draft body"
+    assert payload["partial_output_mode"] == "linkedin_only"
 
 
 def test_research_report_renders_after_research_or_output_assembler_completion() -> None:
@@ -58,6 +60,31 @@ def test_research_report_renders_after_research_or_output_assembler_completion()
     statuses["research_agent_node"] = "completed"
     payload_after = build_render_payload(state=state, node_statuses=statuses)
     assert payload_after["partial_outputs"]["research"] == "Research report body"
+    assert payload_after["partial_output_mode"] == "research_only"
+
+
+def test_multi_output_renders_multi_output_mode() -> None:
+    state = _base_state()
+    statuses = build_initial_node_statuses()
+    statuses["blog_writer_node"] = "completed"
+    statuses["linkedin_writer_node"] = "completed"
+    statuses["output_assembler_node"] = "completed"
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    assert payload["partial_output_mode"] == "multi_output"
+    section_labels = [item["label"] for item in payload["partial_output_sections"]]
+    assert "Blog Draft" in section_labels
+    assert "LinkedIn Draft" in section_labels
+
+
+def test_image_only_does_not_render_blog_or_linkedin_partials() -> None:
+    state = _base_state()
+    state["requested_outputs"] = ["image"]
+    statuses = build_initial_node_statuses()
+    statuses["image_agent_node"] = "completed"
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    assert payload["partial_outputs"]["blog"] == ""
+    assert payload["partial_outputs"]["linkedin"] == ""
+    assert payload["partial_output_mode"] == "none"
 
 
 def test_final_response_is_included_when_available() -> None:
@@ -105,3 +132,13 @@ def test_render_payload_does_not_mutate_workflow_state() -> None:
     before = copy.deepcopy(state)
     _ = build_render_payload(state=state, node_statuses=build_initial_node_statuses())
     assert state == before
+
+
+def test_export_off_marks_export_node_skipped_in_payload_statuses() -> None:
+    state = _base_state()
+    state["export_requested"] = False
+    state["export_metadata"] = {"formats_requested": [], "export_paths": {}, "error_log": []}
+    statuses = build_initial_node_statuses()
+    statuses["export_node"] = "completed"
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    assert payload["node_statuses"]["export_node"] == "skipped"

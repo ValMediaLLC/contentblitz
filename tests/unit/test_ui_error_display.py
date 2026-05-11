@@ -52,3 +52,9 @@ def test_normalize_error_for_display_preserves_safe_structure() -> None:
 
 def test_normalize_errors_for_display_handles_non_list_input() -> None:
     assert normalize_errors_for_display(None) == []
+
+
+def test_none_like_message_falls_back_to_safe_text() -> None:
+    normalized = normalize_error_for_display({"message": None, "recoverable": False})
+    assert normalized["message"]
+    assert normalized["message"].lower() not in {"none", "null"}

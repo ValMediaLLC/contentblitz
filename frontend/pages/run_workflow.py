@@ -6,7 +6,13 @@ import streamlit as st
 
 from contentblitz.ui.progress import build_pending_progress_events
 from contentblitz.ui.rendering import build_render_payload
-from contentblitz.ui.status import build_status_messages, derive_node_statuses
+from contentblitz.ui.status import (
+    apply_optional_node_skips,
+    build_status_messages,
+    derive_node_statuses,
+    summarize_workflow_status,
+    workflow_requires_clarification,
+)
 from frontend.components.result_view import (
     render_degraded_and_error_state,
     render_execution_indicators,
@@ -45,15 +51,24 @@ from frontend.session import (
 )
 
 
-def _execution_status_from_result(result: dict[str, object]) -> str:
-    workflow_status = str(result.get("workflow_status", "")).strip().lower()
-    if workflow_status in {"failed", "error", "error_handled"}:
-        return "failed"
-    if workflow_status in {"partial_success", "completed_with_warnings"}:
-        return "partial_success"
-    if workflow_status:
-        return "success"
-    return "completed"
+def _execution_status_from_result(
+    *,
+    result: dict[str, object],
+    node_statuses: dict[str, str],
+) -> str:
+    normalized_statuses = apply_optional_node_skips(
+        state=result,
+        node_statuses=node_statuses,
+    )
+    clarification_required = workflow_requires_clarification(
+        state=result,
+        node_statuses=normalized_statuses,
+    )
+    return summarize_workflow_status(
+        normalized_statuses,
+        workflow_status=str(result.get("workflow_status", "")).strip(),
+        clarification_required=clarification_required,
+    )
 
 
 def _build_controls() -> WorkflowControls:
@@ -169,13 +184,24 @@ def render() -> None:
                                     set_progress_events(progress_events)
                                     node_statuses = derive_node_statuses(progress_events)
                                     set_node_statuses(node_statuses)
+                normalized_node_statuses = apply_optional_node_skips(
+                    state=final_result,
+                    node_statuses=node_statuses,
+                )
+                set_node_statuses(normalized_node_statuses)
+                ui_workflow_status = _execution_status_from_result(
+                    result=final_result,
+                    node_statuses=normalized_node_statuses,
+                )
+                final_result["ui_workflow_status"] = ui_workflow_status
+                final_result["ui_node_statuses"] = normalized_node_statuses
 
                 set_last_result(final_result)
-                set_execution_status(_execution_status_from_result(final_result))
+                set_execution_status(ui_workflow_status)
                 set_status_messages(
                     build_status_messages(
                         state=final_result,
-                        node_statuses=node_statuses,
+                        node_statuses=normalized_node_statuses,
                     )
                 )
                 add_history_entry(
@@ -196,11 +222,30 @@ def render() -> None:
 
     result = get_last_result()
     execution_status = get_execution_status()
-    render_execution_indicators(execution_status=execution_status, result=result or {})
+    result_for_indicators = result or {}
+    if isinstance(result, dict):
+        normalized_indicator_statuses = apply_optional_node_skips(
+            state=result,
+            node_statuses=get_node_statuses(),
+        )
+        clarification_required = workflow_requires_clarification(
+            state=result,
+            node_statuses=normalized_indicator_statuses,
+        )
+        indicator_workflow_status = summarize_workflow_status(
+            normalized_indicator_statuses,
+            workflow_status=str(result.get("workflow_status", "")).strip(),
+            clarification_required=clarification_required,
+        )
+        result_for_indicators = dict(result)
+        result_for_indicators["ui_workflow_status"] = indicator_workflow_status
+    render_execution_indicators(execution_status=execution_status, result=result_for_indicators)
     progress_events = get_progress_events()
     node_statuses = get_node_statuses()
     if not node_statuses and progress_events:
         node_statuses = derive_node_statuses(progress_events)
+    if isinstance(result, dict):
+        node_statuses = apply_optional_node_skips(state=result, node_statuses=node_statuses)
     render_node_execution_statuses(node_statuses)
     render_progress_events(progress_events)
     render_status_messages(get_status_messages())
@@ -222,7 +267,7 @@ def render() -> None:
     )
     render_degraded_and_error_state(render_payload)
     render_partial_outputs(render_payload)
-    render_result_header(result)
+    render_result_header({"ui_workflow_status": render_payload.get("workflow_status", "")})
     render_final_response({"final_response": render_payload.get("final_response", "")})
     render_sources({"sources": render_payload.get("sources", [])})
     render_export_status(render_payload)

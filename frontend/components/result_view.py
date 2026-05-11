@@ -9,7 +9,11 @@ from contentblitz.workflow.routing import AUTHORITATIVE_NODES
 
 
 def render_result_header(result: Mapping[str, Any]) -> None:
-    workflow_status = str(result.get("workflow_status", "unknown")).strip() or "unknown"
+    workflow_status = (
+        str(result.get("ui_workflow_status", "")).strip()
+        or str(result.get("workflow_status", "unknown")).strip()
+        or "unknown"
+    )
     st.subheader("Workflow Result")
     st.write(f"Status: `{workflow_status}`")
 
@@ -23,7 +27,10 @@ def render_execution_indicators(
     routing_decision = ""
     cost_controls: Mapping[str, Any] = {}
     if isinstance(result, Mapping):
-        workflow_status = str(result.get("workflow_status", "")).strip()
+        workflow_status = (
+            str(result.get("ui_workflow_status", "")).strip()
+            or str(result.get("workflow_status", "")).strip()
+        )
         routing_decision = str(result.get("routing_decision", "")).strip()
         raw_cost_controls = result.get("cost_controls", {})
         if isinstance(raw_cost_controls, Mapping):
@@ -84,7 +91,10 @@ def render_status_messages(messages: list[str]) -> None:
         return
     st.subheader("Workflow Messages")
     for message in messages:
-        st.info(str(message).strip())
+        safe_message = str(message).strip()
+        if not safe_message or safe_message.lower() in {"none", "null"}:
+            continue
+        st.info(safe_message)
 
 
 def render_final_response(result: Mapping[str, Any]) -> None:
@@ -116,23 +126,42 @@ def render_sources(result: Mapping[str, Any]) -> None:
 
 
 def render_partial_outputs(render_payload: Mapping[str, Any]) -> None:
-    partial_outputs = render_payload.get("partial_outputs", {})
-    if not isinstance(partial_outputs, Mapping):
-        partial_outputs = {}
+    mode = str(render_payload.get("partial_output_mode", "none")).strip().lower()
+    raw_sections = render_payload.get("partial_output_sections", [])
+    sections: list[tuple[str, str]] = []
+    if isinstance(raw_sections, list):
+        for item in raw_sections:
+            if not isinstance(item, Mapping):
+                continue
+            label = str(item.get("label", "")).strip()
+            content = str(item.get("content", "")).strip()
+            if not label or not content:
+                continue
+            sections.append((label, content))
 
-    blog = str(partial_outputs.get("blog", "")).strip()
-    linkedin = str(partial_outputs.get("linkedin", "")).strip()
-    research = str(partial_outputs.get("research", "")).strip()
-
-    if blog:
+    if mode == "multi_output" and sections:
+        st.subheader("Partial Outputs")
+        for label, content in sections:
+            st.markdown(f"**{label}**")
+            st.markdown(content)
+    elif mode == "blog_only" and sections:
         st.subheader("Partial Blog Draft")
-        st.markdown(blog)
-    if linkedin:
+        st.markdown(sections[0][1])
+    elif mode == "linkedin_only" and sections:
         st.subheader("Partial LinkedIn Draft")
-        st.markdown(linkedin)
-    if research:
-        st.subheader("Research Summary")
-        st.markdown(research)
+        st.markdown(sections[0][1])
+    elif mode == "research_only" and sections:
+        st.subheader("Research Summary / Research Report")
+        st.markdown(sections[0][1])
+    elif len(sections) == 1:
+        label, content = sections[0]
+        if label.lower().startswith("blog"):
+            st.subheader("Partial Blog Draft")
+        elif label.lower().startswith("linkedin"):
+            st.subheader("Partial LinkedIn Draft")
+        else:
+            st.subheader("Research Summary / Research Report")
+        st.markdown(content)
 
     image_prompts = render_payload.get("image_prompts", [])
     if isinstance(image_prompts, list) and image_prompts:
@@ -163,7 +192,7 @@ def render_degraded_and_error_state(render_payload: Mapping[str, Any]) -> None:
     if isinstance(warnings, list):
         for warning in warnings:
             safe_warning = str(warning).strip()
-            if safe_warning:
+            if safe_warning and safe_warning.lower() not in {"none", "null"}:
                 st.warning(safe_warning)
 
     errors = render_payload.get("errors", [])
@@ -174,7 +203,7 @@ def render_degraded_and_error_state(render_payload: Mapping[str, Any]) -> None:
             continue
         message = str(item.get("message", "")).strip()
         recoverable = bool(item.get("recoverable", False))
-        if not message:
+        if not message or message.lower() in {"none", "null"}:
             continue
         if recoverable:
             st.warning(message)
@@ -205,5 +234,5 @@ def render_export_status(render_payload: Mapping[str, Any]) -> None:
             if not isinstance(item, Mapping):
                 continue
             message = str(item.get("message", "")).strip()
-            if message:
+            if message and message.lower() not in {"none", "null"}:
                 st.caption(message)

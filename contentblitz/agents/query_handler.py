@@ -229,6 +229,19 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     query = str(state.get("user_query", "")).strip()
     preset_outputs = _normalize_outputs(state.get("requested_outputs", []))
+    if query and preset_outputs == ["image"] and not bool(state.get("clarification_needed", False)):
+        image_only = {
+            "intent": str(state.get("intent", "")).strip().lower() or "image_generation",
+            "requested_outputs": ["image"],
+            "research_required": False,
+            "clarification_needed": False,
+            "clarification_message": None,
+            "export_requested": bool(state.get("export_requested", False)),
+        }
+        image_only["routing_decision"] = _determine_routing_decision(image_only)
+        image_only["cost_controls"] = cost_controls
+        return _with_lifecycle_fields(image_only)
+
     if not query and (
         preset_outputs
         or bool(state.get("clarification_needed", False))

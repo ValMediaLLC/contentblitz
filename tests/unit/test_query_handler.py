@@ -145,3 +145,22 @@ def test_query_handler_does_not_propagate_stale_retry_flags(monkeypatch) -> None
     updates = query_handler_module.query_handler_node(state)
     assert "retry_requested" not in updates
     assert "retry_target" not in updates
+
+
+def test_explicit_image_only_request_with_non_empty_query_routes_deterministically(monkeypatch) -> None:
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("LLM classification should not run for explicit image-only UI requests.")
+
+    monkeypatch.setattr(query_handler_module, "generate_text", fail_if_called)
+
+    state = create_initial_state(
+        user_query="create futuristic cyberpunk hoodie artwork for streetwear branding",
+        requested_outputs=["image"],
+        research_required=False,
+        export_requested=False,
+    )
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["requested_outputs"] == ["image"]
+    assert updates["research_required"] is False
+    assert updates["routing_decision"] == "image_agent_node"

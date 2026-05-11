@@ -29,7 +29,7 @@ def _dedupe_messages(messages: list[str]) -> list[str]:
     deduped: list[str] = []
     for message in messages:
         cleaned = str(message).strip()
-        if not cleaned or cleaned in seen:
+        if not cleaned or cleaned.lower() in {"none", "null"} or cleaned in seen:
             continue
         seen.add(cleaned)
         deduped.append(cleaned)
@@ -89,32 +89,100 @@ def summarize_workflow_status(
     node_statuses: Mapping[str, str],
     *,
     workflow_status: str = "",
+    clarification_required: bool = False,
 ) -> str:
     """Summarize workflow status for display without leaking internals."""
-    normalized_workflow_status = str(workflow_status).strip().lower()
-    if normalized_workflow_status in {"failed", "error", "error_handled"}:
-        return "failed"
-    if normalized_workflow_status in {"partial_success", "completed_with_warnings"}:
-        return "partial_success"
-    if normalized_workflow_status in {"success", "awaiting_clarification", "research_complete"}:
-        return "success"
-
     statuses = {
         node: normalize_progress_status(status)
         for node, status in dict(node_statuses).items()
     }
     status_values = list(statuses.values())
+
     if any(status == "failed" for status in status_values):
         return "failed"
+
+    normalized_workflow_status = str(workflow_status).strip().lower()
+    requires_clarification = bool(clarification_required) or (
+        normalized_workflow_status == "awaiting_clarification"
+    )
+    if requires_clarification:
+        return "awaiting_clarification"
+
     if any(status == "running" for status in status_values):
         return "running"
     if any(status == "degraded" for status in status_values):
         return "partial_success"
+
+    if normalized_workflow_status in {"partial_success", "completed_with_warnings"}:
+        return "partial_success"
+    if normalized_workflow_status in {"success", "research_complete"}:
+        return "success"
     if all(status == "pending" for status in status_values):
         return "pending"
     if any(status in _TERMINAL_STATUSES for status in status_values):
-        return "completed"
+        return "success"
     return "unknown"
+
+
+def apply_optional_node_skips(
+    *,
+    state: Mapping[str, Any],
+    node_statuses: Mapping[str, str],
+) -> dict[str, str]:
+    """
+    Mark optional nodes as skipped when they were not requested and did not run.
+
+    This keeps UI node status truthful without mutating orchestration state.
+    """
+    updated = {
+        key: normalize_progress_status(value)
+        for key, value in dict(node_statuses).items()
+    }
+    outputs = {
+        str(item).strip().lower()
+        for item in _safe_list(state.get("requested_outputs", []))
+        if str(item).strip()
+    }
+    export_metadata = _safe_dict(state.get("export_metadata", {}))
+    formats_requested = _safe_list(export_metadata.get("formats_requested", []))
+    export_requested = bool(state.get("export_requested", False)) or bool(formats_requested)
+
+    def _mark_skipped(node_name: str) -> None:
+        current = updated.get(node_name, "pending")
+        if current in {"completed", "degraded", "failed", "running"}:
+            return
+        updated[node_name] = "skipped"
+
+    if "blog" not in outputs:
+        _mark_skipped("blog_writer_node")
+    if "linkedin" not in outputs:
+        _mark_skipped("linkedin_writer_node")
+    if "image" not in outputs:
+        _mark_skipped("image_agent_node")
+    if "research" not in outputs and not bool(state.get("research_required", False)):
+        _mark_skipped("research_agent_node")
+
+    if not export_requested:
+        updated["export_node"] = "skipped"
+
+    return updated
+
+
+def workflow_requires_clarification(
+    *,
+    state: Mapping[str, Any],
+    node_statuses: Mapping[str, str],
+) -> bool:
+    if bool(state.get("clarification_needed", False)):
+        return True
+    if str(state.get("workflow_status", "")).strip().lower() == "awaiting_clarification":
+        return True
+    clarification_status = normalize_progress_status(
+        node_statuses.get("clarification_node", "pending")
+    )
+    if clarification_status in {"running", "completed"}:
+        return True
+    return False
 
 
 def build_status_messages(
@@ -123,13 +191,18 @@ def build_status_messages(
     node_statuses: Mapping[str, str],
 ) -> list[str]:
     """Build high-level user-safe status lines for workflow UI rendering."""
-    normalized_statuses = {
-        node: normalize_progress_status(status)
-        for node, status in dict(node_statuses).items()
-    }
+    normalized_statuses = apply_optional_node_skips(
+        state=state,
+        node_statuses=node_statuses,
+    )
+    clarification_required = workflow_requires_clarification(
+        state=state,
+        node_statuses=normalized_statuses,
+    )
     summary = summarize_workflow_status(
         normalized_statuses,
         workflow_status=str(state.get("workflow_status", "")),
+        clarification_required=clarification_required,
     )
     messages: list[str] = []
 
@@ -137,6 +210,8 @@ def build_status_messages(
         messages.append("Workflow is currently running.")
     elif summary == "failed":
         messages.append("Workflow ended with a terminal failure.")
+    elif summary == "awaiting_clarification":
+        messages.append("Workflow paused awaiting clarification.")
     elif summary == "partial_success":
         messages.append("Workflow completed with recoverable warnings.")
     elif summary in {"success", "completed"}:
@@ -172,4 +247,3 @@ def build_status_messages(
         messages.append("Try refining your prompt and rerunning the workflow.")
 
     return _dedupe_messages(messages)
-

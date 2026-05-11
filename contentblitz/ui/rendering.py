@@ -7,7 +7,12 @@ from typing import Any, Mapping
 
 from contentblitz.ui.error_display import normalize_errors_for_display
 from contentblitz.ui.progress import normalize_progress_status
-from contentblitz.ui.status import build_initial_node_statuses
+from contentblitz.ui.status import (
+    apply_optional_node_skips,
+    build_initial_node_statuses,
+    summarize_workflow_status,
+    workflow_requires_clarification,
+)
 
 _TERMINAL_FOR_PARTIAL_RENDER = {"completed", "degraded"}
 
@@ -191,6 +196,19 @@ def build_render_payload(
         for key, value in dict(node_statuses).items():
             if key in merged_statuses:
                 merged_statuses[key] = normalize_progress_status(str(value))
+    merged_statuses = apply_optional_node_skips(
+        state=state_snapshot,
+        node_statuses=merged_statuses,
+    )
+    clarification_required = workflow_requires_clarification(
+        state=state_snapshot,
+        node_statuses=merged_statuses,
+    )
+    ui_workflow_status = summarize_workflow_status(
+        merged_statuses,
+        workflow_status=_safe_text(state_snapshot.get("workflow_status")),
+        clarification_required=clarification_required,
+    )
 
     content_drafts = _safe_dict(state_snapshot.get("content_drafts", {}))
     blog_draft = _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
@@ -251,11 +269,33 @@ def build_render_payload(
             else ""
         ),
     }
+    partial_sections: list[dict[str, str]] = []
+    partial_labels = {
+        "blog": "Blog Draft",
+        "linkedin": "LinkedIn Draft",
+        "research": "Research Summary / Research Report",
+    }
+    for key in ("blog", "linkedin", "research"):
+        content = _safe_text(partial_outputs.get(key))
+        if not content:
+            continue
+        partial_sections.append(
+            {"key": key, "label": partial_labels[key], "content": content}
+        )
+
+    partial_mode = "none"
+    if len(partial_sections) > 1:
+        partial_mode = "multi_output"
+    elif len(partial_sections) == 1:
+        partial_mode = f"{partial_sections[0]['key']}_only"
 
     return {
-        "workflow_status": _safe_text(state_snapshot.get("workflow_status")),
+        "workflow_status": ui_workflow_status,
+        "raw_workflow_status": _safe_text(state_snapshot.get("workflow_status")),
         "final_response": final_response,
         "partial_outputs": partial_outputs,
+        "partial_output_mode": partial_mode,
+        "partial_output_sections": partial_sections,
         "image_prompts": image_prompts,
         "image_outputs": image_outputs,
         "sources": dedupe_sources_for_display(state_snapshot.get("sources", [])),
@@ -270,4 +310,3 @@ def build_render_payload(
             "non_blocking_failure": bool(export_errors) and bool(final_response),
         },
     }
-
