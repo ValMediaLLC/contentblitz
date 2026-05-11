@@ -81,6 +81,68 @@ def test_markdown_document_contains_expected_sections_and_deduped_sources(tmp_pa
     assert "## Sources" in markdown
     # source URL should only appear once after dedupe
     assert markdown.count("https://example.com/a") == 1
+    assert "- `failed` | `dall-e-3` | Image generation encountered a recoverable issue." in markdown
+    assert "{'code':" not in markdown
+    assert "configuration_error" not in markdown
+    assert "provider': 'openai'" not in markdown
+    assert "recoverable': False" not in markdown
+    assert "OPENAI_API_KEY" not in markdown
+
+
+def test_markdown_workflow_summary_prefers_ui_workflow_status(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    markdown = build_markdown_export_document(
+        _base_state(
+            tmp_path,
+            workflow_status="success",
+            ui_workflow_status="partial_success",
+        )
+    )
+    assert "- Workflow Status: `partial_success`" in markdown
+    assert "- Workflow Status: `success`" not in markdown
+
+
+def test_markdown_workflow_summary_uses_partial_success_for_degraded_nodes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    markdown = build_markdown_export_document(
+        _base_state(
+            tmp_path,
+            workflow_status="success",
+            ui_node_statuses={
+                "research_agent_node": "degraded",
+                "output_assembler_node": "completed",
+                "export_node": "completed",
+            },
+            status_messages=[
+                "Research results are degraded. Validate sources before publishing."
+            ],
+        )
+    )
+    assert "- Workflow Status: `partial_success`" in markdown
+    assert "- Workflow Status: `success`" not in markdown
+    assert "## Warnings" in markdown
+    assert "Research results are degraded" in markdown
+
+
+def test_markdown_workflow_summary_remains_success_when_clean(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    markdown = build_markdown_export_document(
+        _base_state(
+            tmp_path,
+            workflow_status="success",
+            image_outputs=[],
+            research_data={"degraded": False},
+            warnings=[],
+            status_messages=[],
+            errors=[],
+            ui_node_statuses={
+                "research_agent_node": "completed",
+                "output_assembler_node": "completed",
+                "export_node": "completed",
+            },
+        )
+    )
+    assert "- Workflow Status: `success`" in markdown
 
 
 def test_markdown_export_node_creates_file_and_sets_metadata(tmp_path, monkeypatch) -> None:
@@ -179,4 +241,3 @@ def test_export_skipped_when_not_requested(tmp_path, monkeypatch) -> None:
     assert metadata["export_paths"] == {}
     assert metadata["export_status"] == {}
     assert metadata["error_log"] == []
-

@@ -21,6 +21,29 @@ _STACK_TRACE_MARKERS = (
     "stack trace",
     "  file \"",
 )
+_GENERIC_IMAGE_ERROR_RECOVERABLE = "Image generation encountered a recoverable issue."
+_GENERIC_IMAGE_ERROR_FATAL = "Image generation failed safely."
+_WARNING_KEYWORDS = (
+    "degraded",
+    "recoverable",
+    "warning",
+    "failed",
+    "unavailable",
+    "validate",
+    "budget",
+    "retry",
+)
+_STATUS_ALIASES = {
+    "success": "success",
+    "research_complete": "success",
+    "completed": "success",
+    "partial_success": "partial_success",
+    "completed_with_warnings": "partial_success",
+    "awaiting_clarification": "awaiting_clarification",
+    "failed": "failed",
+    "error": "failed",
+    "error_handled": "failed",
+}
 
 
 def _safe_text(value: Any) -> str:
@@ -57,6 +80,42 @@ def _normalize_error_message(error: Any) -> str:
         return "A recoverable workflow error occurred." if recoverable else "The workflow ended due to an internal error."
     message = _ENV_NAME_RE.sub("[REDACTED]", message)
     message = _TOKEN_RE.sub("[REDACTED]", message)
+    return message
+
+
+def _normalize_image_error_message(error: Any) -> str:
+    recoverable = True
+    lowered_code = ""
+    lowered_message = ""
+    lowered_provider = ""
+    if isinstance(error, Mapping):
+        recoverable = bool(error.get("recoverable", True))
+        lowered_code = _safe_text(error.get("code")).lower()
+        lowered_message = _safe_text(error.get("message")).lower()
+        lowered_provider = _safe_text(error.get("provider")).lower()
+    else:
+        lowered_message = _safe_text(error).lower()
+
+    suspicious_payload = (
+        "{'code':" in lowered_message
+        or '"code":' in lowered_message
+        or "configuration_error" in lowered_code
+        or "configuration_error" in lowered_message
+        or "provider':" in lowered_message
+        or '"provider":' in lowered_message
+        or lowered_provider == "openai"
+        or any(marker in lowered_message for marker in _STACK_TRACE_MARKERS)
+        or any(token in lowered_message for token in ("openai_api_key", "serp_api_key", "perplexity_api_key"))
+    )
+
+    if suspicious_payload:
+        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
+
+    message = _normalize_error_message(error)
+    if not message:
+        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
+    if message.startswith("{") and "code" in message and "provider" in message:
+        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
     return message
 
 
@@ -141,7 +200,8 @@ def sanitize_markdown_content(markdown_text: str) -> str:
 
 
 def _render_workflow_summary(state: Mapping[str, Any]) -> str:
-    workflow_status = _safe_text(state.get("workflow_status")) or "unknown"
+    warnings = _collect_export_warnings(state)
+    workflow_status = _aggregate_export_workflow_status(state, warnings)
     routing_decision = _safe_text(state.get("routing_decision")) or "unknown"
     requested_outputs = [
         _safe_text(item).lower()
@@ -158,7 +218,16 @@ def _render_workflow_summary(state: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _render_warnings_section(state: Mapping[str, Any]) -> str:
+def _message_indicates_warning(message: str) -> bool:
+    lowered = _safe_text(message).lower()
+    if not lowered:
+        return False
+    if "workflow completed successfully" in lowered:
+        return False
+    return any(token in lowered for token in _WARNING_KEYWORDS)
+
+
+def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
     warnings: List[str] = []
     for value in _safe_list(state.get("warnings", [])):
         text = _safe_text(value)
@@ -167,7 +236,7 @@ def _render_warnings_section(state: Mapping[str, Any]) -> str:
 
     for value in _safe_list(state.get("status_messages", [])):
         text = _safe_text(value)
-        if text and text not in warnings:
+        if text and _message_indicates_warning(text) and text not in warnings:
             warnings.append(text)
 
     research_data = _safe_dict(state.get("research_data", {}))
@@ -183,12 +252,65 @@ def _render_warnings_section(state: Mapping[str, Any]) -> str:
         if message:
             warnings.append(message)
 
-    unique_warnings = list(dict.fromkeys(item for item in warnings if item))
+    return list(dict.fromkeys(item for item in warnings if item))
+
+
+def _render_warnings_section(state: Mapping[str, Any]) -> str:
+    unique_warnings = _collect_export_warnings(state)
     if not unique_warnings:
         return ""
     lines = ["## Warnings"]
     lines.extend([f"- {item}" for item in unique_warnings])
     return "\n".join(lines)
+
+
+def _normalized_status(value: Any) -> str:
+    raw = _safe_text(value).lower()
+    return _STATUS_ALIASES.get(raw, raw)
+
+
+def _aggregate_export_workflow_status(state: Mapping[str, Any], warnings: List[str]) -> str:
+    ui_workflow_status = _normalized_status(state.get("ui_workflow_status"))
+    if ui_workflow_status in {"failed", "awaiting_clarification", "partial_success", "success"}:
+        return ui_workflow_status
+
+    node_statuses = {
+        _safe_text(node): _safe_text(status).lower()
+        for node, status in _safe_dict(state.get("ui_node_statuses", {})).items()
+        if _safe_text(node) and _safe_text(status)
+    }
+    workflow_status = _normalized_status(state.get("workflow_status"))
+
+    if workflow_status == "failed" or any(status == "failed" for status in node_statuses.values()):
+        return "failed"
+
+    if bool(state.get("clarification_needed", False)) or workflow_status == "awaiting_clarification":
+        return "awaiting_clarification"
+
+    research_degraded = bool(_safe_dict(state.get("research_data", {})).get("degraded", False))
+    recoverable_error_present = any(
+        bool(_safe_dict(item).get("recoverable", False))
+        for item in _safe_list(state.get("errors", []))
+        if isinstance(item, Mapping)
+    )
+    image_degraded = any(
+        _safe_text(_safe_dict(item).get("status")).lower() == "failed"
+        for item in _safe_list(state.get("image_outputs", []))
+    )
+    has_degraded_nodes = any(status == "degraded" for status in node_statuses.values())
+    if (
+        workflow_status == "partial_success"
+        or has_degraded_nodes
+        or research_degraded
+        or image_degraded
+        or recoverable_error_present
+        or len(warnings) > 0
+    ):
+        return "partial_success"
+
+    if workflow_status == "success":
+        return "success"
+    return "success"
 
 
 def _render_text_section(title: str, content: str) -> str:
@@ -220,9 +342,9 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
             continue
 
         if status == "failed":
-            message = _normalize_error_message(item.get("error", {}))
+            message = _normalize_image_error_message(item.get("error", {}))
             if not message:
-                message = "Image generation encountered a recoverable issue."
+                message = _GENERIC_IMAGE_ERROR_RECOVERABLE
             lines.append(f"- `{status}` | `{provider}` | {message}")
             continue
 

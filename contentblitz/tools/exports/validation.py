@@ -10,6 +10,15 @@ _STACK_TRACE_MARKERS = (
     "stack trace",
     "  file \"",
 )
+_RAW_PROVIDER_PAYLOAD_MARKERS = (
+    "{'code':",
+    '"code":',
+    "configuration_error",
+    "provider': 'openai'",
+    '"provider": "openai"',
+    "recoverable': false",
+    '"recoverable": false',
+)
 _ENV_NAME_PATTERNS = (
     "openai_api_key",
     "serp_api_key",
@@ -67,6 +76,8 @@ def validate_markdown_export(
         errors.append("Environment variable names are not allowed in exports.")
     if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
         errors.append("Credential-like token content is not allowed in exports.")
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        errors.append("Raw provider/configuration payload content is not allowed in exports.")
     if sources_exist and "## sources" not in lowered:
         errors.append("Sources section is required when sources are present.")
 
@@ -87,4 +98,3 @@ def normalize_validation_result(payload: Mapping[str, Any]) -> Dict[str, Any]:
         _safe_text(item) for item in payload.get("errors", []) if _safe_text(item)
     ] if isinstance(payload.get("errors", []), list) else []
     return {"valid": valid, "warnings": warnings, "errors": errors}
-

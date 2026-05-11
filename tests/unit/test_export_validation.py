@@ -38,6 +38,18 @@ data:image/png;base64,AAAA
     assert "base64" in joined
 
 
+def test_validate_markdown_export_rejects_raw_provider_payload_strings() -> None:
+    markdown = """# ContentBlitz Export
+
+## Image Outputs
+- `failed` | `dall-e-3` | {'code': 'configuration_error', 'message': '[REDACTED] is not configured.', 'provider': 'openai', 'recoverable': False}
+"""
+    result = validate_markdown_export(markdown, sources_exist=False)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "raw provider/configuration payload" in joined
+
+
 def test_validate_markdown_export_requires_sources_section_when_sources_exist() -> None:
     markdown = """# ContentBlitz Export
 
@@ -62,4 +74,3 @@ def test_normalize_validation_result_strips_empty_fields() -> None:
         "warnings": ["warning"],
         "errors": ["error"],
     }
-

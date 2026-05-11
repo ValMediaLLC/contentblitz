@@ -89,6 +89,11 @@ def test_markdown_export_pipeline_creates_file_and_preserves_sections(tmp_path, 
     assert "OPENAI_API_KEY" not in content
     assert "Traceback" not in content
     assert "base64" not in content.lower()
+    assert "{'code':" not in content
+    assert "configuration_error" not in content
+    assert "provider': 'openai'" not in content
+    assert "recoverable': False" not in content
+    assert "- Workflow Status: `partial_success`" in content
 
 
 def test_export_skipped_behavior_no_markdown_path_when_not_requested(tmp_path, monkeypatch) -> None:
@@ -101,6 +106,35 @@ def test_export_skipped_behavior_no_markdown_path_when_not_requested(tmp_path, m
     metadata = export_updates["export_metadata"]
     assert metadata["export_paths"] == {}
     assert metadata["export_status"] == {}
+
+
+def test_markdown_workflow_summary_uses_aggregated_status(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _workflow_state(export_requested=True, formats_requested=["markdown"])
+    state["workflow_status"] = "success"
+    state["ui_workflow_status"] = "partial_success"
+    state["ui_node_statuses"] = {
+        "research_agent_node": "degraded",
+        "output_assembler_node": "completed",
+        "export_node": "completed",
+    }
+    state["research_data"]["degraded"] = True
+    state["status_messages"] = [
+        "Research results are degraded. Validate sources before publishing."
+    ]
+
+    export_updates = export_node(state)
+    metadata = export_updates["export_metadata"]
+    markdown_path = metadata["export_paths"]["markdown"]
+    file_path = Path(markdown_path)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    content = file_path.read_text(encoding="utf-8")
+
+    assert "- Workflow Status: `partial_success`" in content
+    assert "- Workflow Status: `success`" not in content
+    assert "## Warnings" in content
+    assert "Research results are degraded" in content
 
 
 def test_persisted_session_restores_export_metadata_safely(tmp_path, monkeypatch) -> None:
@@ -125,4 +159,3 @@ def test_persisted_session_restores_export_metadata_safely(tmp_path, monkeypatch
     assert export_metadata["formats_requested"] == ["markdown"]
     assert "markdown" in export_metadata["export_paths"]
     assert export_metadata["export_status"]["markdown"] == "completed"
-
