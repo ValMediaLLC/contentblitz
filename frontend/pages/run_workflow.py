@@ -53,6 +53,9 @@ from frontend.session import (
     set_status_messages,
 )
 
+_WIDGET_KEY_EXPORT_ENABLED = "cbx_export_enabled"
+_WIDGET_KEY_EXPORT_FORMATS = "cbx_export_formats"
+
 
 def _execution_status_from_result(
     *,
@@ -74,6 +77,22 @@ def _execution_status_from_result(
     )
 
 
+def _validate_submission_inputs(
+    *,
+    safe_query: str,
+    requested_outputs: list[str],
+    export_requested: bool,
+    export_formats: list[str],
+) -> str:
+    if not safe_query:
+        return "A prompt is required before running the workflow."
+    if not requested_outputs:
+        return "Select at least one workflow output before execution."
+    if export_requested and not export_formats:
+        return "Select at least one export format when Enable Export is checked."
+    return ""
+
+
 def _build_controls() -> WorkflowControls:
     st.subheader("Workflow Controls")
     col1, col2 = st.columns(2)
@@ -86,13 +105,25 @@ def _build_controls() -> WorkflowControls:
     )
     include_image = col2.checkbox("Image Output", value=False)
 
-    export_enabled = st.checkbox("Enable Export", value=False)
+    export_enabled = st.checkbox(
+        "Enable Export",
+        value=False,
+        key=_WIDGET_KEY_EXPORT_ENABLED,
+    )
+    if not export_enabled and st.session_state.get(_WIDGET_KEY_EXPORT_FORMATS):
+        # Clear stale selections immediately when export is disabled so
+        # disabled multiselect chips do not linger in the UI.
+        st.session_state[_WIDGET_KEY_EXPORT_FORMATS] = []
     selected_export_formats = st.multiselect(
         "Export Formats",
         options=list(FRONTEND_CONFIG.export_formats),
-        default=list(FRONTEND_CONFIG.default_export_formats) if export_enabled else [],
+        default=[],
+        key=_WIDGET_KEY_EXPORT_FORMATS,
         disabled=not export_enabled,
+        help="Choose one or more formats to apply when export is enabled.",
     )
+    if not export_enabled:
+        st.caption("Selected formats are ignored until Enable Export is checked.")
     return WorkflowControls(
         include_blog=bool(include_blog),
         include_linkedin=bool(include_linkedin),
@@ -110,7 +141,7 @@ def render() -> None:
         "The orchestrator owns final routing/classification behavior."
     )
 
-    with st.form("workflow_submission_form"):
+    with st.container(border=True):
         query = st.text_area(
             "Prompt",
             value="",
@@ -118,7 +149,7 @@ def render() -> None:
             height=120,
         )
         controls = _build_controls()
-        run_clicked = st.form_submit_button("Run ContentBlitz", type="primary")
+        run_clicked = st.button("Run ContentBlitz", type="primary")
 
     if run_clicked:
         safe_query = str(query).strip()
@@ -134,12 +165,15 @@ def render() -> None:
             }
         )
 
-        if not safe_query:
+        validation_error = _validate_submission_inputs(
+            safe_query=safe_query,
+            requested_outputs=requested_outputs,
+            export_requested=export_requested,
+            export_formats=export_formats,
+        )
+        if validation_error:
             set_execution_status("idle")
-            set_last_error("A prompt is required before running the workflow.")
-        elif not requested_outputs:
-            set_execution_status("idle")
-            set_last_error("Select at least one workflow output before execution.")
+            set_last_error(validation_error)
         else:
             try:
                 set_execution_status("running")
