@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import re
+import zipfile
 from typing import Any, Dict, List, Mapping
 
 _STACK_TRACE_MARKERS = (
@@ -208,6 +210,94 @@ def validate_pdf_export(
     if _JAVASCRIPT_URL_RE.search(text):
         errors.append("javascript: URLs are not allowed in exports.")
     if _CONTROL_CHARS_RE.search(text):
+        warnings.append("Found control characters in export content.")
+    if sources_exist and "sources" not in lowered:
+        errors.append("Sources section is required when sources are present.")
+
+    return {
+        "valid": len(errors) == 0,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def validate_docx_export(
+    docx_payload: bytes | str,
+    *,
+    sources_exist: bool = False,
+) -> Dict[str, Any]:
+    """
+    Validate docx export payload for structure and safety.
+
+    Returns structured validation metadata:
+    {"valid": bool, "warnings": [...], "errors": [...]}
+    """
+    if isinstance(docx_payload, bytes):
+        binary = docx_payload
+    else:
+        text = _safe_text(docx_payload)
+        binary = text.encode("utf-8", errors="ignore")
+
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    if not binary:
+        errors.append("Export content is empty.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+
+    if not binary.startswith(b"PK"):
+        errors.append("Missing docx zip signature.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(binary), mode="r") as archive:
+            names = set(archive.namelist())
+            required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml"}
+            missing = sorted(required.difference(names))
+            if missing:
+                errors.append("Missing required docx parts: " + ", ".join(missing))
+                return {"valid": False, "warnings": warnings, "errors": errors}
+
+            content_types_xml = archive.read("[Content_Types].xml").decode(
+                "utf-8",
+                errors="ignore",
+            )
+            document_xml = archive.read("word/document.xml").decode(
+                "utf-8",
+                errors="ignore",
+            )
+    except zipfile.BadZipFile:
+        errors.append("Malformed docx archive.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+    except KeyError:
+        errors.append("Required docx content is missing.")
+        return {"valid": False, "warnings": warnings, "errors": errors}
+
+    if "word/document.xml" not in content_types_xml:
+        errors.append("DOCX content types missing word/document.xml entry.")
+
+    lowered = document_xml.lower()
+    if _NONE_NULL_RE.search(document_xml):
+        warnings.append("Found null-like placeholder text.")
+    if _contains_stack_trace(document_xml):
+        errors.append("Stack trace content is not allowed in exports.")
+    if "data:image/" in lowered or "base64" in lowered or "b64_json" in lowered:
+        errors.append("Base64 image payload is not allowed in exports.")
+    if any(env_name in lowered for env_name in _ENV_NAME_PATTERNS):
+        errors.append("Environment variable names are not allowed in exports.")
+    if any(pattern.search(document_xml) for pattern in _TOKEN_PATTERNS):
+        errors.append("Credential-like token content is not allowed in exports.")
+    if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
+        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+    if _SCRIPT_TAG_RE.search(document_xml):
+        errors.append("Script tags are not allowed in exports.")
+    if _UNSAFE_HTML_TAG_RE.search(document_xml):
+        errors.append("Unsafe embed tags are not allowed in exports.")
+    if _EVENT_HANDLER_ATTR_RE.search(document_xml):
+        errors.append("Inline javascript handlers are not allowed in exports.")
+    if _JAVASCRIPT_URL_RE.search(document_xml):
+        errors.append("javascript: URLs are not allowed in exports.")
+    if _CONTROL_CHARS_RE.search(document_xml):
         warnings.append("Found control characters in export content.")
     if sources_exist and "sources" not in lowered:
         errors.append("Sources section is required when sources are present.")

@@ -14,7 +14,7 @@ class FrontendConfig:
     default_query_placeholder: str = "Write a short LinkedIn post about AI content workflows."
     default_outputs: Tuple[str, ...] = ("blog", "linkedin")
     available_outputs: Tuple[str, ...] = ("research", "blog", "linkedin", "image")
-    export_formats: Tuple[str, ...] = ("markdown", "html", "pdf")
+    export_formats: Tuple[str, ...] = ("markdown", "html", "pdf", "docx")
     default_export_formats: Tuple[str, ...] = ("markdown",)
     logo_path: str = "frontend/assets/contentblitz_logo.svg"
     logo_icon_path: str = "frontend/assets/contentblitz_icon.svg"

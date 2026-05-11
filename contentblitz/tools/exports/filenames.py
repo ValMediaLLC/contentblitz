@@ -50,6 +50,12 @@ def make_pdf_filename(seed_text: str) -> str:
     return f"content_{digest}.pdf"
 
 
+def make_docx_filename(seed_text: str) -> str:
+    """Create deterministic docx filename from a safe hash."""
+    digest = sha256(_safe_text(seed_text).encode("utf-8")).hexdigest()[:12]
+    return f"content_{digest}.docx"
+
+
 def _resolve_export_path_by_filename(
     filename: str,
     *,
@@ -117,6 +123,25 @@ def resolve_pdf_export_path(
     filename = make_pdf_filename(seed_text)
     if not filename.lower().endswith(".pdf"):
         filename = f"{filename}.pdf"
+    return _resolve_export_path_by_filename(
+        filename,
+        export_dir=export_dir,
+    )
+
+
+def resolve_docx_export_path(
+    seed_text: str,
+    *,
+    export_dir: str | Path | None = None,
+) -> Path:
+    """
+    Resolve a docx file path inside the configured export directory.
+
+    This helper prevents path traversal by validating the resolved parent path.
+    """
+    filename = make_docx_filename(seed_text)
+    if not filename.lower().endswith(".docx"):
+        filename = f"{filename}.docx"
     return _resolve_export_path_by_filename(
         filename,
         export_dir=export_dir,

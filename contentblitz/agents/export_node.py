@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from contentblitz.tools.exports.filenames import (
+    resolve_docx_export_path,
     resolve_html_export_path,
     resolve_markdown_export_path,
     resolve_pdf_export_path,
+)
+from contentblitz.tools.exports.docx import (
+    build_docx_document_bytes_from_text,
+    build_docx_export_document,
 )
 from contentblitz.tools.exports.html import (
     build_html_export_document,
@@ -26,13 +31,14 @@ from contentblitz.tools.exports.pdf import (
     build_pdf_export_document,
 )
 from contentblitz.tools.exports.validation import (
+    validate_docx_export,
     normalize_validation_result,
     validate_html_export,
     validate_markdown_export,
     validate_pdf_export,
 )
 
-_SUPPORTED_EXPORT_FORMATS = {"markdown", "html", "pdf"}
+_SUPPORTED_EXPORT_FORMATS = {"markdown", "html", "pdf", "docx"}
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -52,7 +58,7 @@ def _safe_text(value: Any) -> str:
 
 
 def _filename_for_export(output_type: str, content: str, format_name: str) -> str:
-    extension_map = {"markdown": "md", "html": "html", "pdf": "pdf"}
+    extension_map = {"markdown": "md", "html": "html", "pdf": "pdf", "docx": "docx"}
     normalized_format = str(format_name or "").strip().lower() or "markdown"
     extension = extension_map.get(normalized_format, "txt")
     digest = sha256(f"{output_type}:{content}".encode("utf-8")).hexdigest()[:12]
@@ -119,7 +125,7 @@ def export_content(content: Any, format_name: str) -> Dict[str, Any]:
     Other formats remain deterministic path stubs for compatibility.
     """
     normalized = str(format_name or "").strip().lower()
-    extension_map = {"markdown": "md", "html": "html", "pdf": "pdf"}
+    extension_map = {"markdown": "md", "html": "html", "pdf": "pdf", "docx": "docx"}
     if normalized not in extension_map:
         raise ValueError(f"Unsupported export format: {format_name}")
 
@@ -143,6 +149,18 @@ def export_content(content: Any, format_name: str) -> Dict[str, Any]:
             pdf_bytes = build_pdf_document_bytes_from_text(text_content)
         resolved_path = resolve_pdf_export_path(seed or "content")
         resolved_path.write_bytes(pdf_bytes)
+        return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
+
+    if normalized == "docx":
+        if isinstance(content, bytes):
+            docx_bytes = content
+            seed = sha256(content).hexdigest()
+        else:
+            text_content = _safe_text(content)
+            seed = text_content or "content"
+            docx_bytes = build_docx_document_bytes_from_text(text_content)
+        resolved_path = resolve_docx_export_path(seed or "content")
+        resolved_path.write_bytes(docx_bytes)
         return {"format": normalized, "path": _path_for_metadata(str(resolved_path))}
 
     if isinstance(content, bytes):
@@ -178,8 +196,9 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     markdown_document = ""
     html_document = ""
     pdf_document = b""
+    docx_document = b""
     markdown_validation = {"valid": True, "warnings": [], "errors": []}
-    if any(fmt in {"markdown", "pdf"} for fmt in formats_requested):
+    if any(fmt in {"markdown", "pdf", "docx"} for fmt in formats_requested):
         markdown_document = build_markdown_export_document(state)
         markdown_document = sanitize_markdown_content(markdown_document)
         markdown_validation = normalize_validation_result(
@@ -255,6 +274,32 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     _safe_error_entry(
                         format_name="pdf",
                         code="pdf_validation_error",
+                        message=issue,
+                    )
+                )
+
+    if "docx" in formats_requested:
+        docx_document = build_docx_export_document(state)
+        docx_validation = normalize_validation_result(
+            validate_docx_export(
+                docx_document,
+                sources_exist=bool(_safe_list(state.get("sources", []))),
+            )
+        )
+        for warning in docx_validation["warnings"]:
+            error_log.append(
+                _safe_error_entry(
+                    format_name="docx",
+                    code="docx_validation_warning",
+                    message=warning,
+                )
+            )
+        if not docx_validation["valid"]:
+            for issue in docx_validation["errors"]:
+                error_log.append(
+                    _safe_error_entry(
+                        format_name="docx",
+                        code="docx_validation_error",
                         message=issue,
                     )
                 )
@@ -353,6 +398,38 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         format_name="html",
                         code="html_export_failed",
                         message="HTML export failed safely.",
+                    )
+                )
+            continue
+
+        if fmt == "docx":
+            try:
+                content_to_export = (
+                    docx_document
+                    if docx_document
+                    else build_docx_document_bytes_from_text(markdown_document or final_response)
+                )
+                result = export_content(content_to_export, "docx")
+                path = _safe_text(_safe_dict(result).get("path", ""))
+                if path:
+                    export_paths["docx"] = _path_for_metadata(path)
+                    export_status["docx"] = "completed"
+                else:
+                    export_status["docx"] = "failed"
+                    error_log.append(
+                        _safe_error_entry(
+                            format_name="docx",
+                            code="docx_export_path_missing",
+                            message="DOCX export returned no output path.",
+                        )
+                    )
+            except Exception:
+                export_status["docx"] = "failed"
+                error_log.append(
+                    _safe_error_entry(
+                        format_name="docx",
+                        code="docx_export_failed",
+                        message="DOCX export failed safely.",
                     )
                 )
             continue
