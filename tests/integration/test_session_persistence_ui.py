@@ -126,3 +126,44 @@ def test_restores_awaiting_clarification_without_reexecution(tmp_path, monkeypat
         "awaiting clarification" in message.lower()
         for message in session_module.get_status_messages()
     )
+
+
+def test_restore_uses_top_level_status_not_progress_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_SESSION_DIR", str(tmp_path / "sessions"))
+    _install_dummy_streamlit(monkeypatch)
+    session_module.initialize_session_state()
+
+    result = _sample_result(
+        workflow_status="partial_success",
+        user_query="create a blog, linkedin post, and image concept",
+    )
+
+    run_id = session_module.save_persisted_run(
+        result=result,
+        last_submission={
+            "requested_outputs": ["blog", "linkedin", "image"],
+            "export_requested": False,
+            "export_formats": [],
+        },
+        progress_events=[
+            {
+                "node_name": "output_assembler_node",
+                "status": "completed",
+                "message": "output_assembler_node completed.",
+                "timestamp": "2026-05-11T04:21:38+00:00",
+                "safe_metadata": {"workflow_status": "success"},
+            }
+        ],
+        node_statuses={"output_assembler_node": "completed"},
+        status_messages=["Workflow completed with warnings."],
+    )
+    assert run_id
+
+    restored, _ = session_module.restore_persisted_run(run_id)
+    assert restored is True
+    assert session_module.get_execution_status() == "partial_success"
+    restored_result = session_module.get_last_result()
+    assert isinstance(restored_result, dict)
+    restored_events = restored_result.get("ui_progress_events", [])
+    assert isinstance(restored_events, list) and restored_events
+    assert restored_events[0].get("safe_metadata") == {}

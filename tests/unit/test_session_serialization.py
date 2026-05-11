@@ -32,6 +32,16 @@ def _sample_state() -> dict:
         "image_prompts": ["Create a concept art prompt"],
         "image_outputs": [
             {"status": "success", "url": "https://img.example/safe.png"},
+            {
+                "status": "failed",
+                "provider": "dall-e-3",
+                "prompt": "Create an image concept...",
+                "error": {
+                    "code": "unknown_error",
+                    "message": "{'code': 'configuration_error', 'message': 'OPENAI_API_KEY is not configured.', 'provider': 'openai', 'recoverable': False}",
+                    "recoverable": True,
+                },
+            },
             {"status": "failed", "url": "data:image/png;base64,AAAA", "b64_json": "AAAA"},
         ],
         "sources": [
@@ -68,7 +78,7 @@ def _sample_state() -> dict:
                 "status": "completed",
                 "message": "done",
                 "timestamp": "2026-05-10T10:00:00+00:00",
-                "safe_metadata": {"x": 1},
+                "safe_metadata": {"x": 1, "workflow_status": "success"},
             }
         ],
         "status_messages": ["SERP_API_KEY=serp-secret", "Workflow completed."],
@@ -106,6 +116,31 @@ def test_serialization_persists_safe_fields_only() -> None:
     assert "data:image/png;base64" not in blob
     assert "b64_json" not in blob
 
+    failed_outputs = [
+        output for output in serialized["image_outputs"] if output.get("status") == "failed"
+    ]
+    assert failed_outputs
+    first_failed = failed_outputs[0]
+    assert first_failed["provider"] == "dall-e-3"
+    assert first_failed["prompt"] == "Create an image concept..."
+    assert first_failed["error"] == {
+        "code": "image_generation_failed",
+        "message": "Image generation encountered a recoverable issue.",
+        "recoverable": True,
+    }
+    assert first_failed["error"]["recoverable"] is True
+    error_blob = json.dumps(first_failed["error"])
+    assert "OPENAI_API_KEY" not in error_blob
+    assert "SERP_API_KEY" not in error_blob
+    assert "PERPLEXITY_API_KEY" not in error_blob
+    assert "configuration_error" not in error_blob
+    assert "provider': 'openai'" not in error_blob
+    assert "recoverable': False" not in error_blob
+    assert all("base64" not in json.dumps(output).lower() for output in serialized["image_outputs"])
+
+    event = serialized["progress_events"][0]
+    assert event["safe_metadata"] == {"x": 1}
+
 
 def test_deserialization_handles_missing_export_files_safely(tmp_path: Path) -> None:
     existing_export = tmp_path / "existing.md"
@@ -141,3 +176,32 @@ def test_to_run_summary_is_stable() -> None:
     assert summary["session_id"] == "session-3"
     assert summary["workflow_status"] == "partial_success"
     assert isinstance(summary["requested_outputs"], list)
+
+
+def test_progress_event_metadata_does_not_override_top_level_status() -> None:
+    serialized = serialize_workflow_run(
+        result_state={
+            **_sample_state(),
+            "workflow_status": "partial_success",
+            "ui_workflow_status": "partial_success",
+            "ui_progress_events": [
+                {
+                    "node_name": "output_assembler_node",
+                    "status": "completed",
+                    "message": "output_assembler_node completed.",
+                    "timestamp": "2026-05-11T04:21:38+00:00",
+                    "safe_metadata": {"workflow_status": "success"},
+                }
+            ],
+        },
+        run_id="run-progress-1",
+        session_id="session-progress-1",
+    )
+
+    assert serialized["workflow_status"] == "partial_success"
+    assert serialized["ui_workflow_status"] == "partial_success"
+    assert serialized["progress_events"][0]["safe_metadata"] == {}
+
+    restored = deserialize_workflow_run(serialized)
+    assert restored["workflow_status"] == "partial_success"
+    assert restored["ui_workflow_status"] == "partial_success"

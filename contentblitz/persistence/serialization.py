@@ -89,6 +89,8 @@ def _sanitize_progress_events(events: Any) -> List[Dict[str, Any]]:
         timestamp = _safe_text(item.get("timestamp"))
         message = _sanitize_text(item.get("message"))
         safe_metadata = _safe_dict(item.get("safe_metadata"))
+        safe_metadata.pop("workflow_status", None)
+        safe_metadata.pop("ui_workflow_status", None)
         if not node_name or not status:
             continue
         sanitized.append(
@@ -204,6 +206,19 @@ def _sanitize_errors(errors: Any) -> List[Dict[str, Any]]:
 
 
 def _sanitize_image_outputs(image_outputs: Any) -> List[Dict[str, Any]]:
+    def _normalize_image_error(error_value: Any) -> Dict[str, Any]:
+        raw = _safe_dict(error_value)
+        recoverable = bool(raw.get("recoverable", True))
+        return {
+            "code": "image_generation_failed",
+            "message": (
+                "Image generation encountered a recoverable issue."
+                if recoverable
+                else "Image generation failed."
+            ),
+            "recoverable": recoverable,
+        }
+
     safe = sanitize_image_outputs_for_display(_safe_list(image_outputs))
     cleaned: List[Dict[str, Any]] = []
     for item in safe:
@@ -215,7 +230,7 @@ def _sanitize_image_outputs(image_outputs: Any) -> List[Dict[str, Any]]:
         if isinstance(raw.get("url"), str) and raw["url"].strip().lower().startswith("data:image/"):
             continue
         if isinstance(raw.get("error"), Mapping):
-            raw["error"] = _sanitize_errors([raw.get("error")])[0]
+            raw["error"] = _normalize_image_error(raw.get("error"))
         cleaned.append(raw)
     return cleaned
 
