@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Mapping
 
 from contentblitz.ui.error_display import normalize_errors_for_display
@@ -234,6 +235,11 @@ def build_render_payload(
         )
 
     warnings: list[str] = []
+    for item in _safe_list(state_snapshot.get("warnings", [])):
+        text = _safe_text(item)
+        if text:
+            warnings.append(text)
+
     if bool(research_data.get("degraded", False)):
         warnings.append("Research results are degraded and may require manual verification.")
 
@@ -247,6 +253,24 @@ def build_render_payload(
 
     export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
     export_errors = _safe_list(export_metadata.get("error_log", []))
+    raw_export_paths = _safe_dict(export_metadata.get("export_paths", {}))
+    export_paths: dict[str, str] = {}
+    missing_export_formats: list[str] = []
+    for fmt, raw_path in raw_export_paths.items():
+        fmt_name = _safe_text(fmt).lower()
+        path_text = _safe_text(raw_path)
+        if not fmt_name or not path_text:
+            continue
+        if Path(path_text).exists():
+            export_paths[fmt_name] = path_text
+        else:
+            missing_export_formats.append(fmt_name)
+    if missing_export_formats:
+        warnings.append(
+            "Some saved export files are missing locally: "
+            + ", ".join(sorted(set(missing_export_formats)))
+            + "."
+        )
     final_response = _safe_text(state_snapshot.get("final_response"))
     if export_errors and final_response:
         warnings.append(
@@ -305,7 +329,7 @@ def build_render_payload(
         "export_status": {
             "requested": bool(state_snapshot.get("export_requested", False))
             or bool(_safe_list(export_metadata.get("formats_requested", []))),
-            "paths": _safe_dict(export_metadata.get("export_paths", {})),
+            "paths": export_paths,
             "errors": normalize_errors_for_display(export_errors),
             "non_blocking_failure": bool(export_errors) and bool(final_response),
         },

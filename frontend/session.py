@@ -6,8 +6,15 @@ from copy import deepcopy
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping
+from uuid import uuid4
 
 import streamlit as st
+from contentblitz.persistence.serialization import (
+    deserialize_workflow_run,
+    serialize_workflow_run,
+    to_run_summary,
+)
+from contentblitz.persistence.session_store import LocalSessionStore
 
 SESSION_PREFIX = "cbx_ui_"
 KEY_INITIALIZED = f"{SESSION_PREFIX}initialized"
@@ -19,6 +26,8 @@ KEY_LAST_SUBMISSION = f"{SESSION_PREFIX}last_submission"
 KEY_PROGRESS_EVENTS = f"{SESSION_PREFIX}progress_events"
 KEY_NODE_STATUSES = f"{SESSION_PREFIX}node_statuses"
 KEY_STATUS_MESSAGES = f"{SESSION_PREFIX}status_messages"
+KEY_UI_SESSION_ID = f"{SESSION_PREFIX}ui_session_id"
+KEY_PERSISTENCE_MESSAGES = f"{SESSION_PREFIX}persistence_messages"
 
 
 @dataclass(frozen=True)
@@ -42,7 +51,19 @@ def initialize_session_state() -> None:
     st.session_state[KEY_PROGRESS_EVENTS] = []
     st.session_state[KEY_NODE_STATUSES] = {}
     st.session_state[KEY_STATUS_MESSAGES] = []
+    st.session_state[KEY_UI_SESSION_ID] = uuid4().hex
+    st.session_state[KEY_PERSISTENCE_MESSAGES] = []
     st.session_state[KEY_INITIALIZED] = True
+
+
+def get_ui_session_id() -> str:
+    value = st.session_state.get(KEY_UI_SESSION_ID, "")
+    cleaned = str(value).strip()
+    if cleaned:
+        return cleaned
+    generated = uuid4().hex
+    st.session_state[KEY_UI_SESSION_ID] = generated
+    return generated
 
 
 def set_last_result(result: Mapping[str, Any]) -> None:
@@ -182,3 +203,135 @@ def get_status_messages() -> List[str]:
             continue
         cleaned_messages.append(cleaned)
     return cleaned_messages
+
+
+def add_persistence_message(message: str) -> None:
+    cleaned = str(message or "").strip()
+    if not cleaned or cleaned.lower() in {"none", "null"}:
+        return
+    existing = st.session_state.get(KEY_PERSISTENCE_MESSAGES, [])
+    if not isinstance(existing, list):
+        existing = []
+    existing.append(cleaned)
+    st.session_state[KEY_PERSISTENCE_MESSAGES] = existing[-20:]
+
+
+def get_persistence_messages() -> List[str]:
+    raw = st.session_state.get(KEY_PERSISTENCE_MESSAGES, [])
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[str] = []
+    for item in raw:
+        message = str(item or "").strip()
+        if not message or message.lower() in {"none", "null"}:
+            continue
+        cleaned.append(message)
+    return cleaned
+
+
+def clear_persistence_messages() -> None:
+    st.session_state[KEY_PERSISTENCE_MESSAGES] = []
+
+
+def _get_store() -> LocalSessionStore:
+    return LocalSessionStore()
+
+
+def save_persisted_run(
+    *,
+    result: Mapping[str, Any],
+    last_submission: Mapping[str, Any],
+    progress_events: List[Mapping[str, Any]],
+    node_statuses: Mapping[str, str],
+    status_messages: List[str],
+) -> str | None:
+    """
+    Persist a workflow run safely to local storage.
+
+    Returns run_id when persisted successfully, else None.
+    """
+    try:
+        serializable_result = dict(result)
+        serializable_result["ui_node_statuses"] = deepcopy(dict(node_statuses))
+        serializable_result["status_messages"] = deepcopy(list(status_messages))
+        serializable_result["ui_selected_options"] = deepcopy(dict(last_submission))
+        record = serialize_workflow_run(
+            result_state=serializable_result,
+            ui_selected_options=last_submission,
+            progress_events=progress_events,
+            status_messages=status_messages,
+            session_id=get_ui_session_id(),
+        )
+        run_id = _get_store().save_run(record)
+        return run_id
+    except Exception:
+        add_persistence_message(
+            "Workflow run completed, but local persistence save failed."
+        )
+        return None
+
+
+def list_persisted_run_summaries(*, limit: int = 100) -> List[Dict[str, Any]]:
+    try:
+        records = _get_store().list_runs(limit=limit)
+    except Exception:
+        add_persistence_message("Unable to list saved workflow runs.")
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        summaries.append(to_run_summary(item))
+    return summaries
+
+
+def load_persisted_run(run_id: str) -> Dict[str, Any] | None:
+    safe_run_id = str(run_id or "").strip()
+    if not safe_run_id:
+        return None
+    try:
+        record = _get_store().load_run(safe_run_id)
+    except Exception:
+        add_persistence_message("Unable to load the selected workflow run.")
+        return None
+    if not isinstance(record, dict):
+        return None
+    try:
+        return deserialize_workflow_run(record)
+    except Exception:
+        add_persistence_message("Saved workflow run is unavailable or corrupted.")
+        return None
+
+
+def restore_persisted_run(run_id: str) -> tuple[bool, str]:
+    restored = load_persisted_run(run_id)
+    if not isinstance(restored, dict):
+        return False, "Saved workflow run could not be restored."
+
+    set_last_result(restored)
+    workflow_status = str(
+        restored.get("ui_workflow_status", "") or restored.get("workflow_status", "")
+    ).strip().lower()
+    set_execution_status(workflow_status or "completed")
+    set_progress_events(
+        [item for item in restored.get("ui_progress_events", []) if isinstance(item, Mapping)]
+    )
+    set_node_statuses(
+        {
+            str(key): str(value)
+            for key, value in dict(restored.get("ui_node_statuses", {})).items()
+        }
+    )
+    set_status_messages(
+        [
+            *[item for item in restored.get("status_messages", []) if isinstance(item, str)],
+            "Restored saved workflow run.",
+        ]
+    )
+    set_last_submission(
+        dict(restored.get("ui_selected_options", {}))
+        if isinstance(restored.get("ui_selected_options", {}), Mapping)
+        else {}
+    )
+    set_last_error("")
+    return True, "Saved workflow run restored."

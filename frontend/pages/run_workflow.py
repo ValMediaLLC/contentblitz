@@ -34,11 +34,13 @@ from frontend.services.submission_options import (
 )
 from frontend.session import (
     add_history_entry,
+    clear_persistence_messages,
     get_execution_status,
     get_last_error,
     get_last_result,
     get_last_submission,
     get_node_statuses,
+    get_persistence_messages,
     get_progress_events,
     get_status_messages,
     set_execution_status,
@@ -46,6 +48,7 @@ from frontend.session import (
     set_last_result,
     set_last_submission,
     set_node_statuses,
+    save_persisted_run,
     set_progress_events,
     set_status_messages,
 )
@@ -195,15 +198,35 @@ def render() -> None:
                 )
                 final_result["ui_workflow_status"] = ui_workflow_status
                 final_result["ui_node_statuses"] = normalized_node_statuses
+                final_result["ui_selected_options"] = {
+                    "requested_outputs": requested_outputs,
+                    "export_requested": export_requested,
+                    "export_formats": export_formats,
+                }
+                computed_status_messages = build_status_messages(
+                    state=final_result,
+                    node_statuses=normalized_node_statuses,
+                )
+                final_result["status_messages"] = computed_status_messages
+                final_result["ui_progress_events"] = progress_events
 
                 set_last_result(final_result)
                 set_execution_status(ui_workflow_status)
-                set_status_messages(
-                    build_status_messages(
-                        state=final_result,
-                        node_statuses=normalized_node_statuses,
-                    )
+                set_status_messages(computed_status_messages)
+                persisted_run_id = save_persisted_run(
+                    result=final_result,
+                    last_submission={
+                        "requested_outputs": requested_outputs,
+                        "export_requested": export_requested,
+                        "export_formats": export_formats,
+                    },
+                    progress_events=progress_events,
+                    node_statuses=normalized_node_statuses,
+                    status_messages=computed_status_messages,
                 )
+                if persisted_run_id:
+                    final_result["run_id"] = persisted_run_id
+                    set_last_result(final_result)
                 add_history_entry(
                     user_query=safe_query,
                     requested_outputs=requested_outputs,
@@ -219,6 +242,11 @@ def render() -> None:
     last_error = get_last_error()
     if last_error:
         st.error(last_error)
+    persistence_messages = get_persistence_messages()
+    for message in persistence_messages:
+        st.warning(message)
+    if persistence_messages:
+        clear_persistence_messages()
 
     result = get_last_result()
     execution_status = get_execution_status()
