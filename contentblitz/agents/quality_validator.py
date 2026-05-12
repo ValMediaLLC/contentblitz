@@ -5,6 +5,11 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Tuple
 
+from contentblitz.quality.citations import (
+    CITATION_VALIDATION_WARNING,
+    validate_citation_sources,
+)
+
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -82,6 +87,8 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
     best_drafts = deepcopy(_safe_dict(state.get("best_drafts", {})))
     attempt_history = deepcopy(_safe_dict(state.get("attempt_history", {})))
     errors = deepcopy(_safe_list(state.get("errors", [])))
+    status_messages = deepcopy(_safe_list(state.get("status_messages", [])))
+    status_messages_updated = False
 
     for key in ("blog", "linkedin", "image"):
         history = attempt_history.get(key, [])
@@ -173,7 +180,28 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
         retry_requested = False
         retry_target = ""
 
-    return {
+    research_requested = bool(state.get("research_required", False)) or "research" in requested_outputs
+    sources = _safe_list(state.get("sources", []))
+    if research_requested or sources:
+        citation_validation = validate_citation_sources(
+            sources,
+            research_requested=research_requested,
+        )
+        quality_scores["citation_validation"] = {
+            "status": str(citation_validation.get("status", "passed")),
+            "invalid_count": int(citation_validation.get("invalid_count", 0)),
+            "duplicate_count": int(citation_validation.get("duplicate_count", 0)),
+            "unsafe_url_count": int(citation_validation.get("unsafe_url_count", 0)),
+            "missing_count": int(citation_validation.get("missing_count", 0)),
+            "valid_source_count": int(citation_validation.get("valid_source_count", 0)),
+        }
+        if str(citation_validation.get("status", "")).lower() == "degraded":
+            warning = str(citation_validation.get("warning", "")).strip() or CITATION_VALIDATION_WARNING
+            if warning and warning not in status_messages:
+                status_messages.append(warning)
+                status_messages_updated = True
+
+    updates = {
         "quality_scores": quality_scores,
         "best_drafts": best_drafts,
         "attempt_history": attempt_history,
@@ -181,3 +209,6 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "retry_requested": retry_requested,
         "retry_target": retry_target,
     }
+    if status_messages_updated:
+        updates["status_messages"] = status_messages
+    return updates

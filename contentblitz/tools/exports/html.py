@@ -6,6 +6,7 @@ from html import escape
 import re
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.quality.citations import validate_citation_sources
 from contentblitz.tools.exports.markdown import (
     collect_export_warnings,
     derive_export_workflow_status,
@@ -192,9 +193,14 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
 
 
 def _render_sources(state: Mapping[str, Any]) -> str:
+    citation_checked = validate_citation_sources(
+        _safe_list(state.get("sources", [])),
+        research_requested=bool(_safe_list(state.get("sources", []))),
+    )
+    safe_sources = _safe_list(citation_checked.get("sanitized_sources", []))
     deduped: Dict[str, Dict[str, Any]] = {}
     ordered_keys: List[str] = []
-    for idx, raw in enumerate(_safe_list(state.get("sources", []))):
+    for idx, raw in enumerate(safe_sources):
         item = _safe_dict(raw)
         url = _safe_href(item.get("url"))
         title = _sanitize_plain_text(item.get("title")) or f"Source {idx + 1}"

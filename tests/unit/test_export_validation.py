@@ -8,6 +8,7 @@ from contentblitz.tools.exports.validation import (
     validate_pdf_export,
 )
 from contentblitz.tools.exports.docx import build_docx_document_bytes_from_text
+from contentblitz.quality.citations import CITATION_VALIDATION_WARNING
 import io
 import zipfile
 
@@ -109,6 +110,56 @@ def test_validate_markdown_export_requires_sources_section_when_sources_exist() 
     result = validate_markdown_export(markdown, sources_exist=True)
     assert result["valid"] is False
     assert any("sources section is required" in error.lower() for error in result["errors"])
+
+
+def test_validate_markdown_export_warns_when_structured_citations_are_invalid() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `partial_success`
+
+## Sources
+1. [Example](https://example.com)
+"""
+    result = validate_markdown_export(
+        markdown,
+        sources_exist=True,
+        sources=[
+            {
+                "title": "Source A",
+                "url": "javascript:alert(1)",
+                "snippet": "Unsafe URL should be downgraded.",
+            }
+        ],
+    )
+
+    assert result["valid"] is True
+    assert CITATION_VALIDATION_WARNING in result["warnings"]
+
+
+def test_validate_markdown_export_has_no_citation_warning_for_valid_structured_sources() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `success`
+
+## Sources
+1. [Example](https://example.com)
+"""
+    result = validate_markdown_export(
+        markdown,
+        sources_exist=True,
+        sources=[
+            {
+                "title": "Example",
+                "url": "https://example.com",
+                "snippet": "Safe source snippet.",
+            }
+        ],
+    )
+
+    assert result["valid"] is True
+    assert CITATION_VALIDATION_WARNING not in result["warnings"]
 
 
 def test_normalize_validation_result_strips_empty_fields() -> None:

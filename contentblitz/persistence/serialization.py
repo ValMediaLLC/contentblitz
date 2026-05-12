@@ -121,6 +121,23 @@ def _sanitize_quality_scores(quality_scores: Any) -> Dict[str, Any]:
             summary["composite"] = float(composite)
         if summary:
             cleaned[key] = summary
+    citation = _safe_dict(raw.get("citation_validation", {}))
+    citation_summary: Dict[str, Any] = {}
+    citation_status = _safe_text(citation.get("status")).lower()
+    if citation_status:
+        citation_summary["status"] = citation_status
+    for field_name in (
+        "invalid_count",
+        "duplicate_count",
+        "unsafe_url_count",
+        "missing_count",
+        "valid_source_count",
+    ):
+        value = citation.get(field_name)
+        if isinstance(value, int) and value >= 0:
+            citation_summary[field_name] = value
+    if citation_summary:
+        cleaned["citation_validation"] = citation_summary
     return cleaned
 
 

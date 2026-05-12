@@ -160,3 +160,49 @@ def test_incoming_retry_flag_does_not_force_retry_when_score_passes(monkeypatch)
     assert updates["quality_scores"]["blog"]["validation_status"] == "passed"
     assert updates["retry_requested"] is False
     assert updates["retry_target"] == ""
+
+
+def test_citation_validation_adds_safe_warning_for_invalid_sources(monkeypatch) -> None:
+    def fake_validate_content(content_type, draft_body, context=None):
+        return {"composite": 0.8}
+
+    monkeypatch.setattr(quality_validator_module, "validate_content", fake_validate_content)
+    state = _base_state(
+        research_required=True,
+        sources=[
+            {
+                "title": "Unsafe Source",
+                "url": "javascript:alert(1)",
+                "snippet": "Unsafe link in source model.",
+            }
+        ],
+    )
+    updates = quality_validator_module.quality_validator_node(state)
+
+    citation_meta = updates["quality_scores"]["citation_validation"]
+    assert citation_meta["status"] == "degraded"
+    assert citation_meta["unsafe_url_count"] == 1
+    assert any("citation validation found" in msg.lower() for msg in updates["status_messages"])
+
+
+def test_citation_validation_does_not_add_warning_for_valid_sources(monkeypatch) -> None:
+    def fake_validate_content(content_type, draft_body, context=None):
+        return {"composite": 0.8}
+
+    monkeypatch.setattr(quality_validator_module, "validate_content", fake_validate_content)
+    state = _base_state(
+        research_required=True,
+        status_messages=[],
+        sources=[
+            {
+                "title": "Safe Source",
+                "url": "https://example.com/safe-source",
+                "snippet": "Credible citation text.",
+            }
+        ],
+    )
+    updates = quality_validator_module.quality_validator_node(state)
+
+    citation_meta = updates["quality_scores"]["citation_validation"]
+    assert citation_meta["status"] == "passed"
+    assert "status_messages" not in updates

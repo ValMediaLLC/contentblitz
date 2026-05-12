@@ -232,6 +232,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
             validate_markdown_export(
                 markdown_document,
                 sources_exist=bool(_safe_list(state.get("sources", []))),
+                sources=_safe_list(state.get("sources", [])),
             )
         )
         format_validation["markdown"] = markdown_validation
@@ -260,6 +261,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
             validate_html_export(
                 html_document,
                 sources_exist=bool(_safe_list(state.get("sources", []))),
+                sources=_safe_list(state.get("sources", [])),
             )
         )
         format_validation["html"] = html_validation
@@ -287,6 +289,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
             validate_pdf_export(
                 pdf_document,
                 sources_exist=bool(_safe_list(state.get("sources", []))),
+                sources=_safe_list(state.get("sources", [])),
             )
         )
         format_validation["pdf"] = pdf_validation
@@ -314,6 +317,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
             validate_docx_export(
                 docx_document,
                 sources_exist=bool(_safe_list(state.get("sources", []))),
+                sources=_safe_list(state.get("sources", [])),
             )
         )
         format_validation["docx"] = docx_validation

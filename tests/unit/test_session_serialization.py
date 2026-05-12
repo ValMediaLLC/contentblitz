@@ -290,6 +290,38 @@ def test_prompt_injection_metadata_defaults_when_absent() -> None:
     assert restored["sanitized_user_query"] == ""
 
 
+def test_citation_validation_metadata_is_serialized_safely() -> None:
+    state = _sample_state()
+    state["quality_scores"]["citation_validation"] = {
+        "status": "DEGRADED",
+        "invalid_count": 2,
+        "duplicate_count": 1,
+        "unsafe_url_count": 1,
+        "missing_count": 1,
+        "valid_source_count": 3,
+        "raw_payload": {"unsafe": True},
+    }
+
+    serialized = serialize_workflow_run(
+        result_state=state,
+        session_id="session-7",
+        run_id="run-7",
+    )
+    citation = serialized["quality_scores"]["citation_validation"]
+
+    assert citation == {
+        "status": "degraded",
+        "invalid_count": 2,
+        "duplicate_count": 1,
+        "unsafe_url_count": 1,
+        "missing_count": 1,
+        "valid_source_count": 3,
+    }
+
+    restored = deserialize_workflow_run(serialized)
+    assert restored["quality_scores"]["citation_validation"] == citation
+
+
 def test_older_record_without_prompt_injection_fields_restores_safely() -> None:
     legacy_record = {
         "run_id": "legacy-1",

@@ -106,3 +106,32 @@ def test_validation_failure_metadata_restores_safely(tmp_path, monkeypatch) -> N
     assert "markdown" not in export_metadata["export_paths"]
     assert export_metadata["export_status"]["pdf"] in {"completed", "failed"}
 
+
+def test_invalid_citations_add_warning_without_blocking_safe_markdown_export(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+
+    state = _workflow_state(export_requested=True, formats_requested=["markdown"])
+    state["sources"] = [
+        {
+            "title": "Unsafe URL Source",
+            "url": "javascript:alert(1)",
+            "snippet": "Citation text is present but URL is unsafe.",
+            "citation_available": True,
+            "credibility_score": 0.4,
+        }
+    ]
+
+    assembled = output_assembler_node(state)
+    merged = {**state, **assembled}
+    export_updates = export_node_module.export_node(merged)
+    metadata = export_updates["export_metadata"]
+
+    assert metadata["export_status"]["markdown"] == "completed"
+    assert metadata["export_paths"]["markdown"].endswith(".md")
+    warning_entries = [
+        item
+        for item in metadata.get("error_log", [])
+        if item.get("code") == "markdown_validation_warning"
+    ]
+    assert warning_entries
+    assert any("citation validation" in entry.get("message", "").lower() for entry in warning_entries)

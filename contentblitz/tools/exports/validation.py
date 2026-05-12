@@ -8,6 +8,11 @@ from urllib.parse import urlsplit
 import zipfile
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.quality.citations import (
+    CITATION_VALIDATION_WARNING,
+    validate_citation_sources,
+)
+
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
@@ -121,10 +126,26 @@ def _html_invalid_urls(html_text: str) -> list[str]:
     return invalid
 
 
+def _apply_citation_warning(
+    warnings: list[str],
+    *,
+    sources_exist: bool,
+    sources: Any,
+) -> None:
+    citation_result = validate_citation_sources(
+        sources,
+        research_requested=sources_exist,
+    )
+    if str(citation_result.get("status", "")).lower() == "degraded":
+        if CITATION_VALIDATION_WARNING not in warnings:
+            warnings.append(CITATION_VALIDATION_WARNING)
+
+
 def validate_markdown_export(
     markdown_text: str,
     *,
     sources_exist: bool = False,
+    sources: Any | None = None,
 ) -> Dict[str, Any]:
     """
     Validate markdown export payload for structure and safety.
@@ -195,6 +216,12 @@ def validate_markdown_export(
                 errors.append("Sources section must include readable citations.")
                 break
 
+    _apply_citation_warning(
+        warnings,
+        sources_exist=sources_exist,
+        sources=sources if sources is not None else [],
+    )
+
     return {
         "valid": len(errors) == 0,
         "warnings": warnings,
@@ -206,6 +233,7 @@ def validate_html_export(
     html_text: str,
     *,
     sources_exist: bool = False,
+    sources: Any | None = None,
 ) -> Dict[str, Any]:
     """
     Validate html export payload for structure and safety.
@@ -265,6 +293,12 @@ def validate_html_export(
         if "<li" not in sources_tail:
             errors.append("Sources section must include readable citations.")
 
+    _apply_citation_warning(
+        warnings,
+        sources_exist=sources_exist,
+        sources=sources if sources is not None else [],
+    )
+
     return {
         "valid": len(errors) == 0,
         "warnings": warnings,
@@ -276,6 +310,7 @@ def validate_pdf_export(
     pdf_payload: bytes | str,
     *,
     sources_exist: bool = False,
+    sources: Any | None = None,
 ) -> Dict[str, Any]:
     """
     Validate pdf export payload for structure and safety.
@@ -338,6 +373,12 @@ def validate_pdf_export(
     if sources_exist and "sources" not in lowered:
         errors.append("Sources section is required when sources are present.")
 
+    _apply_citation_warning(
+        warnings,
+        sources_exist=sources_exist,
+        sources=sources if sources is not None else [],
+    )
+
     return {
         "valid": len(errors) == 0,
         "warnings": warnings,
@@ -349,6 +390,7 @@ def validate_docx_export(
     docx_payload: bytes | str,
     *,
     sources_exist: bool = False,
+    sources: Any | None = None,
 ) -> Dict[str, Any]:
     """
     Validate docx export payload for structure and safety.
@@ -432,6 +474,12 @@ def validate_docx_export(
         errors.append("Missing required Workflow Summary section.")
     if sources_exist and "sources" not in lowered:
         errors.append("Sources section is required when sources are present.")
+
+    _apply_citation_warning(
+        warnings,
+        sources_exist=sources_exist,
+        sources=sources if sources is not None else [],
+    )
 
     return {
         "valid": len(errors) == 0,

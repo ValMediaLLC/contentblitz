@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.quality.citations import validate_citation_sources
+
 _ENV_NAME_RE = re.compile(
     r"OPENAI_API_KEY|SERP_API_KEY|PERPLEXITY_API_KEY",
     flags=re.IGNORECASE,
@@ -400,7 +402,11 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
 
 
 def _render_sources(state: Mapping[str, Any]) -> str:
-    sources = _dedupe_sources_for_export(_safe_list(state.get("sources", [])))
+    citation_checked = validate_citation_sources(
+        _safe_list(state.get("sources", [])),
+        research_requested=bool(_safe_list(state.get("sources", []))),
+    )
+    sources = _dedupe_sources_for_export(citation_checked.get("sanitized_sources", []))
     if not sources:
         return ""
     lines = ["## Sources"]
