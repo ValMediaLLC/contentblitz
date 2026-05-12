@@ -105,6 +105,49 @@ def test_image_output_rendering_rejects_base64_content() -> None:
     assert all(not str(item.get("url", "")).startswith("data:image/") for item in sanitized)
 
 
+def test_image_output_rendering_sanitizes_text_fields_and_error_payloads() -> None:
+    outputs = [
+        {
+            "status": "success<script>alert(1)</script>",
+            "provider": "provider<script>openai</script>",
+            "url": "javascript:alert(1)",
+            "id": "id<iframe src='https://evil.test'></iframe>",
+            "mime_type": "image/png",
+            "prompt": "Prompt [x](javascript:alert(1)) OPENAI_API_KEY=sk-secret",
+            "revised_prompt": "Revised<object data='x'></object>",
+            "width": 1024,
+            "height": 1024,
+        },
+        {
+            "status": "failed",
+            "provider": "dall-e-3",
+            "error": {
+                "message": "{'code': 'configuration_error', 'provider': 'openai', 'recoverable': False}",
+                "recoverable": True,
+            },
+        },
+    ]
+
+    sanitized = sanitize_image_outputs_for_display(outputs)
+    assert len(sanitized) == 2
+
+    success_item = sanitized[0]
+    assert "url" not in success_item
+    assert success_item["status"] == "success"
+    assert success_item["provider"] == "provider"
+    assert success_item["id"] == "id"
+    assert success_item["mime_type"] == "image/png"
+    assert "javascript:" not in success_item["prompt"].lower()
+    assert "openai_api_key" not in success_item["prompt"].lower()
+    assert "<object" not in success_item["revised_prompt"].lower()
+
+    failed_item = sanitized[1]
+    error_message = str(failed_item["error"]["message"]).lower()
+    assert "configuration_error" not in error_message
+    assert "provider" not in error_message
+    assert "openai_api_key" not in error_message
+
+
 def test_sources_are_deduplicated_for_display() -> None:
     sources = [
         {

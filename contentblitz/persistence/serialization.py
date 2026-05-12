@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
 from contentblitz.persistence.models import PersistedRunRecord, PersistedRunSummary
+from contentblitz.safety.output_sanitizer import (
+    sanitize_markdown_output,
+    sanitize_plain_output,
+)
 from contentblitz.ui.error_display import normalize_errors_for_display, redact_sensitive_text
 from contentblitz.ui.rendering import dedupe_sources_for_display, sanitize_image_outputs_for_display
 
@@ -41,6 +45,30 @@ def _sanitize_text(value: Any) -> str:
     return redact_sensitive_text(cleaned)
 
 
+def _sanitize_markdown_text(value: Any) -> str:
+    cleaned = _safe_text(value)
+    if not cleaned:
+        return ""
+    lowered = cleaned.lower()
+    if lowered in {"none", "null"}:
+        return ""
+    sanitized, _ = sanitize_markdown_output(cleaned)
+    sanitized = redact_sensitive_text(sanitized)
+    return sanitized
+
+
+def _sanitize_plain_text(value: Any) -> str:
+    cleaned = _safe_text(value)
+    if not cleaned:
+        return ""
+    lowered = cleaned.lower()
+    if lowered in {"none", "null"}:
+        return ""
+    sanitized, _ = sanitize_plain_output(cleaned)
+    sanitized = redact_sensitive_text(sanitized)
+    return sanitized
+
+
 def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
@@ -66,17 +94,17 @@ def _sanitize_content_drafts(content_drafts: Any) -> Dict[str, Any]:
     research = _safe_dict(drafts.get("research_report", {}))
     return {
         "blog": {
-            "body": _sanitize_text(blog.get("body")),
+            "body": _sanitize_markdown_text(blog.get("body")),
             "version": int(blog.get("version", 0)) if isinstance(blog.get("version"), int) else 0,
         },
         "linkedin": {
-            "body": _sanitize_text(linkedin.get("body")),
+            "body": _sanitize_markdown_text(linkedin.get("body")),
             "version": int(linkedin.get("version", 0))
             if isinstance(linkedin.get("version"), int)
             else 0,
         },
         "research_report": {
-            "body": _sanitize_text(research.get("body")),
+            "body": _sanitize_markdown_text(research.get("body")),
         },
     }
 
@@ -184,11 +212,11 @@ def _sanitize_sources(sources: Any) -> List[Dict[str, Any]]:
             continue
         sanitized.append(
             {
-                "title": _sanitize_text(item.get("title")),
+                "title": _sanitize_plain_text(item.get("title")),
                 "url": _safe_text(item.get("url")) or None,
-                "snippet": _sanitize_text(item.get("snippet")),
-                "source": _sanitize_text(item.get("source")),
-                "published_at": _safe_text(item.get("published_at")) or None,
+                "snippet": _sanitize_plain_text(item.get("snippet")),
+                "source": _sanitize_plain_text(item.get("source")),
+                "published_at": _sanitize_plain_text(item.get("published_at")) or None,
                 "citation_available": bool(item.get("citation_available", False)),
                 "credibility_score": float(item.get("credibility_score", 0.0))
                 if isinstance(item.get("credibility_score"), (int, float))
@@ -201,9 +229,9 @@ def _sanitize_sources(sources: Any) -> List[Dict[str, Any]]:
 def _sanitize_partial_outputs(partial_outputs: Any) -> Dict[str, str]:
     raw = _safe_dict(partial_outputs)
     return {
-        "blog": _sanitize_text(raw.get("blog")),
-        "linkedin": _sanitize_text(raw.get("linkedin")),
-        "research": _sanitize_text(raw.get("research")),
+        "blog": _sanitize_markdown_text(raw.get("blog")),
+        "linkedin": _sanitize_markdown_text(raw.get("linkedin")),
+        "research": _sanitize_markdown_text(raw.get("research")),
     }
 
 
@@ -375,7 +403,7 @@ def serialize_workflow_run(
         requested_outputs=requested_outputs,
         workflow_status=ui_workflow_status,
         routing_decision=_sanitize_text(state.get("routing_decision")),
-        final_response=_sanitize_text(state.get("final_response")),
+        final_response=_sanitize_markdown_text(state.get("final_response")),
         content_drafts=content_drafts,
         partial_outputs=partial_outputs,
         partial_output_mode=_sanitize_text(state.get("partial_output_mode")) or "none",
@@ -429,7 +457,7 @@ def deserialize_workflow_run(record: Mapping[str, Any]) -> Dict[str, Any]:
         "ui_workflow_status": _sanitize_text(payload.get("ui_workflow_status"))
         or _sanitize_text(payload.get("workflow_status")),
         "routing_decision": _sanitize_text(payload.get("routing_decision")),
-        "final_response": _sanitize_text(payload.get("final_response")),
+        "final_response": _sanitize_markdown_text(payload.get("final_response")),
         "content_drafts": content_drafts,
         "partial_outputs": partial_outputs,
         "partial_output_mode": _sanitize_text(payload.get("partial_output_mode")) or "none",

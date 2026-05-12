@@ -73,8 +73,12 @@ def _sanitize_source(source: Mapping[str, Any], index: int) -> dict[str, Any]:
     title = title or f"Source {index + 1}"
     url = _safe_url(source.get("url"))
     snippet, _ = sanitize_plain_output(_safe_text(source.get("snippet")))
-    published_at = _safe_text(source.get("published_at")) or None
-    provider = _safe_text(source.get("provider") or source.get("source")) or "unknown"
+    published_at, _ = sanitize_plain_output(_safe_text(source.get("published_at")))
+    published_at = published_at or None
+    provider, _ = sanitize_plain_output(
+        _safe_text(source.get("provider") or source.get("source"))
+    )
+    provider = provider or "unknown"
     citation_available = bool(url) and bool(source.get("citation_available", False))
     return {
         "title": title,
@@ -158,17 +162,58 @@ def sanitize_image_outputs_for_display(image_outputs: Any) -> list[dict[str, Any
             value = raw.get(key)
             if value is None:
                 continue
-            if isinstance(value, str) and not value.strip():
+            if key in {"width", "height"}:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    safe_entry[key] = value
                 continue
-            safe_entry[key] = value
+
+            sanitized_value = _sanitized_plain(value)
+            if not sanitized_value:
+                continue
+
+            if key == "url":
+                if _contains_base64_payload(sanitized_value):
+                    continue
+                safe_url = _safe_url(sanitized_value)
+                if not safe_url:
+                    continue
+                safe_entry[key] = safe_url
+                continue
+
+            safe_entry[key] = sanitized_value
 
         if "url" in safe_entry and _contains_base64_payload(safe_entry["url"]):
             continue
 
         raw_error = raw.get("error")
         if raw_error is not None:
+            recoverable = True
+            code = ""
+            provider = ""
+            message_value: Any = raw_error
+            if isinstance(raw_error, Mapping):
+                recoverable = bool(raw_error.get("recoverable", True))
+                code = _sanitized_plain(raw_error.get("code"))
+                provider = _sanitized_plain(raw_error.get("provider"))
+                message_value = raw_error.get("message")
+
+            safe_message = _sanitized_plain(message_value)
+            if not safe_message:
+                safe_message = (
+                    "Image generation encountered a recoverable issue."
+                    if recoverable
+                    else "Image generation failed safely."
+                )
+            normalized_error_payload: dict[str, Any] = {
+                "message": safe_message,
+                "recoverable": recoverable,
+            }
+            if code:
+                normalized_error_payload["code"] = code
+            if provider:
+                normalized_error_payload["provider"] = provider
             safe_entry["error"] = normalize_errors_for_display(
-                [{"message": _safe_text(raw_error), "recoverable": True}]
+                [normalized_error_payload]
             )[0]
 
         if safe_entry:

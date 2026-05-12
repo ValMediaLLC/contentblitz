@@ -20,6 +20,12 @@ _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "recoverable': false",
     '"recoverable": false',
 )
+_PROMPT_LEAK_RE = re.compile(
+    r"(?i)\b(?:system\s*prompt|developer\s*message|developer\s*prompt|system\s*message|hidden\s*prompt|hidden\s*instructions?)\b"
+)
+_PROMPT_LEAK_ACTION_RE = re.compile(
+    r"(?i)\b(?:reveal|show|dump|print|output|leak|expose)\b"
+)
 _ENV_NAME_RE = re.compile(
     r"OPENAI_API_KEY|SERP_API_KEY|PERPLEXITY_API_KEY",
     flags=re.IGNORECASE,
@@ -108,6 +114,7 @@ def _strip_unsafe_markup(text: str) -> str:
 def _redact_sensitive_tokens(text: str) -> str:
     sanitized = _ENV_NAME_RE.sub("[REDACTED]", text)
     sanitized = _TOKEN_RE.sub("[REDACTED]", sanitized)
+    sanitized = _PROMPT_LEAK_RE.sub("[REDACTED]", sanitized)
     sanitized = _CONTROL_CHARS_RE.sub("", sanitized)
     return sanitized
 
@@ -118,6 +125,12 @@ def _strip_unsafe_lines(text: str) -> str:
     for line in lines:
         stripped = line.strip()
         lowered = stripped.lower()
+        if _PROMPT_LEAK_RE.search(lowered) and (
+            _PROMPT_LEAK_ACTION_RE.search(lowered)
+            or ":" in lowered
+            or "=" in lowered
+        ):
+            continue
         if any(marker in lowered for marker in _STACK_TRACE_MARKERS):
             continue
         if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):

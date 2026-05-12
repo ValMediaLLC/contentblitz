@@ -290,6 +290,49 @@ def test_prompt_injection_metadata_defaults_when_absent() -> None:
     assert restored["sanitized_user_query"] == ""
 
 
+def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> None:
+    for export_enabled in (True, False):
+        state = _sample_state()
+        state["final_response"] = (
+            "Safe intro <script>alert(1)</script> "
+            "[bad](javascript:alert(1)) tail"
+        )
+        state["content_drafts"]["blog"]["body"] = (
+            "Draft body <script>alert(1)</script> "
+            "[bad](javascript:alert(1)) end"
+        )
+        state["export_requested"] = export_enabled
+        state["export_metadata"] = {
+            "formats_requested": ["markdown"] if export_enabled else [],
+            "export_paths": {},
+            "export_status": {},
+            "status_messages": [],
+        }
+
+        serialized = serialize_workflow_run(
+            result_state=state,
+            session_id=f"session-unsafe-{int(export_enabled)}",
+            run_id=f"run-unsafe-{int(export_enabled)}",
+        )
+
+        for field_value in (
+            serialized["final_response"],
+            serialized["content_drafts"]["blog"]["body"],
+        ):
+            lowered = field_value.lower()
+            assert "<script" not in lowered
+            assert "javascript:" not in lowered
+
+        restored = deserialize_workflow_run(serialized)
+        for field_value in (
+            restored["final_response"],
+            restored["content_drafts"]["blog"]["body"],
+        ):
+            lowered = field_value.lower()
+            assert "<script" not in lowered
+            assert "javascript:" not in lowered
+
+
 def test_citation_validation_metadata_is_serialized_safely() -> None:
     state = _sample_state()
     state["quality_scores"]["citation_validation"] = {
