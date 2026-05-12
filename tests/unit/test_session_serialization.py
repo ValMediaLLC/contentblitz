@@ -59,6 +59,13 @@ def _sample_state() -> dict:
         "quality_scores": {
             "blog": {"validation_status": "retry_needed", "composite": 0.71, "internal": "x"}
         },
+        "cost_controls": {
+            "tokens_used_this_session": 4200,
+            "search_queries_used_this_session": 3,
+            "image_generations_used_this_session": 1,
+            "total_retries_used_this_session": 0,
+            "budget_exceeded": False,
+        },
         "export_metadata": {
             "formats_requested": ["markdown", "pdf"],
             "export_paths": {"markdown": "exports/run.md", "pdf": "exports/run.pdf"},
@@ -288,6 +295,47 @@ def test_prompt_injection_metadata_defaults_when_absent() -> None:
     assert restored["prompt_injection_detected"] is False
     assert restored["prompt_injection_signals"] == []
     assert restored["sanitized_user_query"] == ""
+
+
+def test_cost_controls_are_serialized_safely_and_restore_without_provider_details() -> None:
+    state = _sample_state()
+    state["cost_controls"] = {
+        "tokens_used_this_session": 8400,
+        "search_queries_used_this_session": 4,
+        "image_generations_used_this_session": 2,
+        "total_retries_used_this_session": 1,
+        "budget_exceeded": True,
+        "token_budget_per_session": 10000,
+        "search_query_cap_per_session": 5,
+        "image_generation_cap_per_session": 3,
+        "max_total_retries_per_session": 3,
+        "provider_invoice_payload": {"unsafe": True},
+        "secret_pricing_table": "do-not-persist",
+    }
+
+    serialized = serialize_workflow_run(
+        result_state=state,
+        session_id="session-cost-1",
+        run_id="run-cost-1",
+    )
+    controls = serialized["cost_controls"]
+    assert controls == {
+        "tokens_used_this_session": 8400,
+        "search_queries_used_this_session": 4,
+        "image_generations_used_this_session": 2,
+        "total_retries_used_this_session": 1,
+        "budget_exceeded": True,
+        "token_budget_per_session": 10000,
+        "search_query_cap_per_session": 5,
+        "image_generation_cap_per_session": 3,
+        "max_total_retries_per_session": 3,
+    }
+    controls_blob = json.dumps(controls).lower()
+    assert "provider_invoice_payload" not in controls_blob
+    assert "secret_pricing_table" not in controls_blob
+
+    restored = deserialize_workflow_run(serialized)
+    assert restored["cost_controls"] == controls
 
 
 def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> None:

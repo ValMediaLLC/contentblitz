@@ -16,6 +16,7 @@ from contentblitz.ui.status import (
 from frontend.components.result_view import (
     render_degraded_and_error_state,
     render_execution_indicators,
+    render_usage_summary,
     render_final_response,
     render_export_status,
     render_node_execution_statuses,
@@ -328,6 +329,7 @@ def render() -> None:
         node_statuses=node_statuses,
     )
     render_degraded_and_error_state(render_payload)
+    render_usage_summary(render_payload)
     render_partial_outputs(render_payload)
     render_result_header({"ui_workflow_status": render_payload.get("workflow_status", "")})
     render_final_response({"final_response": render_payload.get("final_response", "")})

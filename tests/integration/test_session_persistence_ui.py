@@ -38,6 +38,13 @@ def _sample_result(*, workflow_status: str, user_query: str) -> dict:
         "image_outputs": [],
         "sources": [],
         "quality_scores": {},
+        "cost_controls": {
+            "tokens_used_this_session": 4200,
+            "search_queries_used_this_session": 3,
+            "image_generations_used_this_session": 1,
+            "total_retries_used_this_session": 0,
+            "budget_exceeded": False,
+        },
         "export_metadata": {"formats_requested": [], "export_paths": {}},
         "errors": [],
         "warnings": [],
@@ -90,6 +97,8 @@ def test_saves_lists_and_restores_partial_success_run(tmp_path, monkeypatch) -> 
         node_statuses=session_module.get_node_statuses(),
     )
     assert payload["final_response"] == "Saved final response."
+    assert payload["usage_summary"]["search_queries"] == 3
+    assert payload["usage_summary"]["estimated_tokens_out"] == 4200
 
 
 def test_restores_awaiting_clarification_without_reexecution(tmp_path, monkeypatch) -> None:

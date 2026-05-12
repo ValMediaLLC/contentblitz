@@ -23,6 +23,17 @@ _TRACEBACK_MARKERS = (
     "stack trace",
 )
 _SAFE_SIGNAL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+_SAFE_COST_CONTROL_KEYS = (
+    "tokens_used_this_session",
+    "search_queries_used_this_session",
+    "image_generations_used_this_session",
+    "total_retries_used_this_session",
+    "budget_exceeded",
+    "token_budget_per_session",
+    "search_query_cap_per_session",
+    "image_generation_cap_per_session",
+    "max_total_retries_per_session",
+)
 
 
 def _utc_now_iso() -> str:
@@ -166,6 +177,22 @@ def _sanitize_quality_scores(quality_scores: Any) -> Dict[str, Any]:
             citation_summary[field_name] = value
     if citation_summary:
         cleaned["citation_validation"] = citation_summary
+    return cleaned
+
+
+def _sanitize_cost_controls(cost_controls: Any) -> Dict[str, Any]:
+    raw = _safe_dict(cost_controls)
+    cleaned: Dict[str, Any] = {}
+    for key in _SAFE_COST_CONTROL_KEYS:
+        value = raw.get(key)
+        if key == "budget_exceeded":
+            cleaned[key] = bool(value)
+            continue
+        if isinstance(value, bool):
+            cleaned[key] = 0
+            continue
+        if isinstance(value, (int, float)):
+            cleaned[key] = max(0, int(value))
     return cleaned
 
 
@@ -379,6 +406,7 @@ def serialize_workflow_run(
     image_outputs = _sanitize_image_outputs(state.get("image_outputs", []))
     sources = _sanitize_sources(state.get("sources", []))
     quality_scores = _sanitize_quality_scores(state.get("quality_scores", {}))
+    cost_controls = _sanitize_cost_controls(state.get("cost_controls", {}))
     export_metadata = _sanitize_export_metadata(state.get("export_metadata", {}))
     errors = _sanitize_errors(state.get("errors", []))
     warnings = _sanitize_warnings(state.get("warnings", []))
@@ -411,6 +439,7 @@ def serialize_workflow_run(
         image_outputs=image_outputs,
         sources=sources,
         quality_scores=quality_scores,
+        cost_controls=cost_controls,
         export_metadata=export_metadata,
         warnings=warnings,
         errors=errors,
@@ -434,6 +463,7 @@ def deserialize_workflow_run(record: Mapping[str, Any]) -> Dict[str, Any]:
     partial_outputs = _sanitize_partial_outputs(payload.get("partial_outputs", {}))
     image_outputs = _sanitize_image_outputs(payload.get("image_outputs", []))
     sources = _sanitize_sources(payload.get("sources", []))
+    cost_controls = _sanitize_cost_controls(payload.get("cost_controls", {}))
     export_metadata = _sanitize_export_metadata(payload.get("export_metadata", {}))
     export_paths, missing_paths = _sanitize_export_paths_for_restore(export_metadata.get("export_paths", {}))
     export_metadata["export_paths"] = export_paths
@@ -465,6 +495,7 @@ def deserialize_workflow_run(record: Mapping[str, Any]) -> Dict[str, Any]:
         "image_outputs": image_outputs,
         "sources": sources,
         "quality_scores": _sanitize_quality_scores(payload.get("quality_scores", {})),
+        "cost_controls": cost_controls,
         "export_metadata": export_metadata,
         "warnings": warnings,
         "errors": _sanitize_errors(payload.get("errors", [])),

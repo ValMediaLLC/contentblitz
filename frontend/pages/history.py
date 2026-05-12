@@ -12,6 +12,7 @@ from frontend.components.result_view import (
     render_result_header,
     render_sources,
     render_status_messages,
+    render_usage_summary,
 )
 from frontend.session import (
     clear_persistence_messages,
@@ -81,6 +82,7 @@ def render() -> None:
                 else []
             )
             render_degraded_and_error_state(render_payload)
+            render_usage_summary(render_payload)
             render_partial_outputs(render_payload)
             render_result_header({"ui_workflow_status": render_payload.get("workflow_status", "")})
             render_final_response({"final_response": render_payload.get("final_response", "")})

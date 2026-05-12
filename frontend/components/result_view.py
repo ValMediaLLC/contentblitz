@@ -25,25 +25,17 @@ def render_execution_indicators(
 ) -> None:
     workflow_status = ""
     routing_decision = ""
-    cost_controls: Mapping[str, Any] = {}
     if isinstance(result, Mapping):
         workflow_status = (
             str(result.get("ui_workflow_status", "")).strip()
             or str(result.get("workflow_status", "")).strip()
         )
         routing_decision = str(result.get("routing_decision", "")).strip()
-        raw_cost_controls = result.get("cost_controls", {})
-        if isinstance(raw_cost_controls, Mapping):
-            cost_controls = raw_cost_controls
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Execution", execution_status or "idle")
     col2.metric("Workflow Status", workflow_status or "n/a")
     col3.metric("Routing", routing_decision or "n/a")
-
-    if cost_controls:
-        with st.expander("Cost Controls", expanded=False):
-            st.json(dict(cost_controls))
 
 
 def _status_label(status: str) -> str:
@@ -95,6 +87,51 @@ def render_status_messages(messages: list[str]) -> None:
         if not safe_message or safe_message.lower() in {"none", "null"}:
             continue
         st.info(safe_message)
+
+
+def render_usage_summary(render_payload: Mapping[str, Any]) -> None:
+    usage = render_payload.get("usage_summary", {})
+    if not isinstance(usage, Mapping) or not usage:
+        return
+
+    def _safe_int(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, float):
+            return max(0, int(value))
+        return 0
+
+    estimated_tokens = _safe_int(usage.get("estimated_tokens_in")) + _safe_int(
+        usage.get("estimated_tokens_out")
+    )
+    search_queries = _safe_int(usage.get("search_queries"))
+    image_requests = _safe_int(usage.get("image_generation_requests"))
+    degraded_ops = _safe_int(usage.get("degraded_operations"))
+    retries = _safe_int(usage.get("retry_attempts"))
+    image_failures = _safe_int(usage.get("image_generation_failures"))
+    sources_returned = _safe_int(usage.get("sources_returned"))
+    export_count = _safe_int(usage.get("export_generation_count"))
+    budget_state = str(usage.get("budget_state", "normal")).strip().lower() or "normal"
+    cost_level = str(usage.get("estimated_workflow_cost_level", "low")).strip().lower() or "low"
+
+    st.subheader("Workflow Usage")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Estimated Tokens", f"~{estimated_tokens:,}")
+    col2.metric("Search Queries", str(search_queries))
+    col3.metric("Image Requests", str(image_requests))
+    col4.metric("Degraded Ops", str(degraded_ops))
+    col5.metric("Retries", str(retries))
+
+    extra_col1, extra_col2, extra_col3 = st.columns(3)
+    extra_col1.metric("Sources Returned", str(sources_returned))
+    extra_col2.metric("Image Failures", str(image_failures))
+    extra_col3.metric("Exports Generated", str(export_count))
+
+    st.caption(
+        f"Budget State: {budget_state} | Estimated Cost Level: {cost_level}"
+    )
 
 
 def render_final_response(result: Mapping[str, Any]) -> None:

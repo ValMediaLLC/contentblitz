@@ -53,6 +53,16 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     return default
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
 def _sanitized_plain(value: Any) -> str:
     sanitized, _ = sanitize_plain_output(value)
     return sanitized
@@ -236,6 +246,195 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> list[str]:
     return warnings
 
 
+def _derive_usage_summary(
+    *,
+    state_snapshot: Mapping[str, Any],
+    node_statuses: Mapping[str, str],
+    ui_workflow_status: str,
+    sources_returned: int,
+) -> dict[str, Any]:
+    usage_metrics = _safe_dict(state_snapshot.get("usage_metrics", {}))
+    cost_controls = _safe_dict(state_snapshot.get("cost_controls", {}))
+    retry_counts = _safe_dict(state_snapshot.get("retry_counts", {}))
+    content_drafts = _safe_dict(state_snapshot.get("content_drafts", {}))
+    export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
+    raw_image_outputs = _safe_list(state_snapshot.get("image_outputs", []))
+    research_data = _safe_dict(state_snapshot.get("research_data", {}))
+    raw_errors = _safe_list(state_snapshot.get("errors", []))
+
+    tokens_used = max(
+        0,
+        _safe_int(
+            usage_metrics.get("estimated_total_tokens"),
+            _safe_int(cost_controls.get("tokens_used_this_session"), 0),
+        ),
+    )
+    estimated_tokens_out = max(
+        0,
+        _safe_int(usage_metrics.get("estimated_tokens_out"), tokens_used),
+    )
+    estimated_tokens_in = max(
+        0,
+        _safe_int(usage_metrics.get("estimated_tokens_in"), max(0, tokens_used - estimated_tokens_out)),
+    )
+    estimated_tokens_total = max(0, estimated_tokens_in + estimated_tokens_out)
+
+    text_generation_calls = max(0, _safe_int(usage_metrics.get("text_generation_calls"), 0))
+    if text_generation_calls <= 0:
+        blog_version = max(
+            0,
+            _safe_int(_safe_dict(content_drafts.get("blog", {})).get("version"), 0),
+        )
+        linkedin_version = max(
+            0,
+            _safe_int(_safe_dict(content_drafts.get("linkedin", {})).get("version"), 0),
+        )
+        text_generation_calls = blog_version + linkedin_version
+        if text_generation_calls <= 0 and estimated_tokens_total > 0:
+            text_generation_calls = 1
+
+    search_queries = max(
+        0,
+        _safe_int(
+            usage_metrics.get("search_queries"),
+            _safe_int(cost_controls.get("search_queries_used_this_session"), 0),
+        ),
+    )
+
+    image_generation_failures = sum(
+        1
+        for item in raw_image_outputs
+        if _safe_text(_safe_dict(item).get("status")).lower() == "failed"
+    )
+    image_generation_requests = max(
+        0,
+        _safe_int(
+            usage_metrics.get("image_generation_requests"),
+            max(
+                _safe_int(cost_controls.get("image_generations_used_this_session"), 0),
+                len(raw_image_outputs),
+            ),
+        ),
+    )
+
+    retry_attempts = max(
+        0,
+        _safe_int(
+            usage_metrics.get("retry_attempts"),
+            _safe_int(
+                cost_controls.get("total_retries_used_this_session"),
+                sum(max(0, _safe_int(value, 0)) for value in retry_counts.values()),
+            ),
+        ),
+    )
+
+    degraded_node_count = sum(
+        1
+        for status in node_statuses.values()
+        if _safe_text(status).lower() == "degraded"
+    )
+    recoverable_error_count = sum(
+        1
+        for item in raw_errors
+        if bool(_safe_dict(item).get("recoverable", False))
+    )
+    degraded_operations = max(
+        0,
+        _safe_int(
+            usage_metrics.get("degraded_operations"),
+            degraded_node_count
+            + image_generation_failures
+            + recoverable_error_count
+            + (1 if bool(research_data.get("degraded", False)) else 0),
+        ),
+    )
+
+    export_status = _safe_dict(export_metadata.get("export_status", {}))
+    export_paths = _safe_dict(export_metadata.get("export_paths", {}))
+    export_generation_count = max(
+        0,
+        _safe_int(
+            usage_metrics.get("export_generation_count"),
+            max(
+                len(export_paths),
+                sum(
+                    1
+                    for status in export_status.values()
+                    if _safe_text(status).lower() == "completed"
+                ),
+            ),
+        ),
+    )
+
+    estimated_total_operations = max(
+        0,
+        _safe_int(
+            usage_metrics.get("estimated_total_operations"),
+            text_generation_calls
+            + search_queries
+            + image_generation_requests
+            + retry_attempts
+            + export_generation_count,
+        ),
+    )
+
+    estimated_workflow_cost_level = _safe_text(
+        usage_metrics.get("estimated_workflow_cost_level")
+    ).lower()
+    if estimated_workflow_cost_level not in {"low", "medium", "high"}:
+        if estimated_tokens_total >= 7000 or estimated_total_operations >= 20:
+            estimated_workflow_cost_level = "high"
+        elif estimated_tokens_total >= 2000 or estimated_total_operations >= 8:
+            estimated_workflow_cost_level = "medium"
+        else:
+            estimated_workflow_cost_level = "low"
+
+    budget_state = _safe_text(usage_metrics.get("budget_state")).lower()
+    if budget_state not in {"normal", "degraded", "limited", "budget_exceeded"}:
+        if bool(cost_controls.get("budget_exceeded", False)):
+            budget_state = "budget_exceeded"
+        else:
+            limited = False
+            token_budget = max(0, _safe_int(cost_controls.get("token_budget_per_session"), 0))
+            if token_budget > 0 and estimated_tokens_total >= int(token_budget * 0.9):
+                limited = True
+            search_cap = max(0, _safe_int(cost_controls.get("search_query_cap_per_session"), 0))
+            if search_cap > 0 and search_queries >= search_cap:
+                limited = True
+            image_cap = max(
+                0,
+                _safe_int(cost_controls.get("image_generation_cap_per_session"), 0),
+            )
+            if image_cap > 0 and image_generation_requests >= image_cap:
+                limited = True
+            retry_cap = max(0, _safe_int(cost_controls.get("max_total_retries_per_session"), 0))
+            if retry_cap > 0 and retry_attempts >= retry_cap:
+                limited = True
+
+            if limited:
+                budget_state = "limited"
+            elif degraded_operations > 0 or ui_workflow_status == "partial_success":
+                budget_state = "degraded"
+            else:
+                budget_state = "normal"
+
+    return {
+        "text_generation_calls": text_generation_calls,
+        "estimated_tokens_in": estimated_tokens_in,
+        "estimated_tokens_out": estimated_tokens_out,
+        "search_queries": search_queries,
+        "sources_returned": max(0, _safe_int(sources_returned, 0)),
+        "image_generation_requests": image_generation_requests,
+        "image_generation_failures": image_generation_failures,
+        "retry_attempts": retry_attempts,
+        "degraded_operations": degraded_operations,
+        "export_generation_count": export_generation_count,
+        "estimated_total_operations": estimated_total_operations,
+        "estimated_workflow_cost_level": estimated_workflow_cost_level,
+        "budget_state": budget_state,
+    }
+
+
 def build_render_payload(
     *,
     state: Mapping[str, Any],
@@ -335,6 +534,23 @@ def build_render_payload(
             + ", ".join(sorted(set(missing_export_formats)))
             + "."
         )
+    display_sources = dedupe_sources_for_display(state_snapshot.get("sources", []))
+    usage_summary = _derive_usage_summary(
+        state_snapshot=state_snapshot,
+        node_statuses=merged_statuses,
+        ui_workflow_status=ui_workflow_status,
+        sources_returned=len(display_sources),
+    )
+    budget_state = _safe_text(usage_summary.get("budget_state")).lower()
+    if budget_state == "degraded":
+        warnings.append(
+            "Research results used fallback mode due to limited provider availability."
+        )
+    elif budget_state == "limited":
+        warnings.append("Workflow is operating in limited mode. Some outputs may be reduced.")
+    elif budget_state == "budget_exceeded":
+        warnings.append("Workflow usage limits were reached. Some outputs may be reduced.")
+
     final_response = _safe_text(state_snapshot.get("final_response"))
     final_response, final_changed = sanitize_markdown_output(final_response)
     unsafe_content_removed = unsafe_content_removed or final_changed
@@ -390,10 +606,11 @@ def build_render_payload(
         "partial_output_sections": partial_sections,
         "image_prompts": image_prompts,
         "image_outputs": image_outputs,
-        "sources": dedupe_sources_for_display(state_snapshot.get("sources", [])),
+        "sources": display_sources,
         "errors": normalize_errors_for_display(state_snapshot.get("errors", [])),
         "warnings": list(dict.fromkeys([item for item in warnings if _safe_text(item)])),
         "node_statuses": merged_statuses,
+        "usage_summary": usage_summary,
         "export_status": {
             "requested": bool(state_snapshot.get("export_requested", False))
             or bool(_safe_list(export_metadata.get("formats_requested", []))),

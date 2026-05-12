@@ -210,3 +210,72 @@ def test_render_payload_sanitizes_unsafe_final_and_partial_content() -> None:
     assert "data:image/" not in lowered_blog
     assert "<iframe" not in lowered_blog
     assert any("unsafe content was removed" in warning.lower() for warning in payload["warnings"])
+
+
+def test_usage_summary_aggregates_safe_counters() -> None:
+    state = _base_state()
+    state["cost_controls"] = {
+        "tokens_used_this_session": 4200,
+        "search_queries_used_this_session": 3,
+        "image_generations_used_this_session": 1,
+        "total_retries_used_this_session": 2,
+        "budget_exceeded": False,
+    }
+    state["retry_counts"] = {"blog_writer": 1, "linkedin_writer": 1}
+    state["sources"] = [
+        {"title": "A", "url": "https://a.example", "snippet": "x", "citation_available": True},
+        {"title": "B", "url": "https://b.example", "snippet": "y", "citation_available": True},
+    ]
+    state["image_outputs"] = [
+        {"status": "failed", "provider": "dall-e-3"},
+        {"status": "success", "provider": "dall-e-2", "url": "https://img.example/a.png"},
+    ]
+    statuses = build_initial_node_statuses()
+    statuses["research_agent_node"] = "degraded"
+
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    usage = payload["usage_summary"]
+    assert usage["estimated_tokens_out"] == 4200
+    assert usage["search_queries"] == 3
+    assert usage["sources_returned"] == 2
+    assert usage["image_generation_requests"] == 2
+    assert usage["image_generation_failures"] == 1
+    assert usage["retry_attempts"] == 2
+    assert usage["degraded_operations"] >= 1
+    assert usage["budget_state"] == "degraded"
+
+
+def test_usage_summary_marks_limited_when_near_caps() -> None:
+    state = _base_state()
+    state["workflow_status"] = "success"
+    state["cost_controls"] = {
+        "tokens_used_this_session": 9000,
+        "token_budget_per_session": 10000,
+        "search_queries_used_this_session": 1,
+        "search_query_cap_per_session": 5,
+        "image_generations_used_this_session": 0,
+        "image_generation_cap_per_session": 3,
+        "total_retries_used_this_session": 0,
+        "max_total_retries_per_session": 3,
+        "budget_exceeded": False,
+    }
+    state["image_outputs"] = []
+    state["warnings"] = []
+    statuses = build_initial_node_statuses()
+    statuses["research_agent_node"] = "completed"
+
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    assert payload["usage_summary"]["budget_state"] == "limited"
+    assert any("limited mode" in warning.lower() for warning in payload["warnings"])
+
+
+def test_usage_summary_marks_budget_exceeded_and_surfaces_warning() -> None:
+    state = _base_state()
+    state["cost_controls"] = {
+        "tokens_used_this_session": 12000,
+        "token_budget_per_session": 10000,
+        "budget_exceeded": True,
+    }
+    payload = build_render_payload(state=state, node_statuses=build_initial_node_statuses())
+    assert payload["usage_summary"]["budget_state"] == "budget_exceeded"
+    assert any("usage limits were reached" in warning.lower() for warning in payload["warnings"])

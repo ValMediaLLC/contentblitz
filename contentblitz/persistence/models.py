@@ -36,6 +36,7 @@ class PersistedRunRecord:
     image_outputs: List[Dict[str, Any]] = field(default_factory=list)
     sources: List[Dict[str, Any]] = field(default_factory=list)
     quality_scores: Dict[str, Any] = field(default_factory=dict)
+    cost_controls: Dict[str, Any] = field(default_factory=dict)
     export_metadata: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
