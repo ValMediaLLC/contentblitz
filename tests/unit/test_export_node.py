@@ -133,3 +133,82 @@ def test_empty_formats_requested_skips_export_but_sets_exported_at(monkeypatch) 
     assert metadata["export_paths"] == {}
     assert metadata["error_log"] == []
     assert metadata["exported_at"]
+
+
+def test_validation_failure_marks_only_invalid_format_failed(monkeypatch) -> None:
+    def fake_validate_markdown(*args, **kwargs):
+        return {"valid": False, "warnings": [], "errors": ["bad markdown structure"]}
+
+    def fake_validate_html(*args, **kwargs):
+        return {"valid": True, "warnings": [], "errors": []}
+
+    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_validate_markdown)
+    monkeypatch.setattr(export_node_module, "validate_html_export", fake_validate_html)
+
+    state = _base_state(
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["markdown", "html"],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+            "export_status": {},
+        },
+    )
+    updates = export_node_module.export_node(state)
+    metadata = updates["export_metadata"]
+
+    assert metadata["export_status"]["markdown"] == "failed"
+    assert metadata["export_status"]["html"] == "completed"
+    assert "markdown" not in metadata["export_paths"]
+    assert metadata["export_paths"]["html"].endswith(".html")
+    assert metadata["export_error_count"] == 1
+
+
+def test_unsafe_export_path_is_rejected(monkeypatch) -> None:
+    def fake_export_content(content: str, format_name: str):
+        if format_name == "markdown":
+            return {"path": "../outside.md"}
+        return {"path": f"exports/{format_name}"}
+
+    monkeypatch.setattr(export_node_module, "export_content", fake_export_content)
+    state = _base_state(
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["markdown"],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+            "export_status": {},
+        },
+    )
+    updates = export_node_module.export_node(state)
+    metadata = updates["export_metadata"]
+
+    assert metadata["export_status"]["markdown"] == "failed"
+    assert "markdown" not in metadata["export_paths"]
+    assert metadata["export_error_count"] == 1
+
+
+def test_validation_failure_adds_safe_status_message(monkeypatch) -> None:
+    def fake_validate_markdown(*args, **kwargs):
+        return {"valid": False, "warnings": [], "errors": ["invalid content"]}
+
+    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_validate_markdown)
+    state = _base_state(
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["markdown"],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+            "export_status": {},
+        },
+    )
+    updates = export_node_module.export_node(state)
+    metadata = updates["export_metadata"]
+    messages = metadata.get("status_messages", [])
+
+    assert metadata["export_status"]["markdown"] == "failed"
+    assert isinstance(messages, list)
+    assert any("failed validation" in str(message).lower() for message in messages)

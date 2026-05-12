@@ -205,3 +205,37 @@ def test_progress_event_metadata_does_not_override_top_level_status() -> None:
     restored = deserialize_workflow_run(serialized)
     assert restored["workflow_status"] == "partial_success"
     assert restored["ui_workflow_status"] == "partial_success"
+
+
+def test_export_metadata_status_messages_are_sanitized_on_serialize() -> None:
+    state = _sample_state()
+    state["export_metadata"] = {
+        "formats_requested": ["markdown"],
+        "export_paths": {"markdown": "exports/run.md"},
+        "export_status": {"markdown": "completed"},
+        "status_messages": [
+            "OPENAI_API_KEY=sk-super-secret-value",
+            "PERPLEXITY_API_KEY=pplx-super-secret-value",
+            "Traceback (most recent call last):\nboom",
+            "null",
+            "",
+            "Workflow completed with recoverable warnings.",
+        ],
+    }
+
+    serialized = serialize_workflow_run(
+        result_state=state,
+        session_id="session-4",
+        run_id="run-4",
+    )
+    messages = serialized["export_metadata"]["status_messages"]
+    blob = json.dumps(messages)
+
+    assert "sk-super-secret-value" not in blob
+    assert "pplx-super-secret-value" not in blob
+    assert "Traceback (most recent call last)" not in blob
+    assert "boom" not in blob
+    assert "null" not in [item.lower() for item in messages]
+    assert "Workflow completed with recoverable warnings." in messages
+    assert any("[REDACTED]" in item for item in messages)
+    assert "Internal details were removed." in messages

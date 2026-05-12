@@ -56,6 +56,50 @@ def test_validate_markdown_export_rejects_raw_provider_payload_strings() -> None
     assert "raw provider/configuration payload" in joined
 
 
+def test_validate_markdown_export_rejects_unsafe_urls() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `success`
+
+## Sources
+1. [Bad](javascript:alert(1))
+"""
+    result = validate_markdown_export(markdown, sources_exist=True)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "unsafe or invalid url" in joined
+
+
+def test_validate_markdown_export_rejects_invalid_source_entries() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `success`
+
+## Sources
+1.
+"""
+    result = validate_markdown_export(markdown, sources_exist=True)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "readable citations" in joined
+
+
+def test_validate_markdown_export_accepts_bracketed_source_entries() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `success`
+
+## Sources
+[1] Export source (https://example.com/export-source)
+"""
+    result = validate_markdown_export(markdown, sources_exist=True)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
 def test_validate_markdown_export_requires_sources_section_when_sources_exist() -> None:
     markdown = """# ContentBlitz Export
 
@@ -90,6 +134,7 @@ def test_validate_html_export_accepts_safe_html() -> None:
   <h1>ContentBlitz Export</h1>
   <h2>Workflow Summary</h2>
   <h2>Sources</h2>
+  <ul><li><a href="https://example.com">Example</a></li></ul>
 </body>
 </html>
 """
@@ -119,9 +164,28 @@ OPENAI_API_KEY=sk-secret
     assert "unsafe embed tags" in joined
 
 
+def test_validate_html_export_rejects_invalid_urls() -> None:
+    html = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>ContentBlitz Export</title></head>
+<body>
+  <h1>ContentBlitz Export</h1>
+  <h2>Workflow Summary</h2>
+  <h2>Sources</h2>
+  <ul><li><a href="file:///etc/passwd">bad</a></li></ul>
+</body>
+</html>
+"""
+    result = validate_html_export(html, sources_exist=True)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "unsafe or invalid url" in joined
+
+
 def test_validate_pdf_export_accepts_safe_pdf() -> None:
     payload = (
         b"%PDF-1.4\n"
+        b"ContentBlitz Export\nWorkflow Summary\nSources\n"
         b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
         b"2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
         b"xref\n0 3\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n"

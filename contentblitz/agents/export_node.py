@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from contentblitz.tools.exports.filenames import (
     resolve_docx_export_path,
+    resolve_export_dir,
     resolve_html_export_path,
     resolve_markdown_export_path,
     resolve_pdf_export_path,
@@ -117,6 +118,30 @@ def _path_for_metadata(path_value: str) -> str:
         return path_text.replace("\\", "/")
 
 
+def _is_safe_export_path(path_value: str, format_name: str) -> bool:
+    path_text = _safe_text(path_value)
+    fmt = _safe_text(format_name).lower()
+    if not path_text or not fmt:
+        return False
+    expected_suffix = {
+        "markdown": ".md",
+        "html": ".html",
+        "pdf": ".pdf",
+        "docx": ".docx",
+    }.get(fmt, "")
+    if not expected_suffix:
+        return False
+    if not path_text.lower().endswith(expected_suffix):
+        return False
+    try:
+        candidate = Path(path_text)
+        resolved = candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
+        export_dir = resolve_export_dir().resolve()
+        return resolved.parent == export_dir
+    except Exception:
+        return False
+
+
 def export_content(content: Any, format_name: str) -> Dict[str, Any]:
     """
     Deterministic export helper.
@@ -189,6 +214,8 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     export_paths = deepcopy(_safe_dict(export_metadata.get("export_paths", {})))
     error_log = deepcopy(_safe_list(export_metadata.get("error_log", [])))
     export_status = deepcopy(_safe_dict(export_metadata.get("export_status", {})))
+    export_messages = deepcopy(_safe_list(export_metadata.get("status_messages", [])))
+    format_validation: Dict[str, Dict[str, Any]] = {}
 
     default_export_format = formats_requested[0] if formats_requested else "markdown"
     export_outputs = _build_export_outputs(assembled_outputs, default_export_format)
@@ -207,6 +234,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 sources_exist=bool(_safe_list(state.get("sources", []))),
             )
         )
+        format_validation["markdown"] = markdown_validation
         for warning in markdown_validation["warnings"]:
             error_log.append(
                 _safe_error_entry(
@@ -234,6 +262,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 sources_exist=bool(_safe_list(state.get("sources", []))),
             )
         )
+        format_validation["html"] = html_validation
         for warning in html_validation["warnings"]:
             error_log.append(
                 _safe_error_entry(
@@ -260,6 +289,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 sources_exist=bool(_safe_list(state.get("sources", []))),
             )
         )
+        format_validation["pdf"] = pdf_validation
         for warning in pdf_validation["warnings"]:
             error_log.append(
                 _safe_error_entry(
@@ -286,6 +316,7 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 sources_exist=bool(_safe_list(state.get("sources", []))),
             )
         )
+        format_validation["docx"] = docx_validation
         for warning in docx_validation["warnings"]:
             error_log.append(
                 _safe_error_entry(
@@ -306,7 +337,14 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     for fmt in formats_requested:
         if fmt not in _SUPPORTED_EXPORT_FORMATS:
+            export_paths.pop(fmt, None)
             export_status[fmt] = "failed"
+            export_messages.append(
+                _safe_error_message(
+                    f"{fmt.upper()} export format is not supported.",
+                    default="Export validation failed safely.",
+                )
+            )
             error_log.append(
                 _safe_error_entry(
                     format_name=fmt,
@@ -316,25 +354,50 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
             )
             continue
 
+        validation_result = _safe_dict(format_validation.get(fmt, {"valid": True}))
+        if not bool(validation_result.get("valid", True)):
+            export_paths.pop(fmt, None)
+            export_status[fmt] = "failed"
+            export_messages.append(
+                _safe_error_message(
+                    f"{fmt.upper()} export failed validation and was not delivered.",
+                    default="Export validation failed safely.",
+                )
+            )
+            error_log.append(
+                _safe_error_entry(
+                    format_name=fmt,
+                    code=f"{fmt}_validation_failed",
+                    message=f"{fmt.upper()} export failed validation and was not delivered.",
+                )
+            )
+            continue
+
         if fmt == "markdown":
             try:
                 content_to_export = markdown_document or final_response
                 result = export_content(content_to_export, "markdown")
                 path = _safe_text(_safe_dict(result).get("path", ""))
-                if path:
+                if path and _is_safe_export_path(path, "markdown"):
                     export_paths["markdown"] = _path_for_metadata(path)
                     export_status["markdown"] = "completed"
                 else:
+                    export_paths.pop("markdown", None)
                     export_status["markdown"] = "failed"
+                    export_messages.append(
+                        "Markdown export failed due to output-path validation."
+                    )
                     error_log.append(
                         _safe_error_entry(
                             format_name="markdown",
-                            code="markdown_export_path_missing",
-                            message="Markdown export returned no output path.",
+                            code="markdown_export_path_invalid",
+                            message="Markdown export produced an unsafe or missing output path.",
                         )
                     )
             except Exception:
+                export_paths.pop("markdown", None)
                 export_status["markdown"] = "failed"
+                export_messages.append("Markdown export failed safely.")
                 error_log.append(
                     _safe_error_entry(
                         format_name="markdown",
@@ -351,19 +414,25 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 result = export_content(content_to_export, "pdf")
                 path = _safe_text(_safe_dict(result).get("path", ""))
-                if path:
+                if path and _is_safe_export_path(path, "pdf"):
                     export_paths["pdf"] = _path_for_metadata(path)
                     export_status["pdf"] = "completed"
                 else:
+                    export_paths.pop("pdf", None)
                     export_status["pdf"] = "failed"
+                    export_messages.append(
+                        "PDF export failed due to output-path validation."
+                    )
                     error_log.append(
                         _safe_error_entry(
                             format_name="pdf",
-                            code="pdf_export_path_missing",
-                            message="PDF export returned no output path.",
+                            code="pdf_export_path_invalid",
+                            message="PDF export produced an unsafe or missing output path.",
                         )
                     )
             except Exception:
+                export_paths.pop("pdf", None)
+                export_messages.append("PDF export failed safely.")
                 error_log.append(
                     _safe_error_entry(
                         format_name="pdf",
@@ -379,20 +448,26 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 content_to_export = html_document or final_response
                 result = export_content(content_to_export, "html")
                 path = _safe_text(_safe_dict(result).get("path", ""))
-                if path:
+                if path and _is_safe_export_path(path, "html"):
                     export_paths["html"] = _path_for_metadata(path)
                     export_status["html"] = "completed"
                 else:
+                    export_paths.pop("html", None)
                     export_status["html"] = "failed"
+                    export_messages.append(
+                        "HTML export failed due to output-path validation."
+                    )
                     error_log.append(
                         _safe_error_entry(
                             format_name="html",
-                            code="html_export_path_missing",
-                            message="HTML export returned no output path.",
+                            code="html_export_path_invalid",
+                            message="HTML export produced an unsafe or missing output path.",
                         )
                     )
             except Exception:
+                export_paths.pop("html", None)
                 export_status["html"] = "failed"
+                export_messages.append("HTML export failed safely.")
                 error_log.append(
                     _safe_error_entry(
                         format_name="html",
@@ -411,20 +486,26 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 result = export_content(content_to_export, "docx")
                 path = _safe_text(_safe_dict(result).get("path", ""))
-                if path:
+                if path and _is_safe_export_path(path, "docx"):
                     export_paths["docx"] = _path_for_metadata(path)
                     export_status["docx"] = "completed"
                 else:
+                    export_paths.pop("docx", None)
                     export_status["docx"] = "failed"
+                    export_messages.append(
+                        "DOCX export failed due to output-path validation."
+                    )
                     error_log.append(
                         _safe_error_entry(
                             format_name="docx",
-                            code="docx_export_path_missing",
-                            message="DOCX export returned no output path.",
+                            code="docx_export_path_invalid",
+                            message="DOCX export produced an unsafe or missing output path.",
                         )
                     )
             except Exception:
+                export_paths.pop("docx", None)
                 export_status["docx"] = "failed"
+                export_messages.append("DOCX export failed safely.")
                 error_log.append(
                     _safe_error_entry(
                         format_name="docx",
@@ -437,10 +518,33 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             result = export_content(final_response, fmt)
             path = str(_safe_dict(result).get("path", "")).strip()
-            if path:
+            if path and _is_safe_export_path(path, fmt):
                 export_paths[fmt] = path
                 export_status[fmt] = "completed"
+            else:
+                export_paths.pop(fmt, None)
+                export_status[fmt] = "failed"
+                export_messages.append(
+                    _safe_error_message(
+                        f"{fmt.upper()} export failed due to output-path validation.",
+                        default="Export validation failed safely.",
+                    )
+                )
+                error_log.append(
+                    _safe_error_entry(
+                        format_name=fmt,
+                        code=f"{fmt}_export_path_invalid",
+                        message=f"{fmt.upper()} export produced an unsafe or missing output path.",
+                    )
+                )
         except Exception as exc:
+            export_paths.pop(fmt, None)
+            export_messages.append(
+                _safe_error_message(
+                    f"{fmt.upper()} export failed safely.",
+                    default="Export validation failed safely.",
+                )
+            )
             error_log.append(
                 _safe_error_entry(
                     format_name=fmt,
@@ -453,6 +557,21 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     export_metadata["export_paths"] = export_paths
     export_metadata["error_log"] = error_log
     export_metadata["export_status"] = export_status
+    export_metadata["export_error_count"] = sum(
+        1 for status in export_status.values() if _safe_text(status).lower() == "failed"
+    )
+    export_metadata["status_messages"] = list(
+        dict.fromkeys(
+            [
+                _safe_error_message(
+                    message,
+                    default="Export validation failed safely.",
+                )
+                for message in export_messages
+                if _safe_text(message)
+            ]
+        )
+    )
     export_metadata["exported_at"] = _now_utc_iso()
 
     return {

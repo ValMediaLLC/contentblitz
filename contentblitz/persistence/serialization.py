@@ -141,10 +141,19 @@ def _sanitize_export_metadata(export_metadata: Any) -> Dict[str, Any]:
         if not fmt or not status_value:
             continue
         status[fmt] = status_value
+    raw_error_count = meta.get("export_error_count", 0)
+    export_error_count = raw_error_count if isinstance(raw_error_count, int) and raw_error_count >= 0 else 0
+    status_messages = [
+        _sanitize_text(item)
+        for item in _safe_list(meta.get("status_messages", []))
+        if _sanitize_text(item)
+    ]
     return {
         "formats_requested": formats,
         "export_paths": paths,
         "export_status": status,
+        "export_error_count": export_error_count,
+        "status_messages": status_messages,
     }
 
 
