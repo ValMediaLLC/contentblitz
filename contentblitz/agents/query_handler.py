@@ -7,6 +7,7 @@ updates (patch semantics), not a full state object.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Optional
 
 from contentblitz.core.cost_controls import (
@@ -15,12 +16,63 @@ from contentblitz.core.cost_controls import (
     preferred_text_model,
     token_budget_exceeded,
 )
+from contentblitz.safety.prompt_injection import analyze_prompt_injection
 from contentblitz.tools.text import generate_text
 
 _ALLOWED_OUTPUTS = {"blog", "linkedin", "image", "research"}
 _DEFAULT_CLARIFICATION_MESSAGE = (
     "Could you clarify your goal, target audience, and desired output format?"
 )
+_INJECTION_WARNING_MESSAGE = (
+    "Suspicious instruction patterns were detected and neutralized."
+)
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_UNSAFE_INJECTION_TOKENS = {
+    "ignore",
+    "all",
+    "any",
+    "previous",
+    "instruction",
+    "instructions",
+    "reveal",
+    "show",
+    "display",
+    "print",
+    "dump",
+    "output",
+    "expose",
+    "system",
+    "prompt",
+    "prompts",
+    "developer",
+    "message",
+    "messages",
+    "hidden",
+    "internal",
+    "api",
+    "key",
+    "keys",
+    "secret",
+    "secrets",
+    "environment",
+    "env",
+    "variable",
+    "variables",
+    "vars",
+    "bypass",
+    "disable",
+    "guardrail",
+    "guardrails",
+    "safety",
+    "protection",
+    "protections",
+    "safeguard",
+    "safeguards",
+    "and",
+    "or",
+    "then",
+    "also",
+}
 
 
 def _normalize_outputs(value: Any) -> list[str]:
@@ -36,6 +88,45 @@ def _normalize_outputs(value: Any) -> list[str]:
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _with_injection_warning(state: Dict[str, Any]) -> list[str]:
+    existing = [
+        str(item).strip()
+        for item in _safe_list(state.get("status_messages", []))
+        if str(item).strip()
+    ]
+    if _INJECTION_WARNING_MESSAGE not in existing:
+        existing.append(_INJECTION_WARNING_MESSAGE)
+    return existing
+
+
+def _injection_updates(
+    state: Dict[str, Any],
+    *,
+    detected: bool,
+    signals: list[str],
+    sanitized_query: str,
+) -> Dict[str, Any]:
+    if not detected:
+        return {}
+    return {
+        "prompt_injection_detected": True,
+        "prompt_injection_signals": list(signals),
+        "sanitized_user_query": sanitized_query,
+        "status_messages": _with_injection_warning(state),
+    }
+
+
+def _has_safe_prompt_intent(query: str) -> bool:
+    tokens = [token for token in _WORD_RE.findall(str(query).lower()) if token]
+    if not tokens:
+        return False
+    return any(token not in _UNSAFE_INJECTION_TOKENS for token in tokens)
 
 
 # TODO(intent-classification):
@@ -228,8 +319,37 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return _with_lifecycle_fields({"routing_decision": "error_handler_node"})
 
     query = str(state.get("user_query", "")).strip()
+    injection_result = analyze_prompt_injection(query)
+    effective_query = query
+    injection_updates: Dict[str, Any] = {}
+    if injection_result.detected:
+        effective_query = injection_result.sanitized_query
+        injection_updates = _injection_updates(
+            state,
+            detected=True,
+            signals=injection_result.signals,
+            sanitized_query=effective_query,
+        )
+        if effective_query and effective_query != query:
+            injection_updates["user_query"] = effective_query
+
+    if query and injection_result.detected and not _has_safe_prompt_intent(effective_query):
+        injection_updates["sanitized_user_query"] = ""
+        injection_updates.pop("user_query", None)
+        clarification_updates = {
+            "intent": "clarification",
+            "requested_outputs": [],
+            "research_required": False,
+            "clarification_needed": True,
+            "clarification_message": _DEFAULT_CLARIFICATION_MESSAGE,
+            "export_requested": bool(state.get("export_requested", False)),
+            "routing_decision": "clarification_node",
+            "cost_controls": cost_controls,
+        }
+        return _with_lifecycle_fields({**clarification_updates, **injection_updates})
+
     preset_outputs = _normalize_outputs(state.get("requested_outputs", []))
-    if query and preset_outputs == ["image"] and not bool(state.get("clarification_needed", False)):
+    if effective_query and preset_outputs == ["image"] and not bool(state.get("clarification_needed", False)):
         image_only = {
             "intent": str(state.get("intent", "")).strip().lower() or "image_generation",
             "requested_outputs": ["image"],
@@ -240,9 +360,9 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
         image_only["routing_decision"] = _determine_routing_decision(image_only)
         image_only["cost_controls"] = cost_controls
-        return _with_lifecycle_fields(image_only)
+        return _with_lifecycle_fields({**image_only, **injection_updates})
 
-    if not query and (
+    if not effective_query and (
         preset_outputs
         or bool(state.get("clarification_needed", False))
         or bool(state.get("research_required", False))
@@ -266,13 +386,13 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             preclassified["clarification_message"] = None
         preclassified["routing_decision"] = _determine_routing_decision(preclassified)
         preclassified["cost_controls"] = cost_controls
-        return _with_lifecycle_fields(preclassified)
+        return _with_lifecycle_fields({**preclassified, **injection_updates})
 
     prompt = (
         "Classify the user request for ContentBlitz. "
         "Return strict JSON with keys: intent, requested_outputs, research_required, "
         "clarification_needed, clarification_message, export_requested.\n\n"
-        f"User query: {query}"
+        f"User query: {effective_query}"
     )
     model = preferred_text_model(cost_controls)
     llm_response = generate_text(
@@ -293,8 +413,8 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         })
     classified = _parse_llm_classification(llm_response)
     if classified is None:
-        classified = _deterministic_fallback(query)
+        classified = _deterministic_fallback(effective_query)
 
     classified["routing_decision"] = _determine_routing_decision(classified)
     classified["cost_controls"] = cost_controls
-    return _with_lifecycle_fields(classified)
+    return _with_lifecycle_fields({**classified, **injection_updates})

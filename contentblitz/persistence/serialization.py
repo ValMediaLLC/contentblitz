@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ _TRACEBACK_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
 )
+_SAFE_SIGNAL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 def _utc_now_iso() -> str:
@@ -198,6 +200,19 @@ def _sanitize_status_messages(messages: Any) -> List[str]:
     return cleaned
 
 
+def _sanitize_injection_signals(signals: Any) -> List[str]:
+    cleaned: List[str] = []
+    for item in _safe_list(signals):
+        token = _safe_text(item).lower()
+        if not token:
+            continue
+        if not _SAFE_SIGNAL_RE.match(token):
+            continue
+        if token not in cleaned:
+            cleaned.append(token)
+    return cleaned
+
+
 def _sanitize_warnings(warnings: Any) -> List[str]:
     return _sanitize_status_messages(warnings)
 
@@ -328,6 +343,11 @@ def serialize_workflow_run(
     ui_options = _sanitize_ui_selected_options(ui_selected_options or state.get("ui_selected_options", {}))
     ui_node_statuses = _sanitize_node_statuses(state.get("ui_node_statuses", {}))
     ui_workflow_status = _sanitize_text(state.get("ui_workflow_status") or state.get("workflow_status"))
+    prompt_injection_detected = bool(state.get("prompt_injection_detected", False))
+    prompt_injection_signals = _sanitize_injection_signals(
+        state.get("prompt_injection_signals", [])
+    )
+    sanitized_user_query = _sanitize_text(state.get("sanitized_user_query"))
 
     record = PersistedRunRecord(
         run_id=persisted_run_id,
@@ -354,6 +374,9 @@ def serialize_workflow_run(
         ui_selected_options=ui_options,
         ui_node_statuses=ui_node_statuses,
         ui_workflow_status=ui_workflow_status,
+        prompt_injection_detected=prompt_injection_detected,
+        prompt_injection_signals=prompt_injection_signals,
+        sanitized_user_query=sanitized_user_query,
     )
     return asdict(record)
 
@@ -404,6 +427,11 @@ def deserialize_workflow_run(record: Mapping[str, Any]) -> Dict[str, Any]:
         "status_messages": _sanitize_status_messages(payload.get("status_messages", [])),
         "ui_selected_options": _sanitize_ui_selected_options(payload.get("ui_selected_options", {})),
         "ui_node_statuses": _sanitize_node_statuses(payload.get("ui_node_statuses", {})),
+        "prompt_injection_detected": bool(payload.get("prompt_injection_detected", False)),
+        "prompt_injection_signals": _sanitize_injection_signals(
+            payload.get("prompt_injection_signals", [])
+        ),
+        "sanitized_user_query": _sanitize_text(payload.get("sanitized_user_query")),
     }
     return restored_state
 

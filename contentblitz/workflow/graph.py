@@ -116,6 +116,11 @@ class WorkflowState(TypedDict, total=False):
     cost_controls: Annotated[dict[str, Any], merge_cost_controls]
     retry_requested: bool
     retry_target: str
+    status_messages: list[str]
+    warnings: list[str]
+    prompt_injection_detected: bool
+    prompt_injection_signals: list[str]
+    sanitized_user_query: str
 
 NODE_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     QUERY_HANDLER_NODE: query_handler_node,

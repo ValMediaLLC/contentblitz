@@ -44,3 +44,6 @@ class PersistedRunRecord:
     ui_selected_options: Dict[str, Any] = field(default_factory=dict)
     ui_node_statuses: Dict[str, str] = field(default_factory=dict)
     ui_workflow_status: str = ""
+    prompt_injection_detected: bool = False
+    prompt_injection_signals: List[str] = field(default_factory=list)
+    sanitized_user_query: str = ""

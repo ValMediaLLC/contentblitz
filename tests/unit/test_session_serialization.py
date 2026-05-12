@@ -239,3 +239,82 @@ def test_export_metadata_status_messages_are_sanitized_on_serialize() -> None:
     assert "Workflow completed with recoverable warnings." in messages
     assert any("[REDACTED]" in item for item in messages)
     assert "Internal details were removed." in messages
+
+
+def test_prompt_injection_metadata_is_serialized_safely() -> None:
+    state = _sample_state()
+    state["prompt_injection_detected"] = True
+    state["prompt_injection_signals"] = [
+        "ignore_instructions",
+        "REVEAL_SYSTEM_PROMPT",
+        "bad-signal!",
+        "__proto__",
+    ]
+    state["sanitized_user_query"] = "Write a blog about AI workflows. OPENAI_API_KEY=sk-danger"
+
+    serialized = serialize_workflow_run(
+        result_state=state,
+        session_id="session-5",
+        run_id="run-5",
+    )
+
+    assert serialized["prompt_injection_detected"] is True
+    assert serialized["prompt_injection_signals"] == [
+        "ignore_instructions",
+        "reveal_system_prompt",
+        "__proto__",
+    ]
+    assert "OPENAI_API_KEY" in serialized["sanitized_user_query"]
+    assert "[REDACTED]" in serialized["sanitized_user_query"]
+    assert "sk-danger" not in serialized["sanitized_user_query"]
+
+    restored = deserialize_workflow_run(serialized)
+    assert restored["prompt_injection_detected"] is True
+    assert restored["prompt_injection_signals"] == [
+        "ignore_instructions",
+        "reveal_system_prompt",
+        "__proto__",
+    ]
+
+
+def test_prompt_injection_metadata_defaults_when_absent() -> None:
+    serialized = serialize_workflow_run(
+        result_state=_sample_state(),
+        session_id="session-6",
+        run_id="run-6",
+    )
+    restored = deserialize_workflow_run(serialized)
+
+    assert restored["prompt_injection_detected"] is False
+    assert restored["prompt_injection_signals"] == []
+    assert restored["sanitized_user_query"] == ""
+
+
+def test_older_record_without_prompt_injection_fields_restores_safely() -> None:
+    legacy_record = {
+        "run_id": "legacy-1",
+        "session_id": "legacy-session",
+        "created_at": "2026-05-01T00:00:00+00:00",
+        "updated_at": "2026-05-01T00:00:00+00:00",
+        "user_query": "Write a blog post",
+        "requested_outputs": ["blog"],
+        "workflow_status": "success",
+        "routing_decision": "content_strategist_node",
+        "final_response": "Safe output",
+        "content_drafts": {"blog": {"body": "Blog body", "version": 1}},
+        "sources": [],
+        "quality_scores": {},
+        "export_metadata": {"formats_requested": [], "export_paths": {}},
+        "warnings": [],
+        "errors": [],
+        "progress_events": [],
+        "status_messages": [],
+        "ui_selected_options": {"requested_outputs": ["blog"]},
+        "ui_node_statuses": {"query_handler_node": "completed"},
+        "ui_workflow_status": "success",
+    }
+
+    restored = deserialize_workflow_run(legacy_record)
+    assert restored["prompt_injection_detected"] is False
+    assert restored["prompt_injection_signals"] == []
+    assert restored["sanitized_user_query"] == ""
