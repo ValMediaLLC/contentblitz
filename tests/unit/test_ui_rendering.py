@@ -142,3 +142,28 @@ def test_export_off_marks_export_node_skipped_in_payload_statuses() -> None:
     statuses["export_node"] = "completed"
     payload = build_render_payload(state=state, node_statuses=statuses)
     assert payload["node_statuses"]["export_node"] == "skipped"
+
+
+def test_render_payload_sanitizes_unsafe_final_and_partial_content() -> None:
+    state = _base_state()
+    state["final_response"] = (
+        "Safe intro [bad](javascript:alert(1)) <script>alert(1)</script> "
+        "OPENAI_API_KEY=sk-secret"
+    )
+    state["content_drafts"]["blog"]["body"] = (
+        "Blog body with ![img](data:image/png;base64,AAAA) and "
+        "<iframe src='https://evil.test'></iframe>"
+    )
+    statuses = build_initial_node_statuses()
+    statuses["blog_writer_node"] = "completed"
+
+    payload = build_render_payload(state=state, node_statuses=statuses)
+    lowered_final = payload["final_response"].lower()
+    lowered_blog = payload["partial_outputs"]["blog"].lower()
+
+    assert "javascript:" not in lowered_final
+    assert "<script" not in lowered_final
+    assert "openai_api_key" not in lowered_final
+    assert "data:image/" not in lowered_blog
+    assert "<iframe" not in lowered_blog
+    assert any("unsafe content was removed" in warning.lower() for warning in payload["warnings"])

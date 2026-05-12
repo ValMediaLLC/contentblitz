@@ -233,6 +233,23 @@ def test_validate_html_export_rejects_invalid_urls() -> None:
     assert "unsafe or invalid url" in joined
 
 
+def test_validate_markdown_export_rejects_unsupported_schemes() -> None:
+    markdown = """# ContentBlitz Export
+
+## Workflow Summary
+- Workflow Status: `success`
+
+## Sources
+1. [FTP](ftp://example.com/source)
+2. [Mail](mailto:test@example.com)
+3. [VBS](vbscript:alert(1))
+"""
+    result = validate_markdown_export(markdown, sources_exist=True)
+    assert result["valid"] is False
+    joined = " ".join(result["errors"]).lower()
+    assert "unsafe or invalid url" in joined
+
+
 def test_validate_pdf_export_accepts_safe_pdf() -> None:
     payload = (
         b"%PDF-1.4\n"

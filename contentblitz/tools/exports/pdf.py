@@ -6,6 +6,7 @@ import re
 import textwrap
 from typing import Any, List, Mapping
 
+from contentblitz.safety.output_sanitizer import sanitize_plain_output
 from contentblitz.tools.exports.markdown import build_markdown_export_document
 
 _ENV_NAME_RE = re.compile(
@@ -73,7 +74,8 @@ def _sanitize_plain_text(value: Any) -> str:
     clean = _ENV_NAME_RE.sub("[REDACTED]", clean)
     clean = _TOKEN_RE.sub("[REDACTED]", clean)
     clean = _NONE_NULL_RE.sub("", clean)
-    return clean.strip()
+    sanitized, _ = sanitize_plain_output(clean)
+    return sanitized.strip()
 
 
 def _normalize_markdown_line(line: str) -> str:

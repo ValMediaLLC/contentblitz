@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.quality.citations import validate_citation_sources
+from contentblitz.safety.output_sanitizer import sanitize_markdown_output
 
 _ENV_NAME_RE = re.compile(
     r"OPENAI_API_KEY|SERP_API_KEY|PERPLEXITY_API_KEY",
@@ -185,8 +186,6 @@ def _sanitize_line(raw_line: str) -> str:
 
     if any(marker in lowered for marker in _STACK_TRACE_MARKERS):
         return ""
-    if "data:image/" in lowered or "b64_json" in lowered or "base64" in lowered:
-        return ""
     if line.strip().startswith("{") and line.strip().endswith("}") and ":" in line:
         return ""
     if line.strip().startswith("[") and line.strip().endswith("]") and ":" in line:
@@ -200,7 +199,8 @@ def _sanitize_line(raw_line: str) -> str:
     if heading_match:
         line = f"{heading_match.group(1)} {heading_match.group(2).strip()}"
 
-    return line.strip()
+    sanitized_line, _ = sanitize_markdown_output(line)
+    return sanitized_line.strip()
 
 
 def sanitize_markdown_content(markdown_text: str) -> str:

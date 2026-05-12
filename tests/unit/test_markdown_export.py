@@ -198,6 +198,35 @@ def test_markdown_export_removes_sensitive_and_base64_payloads(tmp_path, monkeyp
     assert "data:image/" not in content.lower()
 
 
+def test_markdown_export_downgrades_unsafe_links_but_preserves_safe_links(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        content_drafts={
+            "blog": {
+                "body": (
+                    "Safe link [ref](https://example.com/ref) and "
+                    "unsafe [x](javascript:alert(1)) and "
+                    "![bad](data:image/png;base64,AAAA)"
+                ),
+                "version": 1,
+            },
+            "linkedin": {"body": "safe", "version": 1},
+            "research_report": {"body": "safe"},
+        },
+    )
+    updates = export_node_module.export_node(state)
+    markdown_path = updates["export_metadata"]["export_paths"]["markdown"]
+    file_path = Path(markdown_path)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    content = file_path.read_text(encoding="utf-8")
+
+    assert "[ref](https://example.com/ref)" in content
+    assert "javascript:" not in content.lower()
+    assert "data:image/" not in content.lower()
+
+
 def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(

@@ -117,6 +117,8 @@ def test_html_export_sanitizes_scripts_event_handlers_and_js_urls(tmp_path, monk
     lowered = html_doc.lower()
     assert "<script" not in lowered
     assert "javascript:" not in lowered
+    assert "file://" not in lowered
+    assert "data:text/html" not in lowered
     assert "onclick=" not in lowered
     assert "<iframe" not in lowered
 

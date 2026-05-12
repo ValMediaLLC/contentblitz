@@ -7,6 +7,10 @@ import re
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.quality.citations import validate_citation_sources
+from contentblitz.safety.output_sanitizer import (
+    sanitize_html_output,
+    sanitize_plain_output,
+)
 from contentblitz.tools.exports.markdown import (
     collect_export_warnings,
     derive_export_workflow_status,
@@ -60,7 +64,8 @@ def _sanitize_plain_text(value: Any) -> str:
     redacted = _ENV_NAME_RE.sub("[REDACTED]", raw)
     redacted = _TOKEN_RE.sub("[REDACTED]", redacted)
     redacted = _NONE_NULL_RE.sub("", redacted)
-    return redacted.strip()
+    sanitized, _ = sanitize_plain_output(redacted)
+    return sanitized.strip()
 
 
 def _safe_href(value: Any) -> str:
@@ -236,11 +241,8 @@ def _render_sources(state: Mapping[str, Any]) -> str:
 def sanitize_html_content(html_text: str) -> str:
     """Strip unsafe executable HTML patterns from rendered output."""
     safe = _safe_text(html_text)
-    safe = _SCRIPT_TAG_RE.sub("", safe)
-    safe = _UNSAFE_TAG_RE.sub("", safe)
-    safe = _EVENT_HANDLER_ATTR_RE.sub("", safe)
-    safe = _JAVASCRIPT_URL_RE.sub("#", safe)
-    return safe
+    sanitized, _ = sanitize_html_output(safe)
+    return sanitized
 
 
 def build_html_export_document(state: Mapping[str, Any]) -> str:

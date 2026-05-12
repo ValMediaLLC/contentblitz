@@ -6,6 +6,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
+from contentblitz.safety.output_sanitizer import (
+    sanitize_markdown_output,
+    sanitize_plain_output,
+)
 from contentblitz.ui.error_display import normalize_errors_for_display
 from contentblitz.ui.progress import normalize_progress_status
 from contentblitz.ui.status import (
@@ -49,6 +53,11 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     return default
 
 
+def _sanitized_plain(value: Any) -> str:
+    sanitized, _ = sanitize_plain_output(value)
+    return sanitized
+
+
 def _source_key(source: Mapping[str, Any], index: int) -> str:
     url = _safe_url(source.get("url"))
     if url:
@@ -60,9 +69,10 @@ def _source_key(source: Mapping[str, Any], index: int) -> str:
 
 
 def _sanitize_source(source: Mapping[str, Any], index: int) -> dict[str, Any]:
-    title = _safe_text(source.get("title")) or f"Source {index + 1}"
+    title, _ = sanitize_plain_output(_safe_text(source.get("title")))
+    title = title or f"Source {index + 1}"
     url = _safe_url(source.get("url"))
-    snippet = _safe_text(source.get("snippet"))
+    snippet, _ = sanitize_plain_output(_safe_text(source.get("snippet")))
     published_at = _safe_text(source.get("published_at")) or None
     provider = _safe_text(source.get("provider") or source.get("source")) or "unknown"
     citation_available = bool(url) and bool(source.get("citation_available", False))
@@ -212,21 +222,29 @@ def build_render_payload(
     )
 
     content_drafts = _safe_dict(state_snapshot.get("content_drafts", {}))
-    blog_draft = _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
-    linkedin_draft = _safe_text(_safe_dict(content_drafts.get("linkedin", {})).get("body"))
-    research_report = _safe_text(
-        _safe_dict(content_drafts.get("research_report", {})).get("body")
+    unsafe_content_removed = False
+    blog_draft, blog_changed = sanitize_markdown_output(
+        _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
     )
+    linkedin_draft, linkedin_changed = sanitize_markdown_output(
+        _safe_text(_safe_dict(content_drafts.get("linkedin", {})).get("body"))
+    )
+    research_report, research_changed = sanitize_markdown_output(
+        _safe_text(_safe_dict(content_drafts.get("research_report", {})).get("body"))
+    )
+    unsafe_content_removed = unsafe_content_removed or blog_changed or linkedin_changed or research_changed
     research_data = _safe_dict(state_snapshot.get("research_data", {}))
-    research_summary = _safe_text(
-        research_data.get("synthesized_summary") or research_data.get("summary")
+    research_summary, summary_changed = sanitize_markdown_output(
+        _safe_text(research_data.get("synthesized_summary") or research_data.get("summary"))
     )
+    unsafe_content_removed = unsafe_content_removed or summary_changed
 
     image_prompts: list[str] = []
     if _node_ready(merged_statuses, "image_agent_node"):
-        image_prompts = [
-            _safe_text(item) for item in _safe_list(state_snapshot.get("image_prompts", [])) if _safe_text(item)
-        ]
+        for item in _safe_list(state_snapshot.get("image_prompts", [])):
+            clean = _sanitized_plain(_safe_text(item))
+            if clean:
+                image_prompts.append(clean)
 
     image_outputs = []
     if _node_ready(merged_statuses, "image_agent_node"):
@@ -236,7 +254,8 @@ def build_render_payload(
 
     warnings: list[str] = []
     for item in _safe_list(state_snapshot.get("warnings", [])):
-        text = _safe_text(item)
+        text, changed = sanitize_plain_output(item)
+        unsafe_content_removed = unsafe_content_removed or changed
         if text:
             warnings.append(text)
 
@@ -272,12 +291,16 @@ def build_render_payload(
             + "."
         )
     final_response = _safe_text(state_snapshot.get("final_response"))
+    final_response, final_changed = sanitize_markdown_output(final_response)
+    unsafe_content_removed = unsafe_content_removed or final_changed
     if export_errors and final_response:
         warnings.append(
             "Export encountered a non-blocking failure; the final response is still available."
         )
 
     warnings.extend(_quality_warnings(_safe_dict(state_snapshot.get("quality_scores", {}))))
+    if unsafe_content_removed:
+        warnings.append("Unsafe content was removed before rendering.")
 
     partial_outputs = {
         "blog": blog_draft if _node_ready(merged_statuses, "blog_writer_node") else "",
