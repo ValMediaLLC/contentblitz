@@ -1,10 +1,12 @@
-"""In-memory cache helpers for production-capable research caching."""
+"""Cache helpers for production-capable research caching."""
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from contentblitz.config import CACHE_METADATA_DEFAULTS
@@ -12,9 +14,11 @@ from contentblitz.core.cache_keys import (
     build_research_cache_key as _build_research_cache_key,
     normalize_query as _normalize_query,
 )
+from contentblitz.tools.cache_backends import InMemoryCacheBackend, SQLiteCacheBackend
 
-# Shared process-level cache backend used across separate state objects/sessions.
-_CACHE_STORE: Dict[str, Dict[str, Any]] = {}
+_DEFAULT_SQLITE_PATH = ".tmp/contentblitz_cache.sqlite3"
+_IN_MEMORY_BACKEND = InMemoryCacheBackend(now_fn=lambda: _now_epoch_seconds())
+_SQLITE_BACKENDS: Dict[str, SQLiteCacheBackend] = {}
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -44,7 +48,7 @@ def _cache_enabled(state: Mapping[str, Any]) -> bool:
 
 def _cache_ttl_seconds(state: Mapping[str, Any]) -> int:
     cache_meta = state.get("cache_metadata", {})
-    default_ttl = int(CACHE_METADATA_DEFAULTS.get("ttl_seconds", 1800))
+    default_ttl = _default_ttl_seconds()
     if not isinstance(cache_meta, Mapping):
         return default_ttl
     raw = cache_meta.get("ttl_seconds", default_ttl)
@@ -69,8 +73,62 @@ def _now_epoch_seconds() -> int:
     return int(time.time())
 
 
+def _default_ttl_seconds() -> int:
+    default_ttl = int(CACHE_METADATA_DEFAULTS.get("ttl_seconds", 1800))
+    raw = os.getenv("CONTENTBLITZ_CACHE_TTL_SECONDS")
+    if raw is None:
+        return default_ttl
+    try:
+        return max(0, int(raw.strip()))
+    except (TypeError, ValueError):
+        return default_ttl
+
+
+def _configured_backend_name() -> str:
+    raw = str(os.getenv("CONTENTBLITZ_CACHE_BACKEND", "in_memory")).strip().lower()
+    if raw in {"in_memory", "in-memory", "memory", "inmemory"}:
+        return "in_memory"
+    if raw == "sqlite":
+        return "sqlite"
+    return "in_memory"
+
+
+def _resolve_sqlite_path() -> Path:
+    raw = str(os.getenv("CONTENTBLITZ_CACHE_SQLITE_PATH", _DEFAULT_SQLITE_PATH)).strip()
+    candidate = Path(raw) if raw else Path(_DEFAULT_SQLITE_PATH)
+    root = Path.cwd().resolve()
+    resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("SQLite cache path must stay within project root.") from exc
+    return resolved
+
+
+def _active_backend() -> tuple[str, InMemoryCacheBackend | SQLiteCacheBackend]:
+    backend_name = _configured_backend_name()
+    if backend_name == "sqlite":
+        try:
+            sqlite_path = _resolve_sqlite_path()
+        except (ValueError, OSError):
+            return "in_memory", _IN_MEMORY_BACKEND
+        cache_key = str(sqlite_path)
+        backend = _SQLITE_BACKENDS.get(cache_key)
+        if backend is None:
+            backend = SQLiteCacheBackend(sqlite_path, now_fn=lambda: _now_epoch_seconds())
+            _SQLITE_BACKENDS[cache_key] = backend
+        return "sqlite", backend
+    return "in_memory", _IN_MEMORY_BACKEND
+
+
+def get_cache_backend_name() -> str:
+    """Return the effective cache backend name after safe fallback handling."""
+    name, _ = _active_backend()
+    return name
+
+
 def set_cache(key: str, value: Any, ttl_seconds: int = 1800) -> bool:
-    """Persist a value in the shared process-level cache backend."""
+    """Persist a value in the active cache backend."""
     safe_key = _safe_key(key)
     if not safe_key:
         return False
@@ -80,48 +138,40 @@ def set_cache(key: str, value: Any, ttl_seconds: int = 1800) -> bool:
     try:
         safe_ttl = int(ttl_seconds)
     except (TypeError, ValueError):
-        safe_ttl = int(CACHE_METADATA_DEFAULTS.get("ttl_seconds", 1800))
+        safe_ttl = _default_ttl_seconds()
     safe_ttl = max(0, safe_ttl)
-    now_epoch = _now_epoch_seconds()
-    expires_at: Optional[int] = None if safe_ttl == 0 else now_epoch + safe_ttl
-    _CACHE_STORE[safe_key] = {
-        "value": deepcopy(value),
-        "cached_at": now_epoch,
-        "expires_at": expires_at,
-    }
-    return True
+    backend_name, backend = _active_backend()
+    return backend.set(
+        safe_key,
+        deepcopy(value),
+        ttl_seconds=safe_ttl,
+        metadata={"backend": backend_name},
+    )
 
 
 def get_cache(key: str) -> Optional[Any]:
-    """Read a value from the shared cache backend if present and not expired."""
+    """Read a value from the active cache backend if present and not expired."""
     safe_key = _safe_key(key)
     if not safe_key:
         return None
-    entry = _CACHE_STORE.get(safe_key)
-    if not isinstance(entry, Mapping):
-        return None
-
-    expires_at = entry.get("expires_at")
-    if isinstance(expires_at, (int, float)) and int(expires_at) <= _now_epoch_seconds():
-        _CACHE_STORE.pop(safe_key, None)
-        return None
-
-    if "value" not in entry:
-        return None
-    return deepcopy(entry.get("value"))
+    _, backend = _active_backend()
+    return backend.get(safe_key)
 
 
 def delete_cache(key: str) -> bool:
-    """Delete a cache key from the shared backend."""
+    """Delete a cache key from the active backend."""
     safe_key = _safe_key(key)
     if not safe_key:
         return False
-    return _CACHE_STORE.pop(safe_key, None) is not None
+    _, backend = _active_backend()
+    return backend.delete(safe_key)
 
 
 def clear_cache() -> None:
-    """Clear all in-memory cache entries."""
-    _CACHE_STORE.clear()
+    """Clear all known cache backend entries."""
+    _IN_MEMORY_BACKEND.clear()
+    for backend in _SQLITE_BACKENDS.values():
+        backend.clear()
 
 
 def _cache_metadata_update(state: Mapping[str, Any], cache_key: str) -> Dict[str, Any]:
@@ -130,8 +180,8 @@ def _cache_metadata_update(state: Mapping[str, Any], cache_key: str) -> Dict[str
         cache_meta = {}
 
     cache_meta.setdefault("enabled", bool(CACHE_METADATA_DEFAULTS.get("enabled", True)))
-    cache_meta.setdefault("ttl_seconds", int(CACHE_METADATA_DEFAULTS.get("ttl_seconds", 1800)))
-    cache_meta.setdefault("backend", str(CACHE_METADATA_DEFAULTS.get("backend", "in_memory")))
+    cache_meta["ttl_seconds"] = _cache_ttl_seconds(state)
+    cache_meta["backend"] = get_cache_backend_name()
 
     keys = list(cache_meta.get("keys", [])) if isinstance(cache_meta.get("keys", []), list) else []
     if cache_key not in keys:
@@ -166,8 +216,6 @@ def _get_legacy_state_cached_research(
 
     entry = cache_store.get(cache_key)
     if not isinstance(entry, Mapping):
-        if isinstance(entry, dict):
-            return deepcopy(entry)
         return None
 
     if "value" not in entry:
@@ -226,6 +274,7 @@ __all__ = [
     "set_cache",
     "delete_cache",
     "clear_cache",
+    "get_cache_backend_name",
     "get_cached_research",
     "set_cached_research",
     "touch_cached_research_key",

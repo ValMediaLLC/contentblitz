@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any, Dict, Mapping
 
@@ -66,10 +67,22 @@ def validate_retry_policy_keys(retry_counts: Mapping[str, int]) -> bool:
 
 def build_cache_metadata_defaults() -> Dict[str, Any]:
     """Return a deep copy of cache metadata defaults."""
-    return deepcopy(CACHE_METADATA_DEFAULTS)
+    defaults = deepcopy(CACHE_METADATA_DEFAULTS)
+    raw_ttl = os.getenv("CONTENTBLITZ_CACHE_TTL_SECONDS")
+    if raw_ttl is not None:
+        try:
+            defaults["ttl_seconds"] = max(0, int(raw_ttl.strip()))
+        except (TypeError, ValueError):
+            defaults["ttl_seconds"] = CACHE_METADATA_DEFAULTS["ttl_seconds"]
+
+    raw_backend = str(os.getenv("CONTENTBLITZ_CACHE_BACKEND", defaults["backend"])).strip().lower()
+    if raw_backend in {"sqlite", "in_memory", "in-memory", "memory", "inmemory"}:
+        defaults["backend"] = "sqlite" if raw_backend == "sqlite" else "in_memory"
+    else:
+        defaults["backend"] = CACHE_METADATA_DEFAULTS["backend"]
+    return defaults
 
 
 def build_cost_controls_defaults() -> Dict[str, Any]:
     """Return a deep copy of cost control defaults."""
     return deepcopy(COST_CONTROLS_DEFAULTS)
-

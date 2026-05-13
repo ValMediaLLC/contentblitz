@@ -35,6 +35,10 @@ ContentBlitz is a LangGraph-based multi-agent content orchestration system with 
   - in-memory, process-local
 - Default cache TTL:
   - 1800 seconds
+- Optional persistent cache prototype:
+  - Set `CONTENTBLITZ_CACHE_BACKEND=sqlite` to enable local SQLite cache
+  - Set `CONTENTBLITZ_CACHE_SQLITE_PATH` to choose the local DB path
+  - If cache backend env vars are not set, `in_memory` remains the default
 - Cost control counters:
   - `tokens_used_this_session`
   - `search_queries_used_this_session`
@@ -81,6 +85,12 @@ SERP_API_KEY=
 PERPLEXITY_API_KEY=
 CONTENTBLITZ_RUN_LIVE_TESTS=0
 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
+
+# Optional cache backend configuration
+# If unset, ContentBlitz uses in-memory cache by default.
+CONTENTBLITZ_CACHE_BACKEND=sqlite
+CONTENTBLITZ_CACHE_TTL_SECONDS=1800
+CONTENTBLITZ_CACHE_SQLITE_PATH=.tmp/contentblitz_cache.sqlite3
 ```
 
 ## Validation and Testing

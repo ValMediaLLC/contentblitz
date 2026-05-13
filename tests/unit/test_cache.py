@@ -17,6 +17,10 @@ def test_normalize_query_is_deterministic() -> None:
     assert cache_module.normalize_query("  AI   Trends  2026 ") == "ai trends 2026"
 
 
+def test_default_backend_remains_in_memory() -> None:
+    assert cache_module.get_cache_backend_name() == "in_memory"
+
+
 def test_build_research_cache_key_follows_spec_shape() -> None:
     key = cache_module.build_research_cache_key("AI market outlook", depth="deep")
     assert key.startswith("research:")

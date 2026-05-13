@@ -79,6 +79,59 @@ def test_second_fresh_state_hits_shared_cache_and_skips_provider(monkeypatch) ->
     assert state_b["cost_controls"]["search_queries_used_this_session"] == 0
 
 
+def test_second_fresh_state_hits_shared_sqlite_cache_and_skips_provider(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_CACHE_BACKEND", "sqlite")
+    monkeypatch.setenv(
+        "CONTENTBLITZ_CACHE_SQLITE_PATH",
+        f".tmp/{tmp_path.name}_research_cache.sqlite3",
+    )
+    query = "ai governance sqlite"
+    state_a = create_initial_state(user_query=query)
+    _mock_generate_text(monkeypatch)
+
+    calls = {"search": 0}
+
+    def fake_search_web(query, depth="standard"):
+        calls["search"] += 1
+        return {
+            "results": [
+                {
+                    "title": f"{query} source",
+                    "url": f"https://provider.example/{depth}/{calls['search']}",
+                    "snippet": "This snippet is long enough to be considered meaningful.",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+    first_updates = research_agent_module.research_agent_node(state_a)
+    state_a.update(first_updates)
+
+    expected_key = build_research_cache_key(query, depth="standard")
+    assert calls["search"] > 0
+    assert first_updates["research_data"]["cache_hit"] is False
+    assert first_updates["cache_metadata"]["backend"] == "sqlite"
+    assert expected_key in first_updates["cache_metadata"]["keys"]
+
+    state_b = create_initial_state(user_query=query)
+
+    def fail_if_called(query, depth="standard"):
+        raise AssertionError("search_web should not run when sqlite cache has a hit.")
+
+    monkeypatch.setattr(research_agent_module, "search_web", fail_if_called)
+    second_updates = research_agent_module.research_agent_node(state_b)
+    state_b.update(second_updates)
+
+    assert second_updates["research_data"]["cache_hit"] is True
+    assert second_updates["research_data"]["degraded"] is False
+    assert second_updates["sources"] == first_updates["sources"]
+    assert second_updates["cache_metadata"]["backend"] == "sqlite"
+    assert expected_key in second_updates["cache_metadata"]["keys"]
+    assert state_b["cost_controls"]["search_queries_used_this_session"] == 0
+
+
 def test_degraded_research_is_not_cached(monkeypatch) -> None:
     query = "nascent topic with no reliable sources"
     _mock_generate_text(monkeypatch)
