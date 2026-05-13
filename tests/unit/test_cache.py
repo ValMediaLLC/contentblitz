@@ -55,6 +55,28 @@ def test_expired_cache_entry_is_ignored(monkeypatch) -> None:
     assert cache_module.get_cache(key) is None
 
 
+def test_ttl_zero_does_not_expire_entry(monkeypatch) -> None:
+    key = cache_module.build_research_cache_key("ttl zero")
+    payload = {"research_data": {"status": "complete"}, "sources": []}
+
+    monkeypatch.setattr(cache_module, "_now_epoch_seconds", lambda: 1000)
+    assert cache_module.set_cache(key, payload, ttl_seconds=0) is True
+    monkeypatch.setattr(cache_module, "_now_epoch_seconds", lambda: 999_999)
+    assert cache_module.get_cache(key) == payload
+
+
+def test_delete_cache_removes_single_entry_only() -> None:
+    key_a = cache_module.build_research_cache_key("delete a")
+    key_b = cache_module.build_research_cache_key("delete b")
+    payload = {"research_data": {"status": "complete"}, "sources": []}
+
+    assert cache_module.set_cache(key_a, payload, ttl_seconds=60) is True
+    assert cache_module.set_cache(key_b, payload, ttl_seconds=60) is True
+    assert cache_module.delete_cache(key_a) is True
+    assert cache_module.get_cache(key_a) is None
+    assert cache_module.get_cache(key_b) == payload
+
+
 def test_clear_cache_removes_entries() -> None:
     key_a = cache_module.build_research_cache_key("a")
     key_b = cache_module.build_research_cache_key("b")

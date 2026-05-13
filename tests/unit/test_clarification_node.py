@@ -5,6 +5,9 @@ from contentblitz.state import create_initial_state
 clarification_node_module = importlib.import_module(
     "contentblitz.agents.clarification"
 )
+clarification_wrapper_module = importlib.import_module(
+    "contentblitz.agents.clarification_node"
+)
 
 
 def _base_state(**overrides):
@@ -100,3 +103,7 @@ def test_workflow_status_is_awaiting_clarification() -> None:
     assert "cost_controls" not in updates
     assert "content_drafts" not in updates
     assert "quality_scores" not in updates
+
+
+def test_compatibility_wrapper_exports_same_clarification_node() -> None:
+    assert clarification_wrapper_module.clarification_node is clarification_node_module.clarification_node

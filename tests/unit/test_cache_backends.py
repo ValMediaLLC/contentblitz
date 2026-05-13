@@ -53,6 +53,20 @@ def test_sqlite_ttl_expiration_is_honored(tmp_path, monkeypatch) -> None:
     assert cache_module.get_cache(key) is None
 
 
+def test_sqlite_ttl_zero_does_not_expire(tmp_path, monkeypatch) -> None:
+    sqlite_path = f".tmp/{tmp_path.name}_ttl_zero.sqlite3"
+    monkeypatch.setenv("CONTENTBLITZ_CACHE_BACKEND", "sqlite")
+    monkeypatch.setenv("CONTENTBLITZ_CACHE_SQLITE_PATH", sqlite_path)
+
+    key = cache_module.build_research_cache_key("sqlite ttl zero")
+    payload = {"research_data": {"status": "complete"}, "sources": []}
+
+    monkeypatch.setattr(cache_module, "_now_epoch_seconds", lambda: 2000)
+    assert cache_module.set_cache(key, payload, ttl_seconds=0) is True
+    monkeypatch.setattr(cache_module, "_now_epoch_seconds", lambda: 999999)
+    assert cache_module.get_cache(key) == payload
+
+
 def test_invalid_backend_name_falls_back_to_in_memory(monkeypatch) -> None:
     monkeypatch.setenv("CONTENTBLITZ_CACHE_BACKEND", "redis")
     assert cache_module.get_cache_backend_name() == "in_memory"

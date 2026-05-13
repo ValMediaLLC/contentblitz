@@ -211,3 +211,75 @@ def test_prompt_injection_guard_rejects_unsafe_prompt(monkeypatch) -> None:
     assert result.error is not None
     assert result.error["code"] == "prompt_rejected"
     assert client_built["value"] is False
+
+
+def test_missing_api_key_fails_safely_without_building_client(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client_built = {"value": False}
+
+    def _fake_client_builder(*_args, **_kwargs):
+        client_built["value"] = True
+        raise AssertionError("Client should not be built when API key is missing.")
+
+    monkeypatch.setattr(generate_text_module, "_build_openai_client", _fake_client_builder)
+
+    result = generate_text_module.generate_text(
+        prompt="Generate text",
+        agent_key="blog_writer",
+    )
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "configuration_error"
+    assert client_built["value"] is False
+    assert "traceback" not in str(result.error).lower()
+
+
+def test_malformed_provider_response_is_handled_safely(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _install_fake_client(
+        monkeypatch,
+        [
+            SimpleNamespace(
+                model="gpt-4o",
+                choices=[SimpleNamespace(message=SimpleNamespace(content=[{"type": "text"}]))],
+                usage=SimpleNamespace(),
+            )
+        ],
+    )
+
+    result = generate_text_module.generate_text(
+        prompt="Return malformed content shape.",
+        agent_key="query_handler",
+    )
+
+    assert result.degraded is False
+    assert result.text == ""
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+    assert result.total_tokens == 0
+
+
+def test_provider_authentication_failure_is_normalized_without_secret_leak(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-secret-value")
+    auth_exc = generate_text_module.AuthenticationError.__new__(
+        generate_text_module.AuthenticationError
+    )
+    Exception.__init__(auth_exc, "raw provider auth failure")
+    setattr(auth_exc, "status_code", 401)
+
+    attempts = RETRY_POLICY["query_handler"] + 1
+    total_calls = attempts * 2
+    _install_fake_client(monkeypatch, [auth_exc for _ in range(total_calls)])
+
+    result = generate_text_module.generate_text(
+        prompt="Generate text with failing auth.",
+        agent_key="query_handler",
+    )
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "provider_failure"
+    assert result.error["last_error"]["code"] == "authentication_error"
+    assert "sk-live-secret-value" not in str(result.error)
+    assert "traceback" not in str(result.error).lower()

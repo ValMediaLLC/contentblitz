@@ -4,6 +4,7 @@ from contentblitz.agents import retry_router as retry_router_module
 from contentblitz.config import RETRY_POLICY
 from contentblitz.state import create_initial_state
 from contentblitz.workflow.routing import (
+    AUTHORITATIVE_NODE_SET,
     BLOG_WRITER_NODE,
     LINKEDIN_WRITER_NODE,
     OUTPUT_ASSEMBLER_NODE,
@@ -151,3 +152,33 @@ def test_explicit_retry_target_without_retry_needed_score_does_not_increment() -
     )
     updates = retry_router_module.retry_router_node(state)
     assert updates == {}
+
+
+def test_retry_routing_terminates_within_retry_caps() -> None:
+    state = _base_state(
+        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+        retry_counts={**create_initial_state()["retry_counts"], "blog_writer": 0},
+    )
+
+    # Simulate repeated retry-router passes; termination should happen predictably.
+    for _ in range(10):
+        updates = retry_router_module.retry_router_node(state)
+        state = _merge_updates(state, updates)
+        route = route_from_retry_router(state)
+        assert route in AUTHORITATIVE_NODE_SET
+        if state.get("retry_requested") is False:
+            assert route == OUTPUT_ASSEMBLER_NODE
+            break
+    else:
+        raise AssertionError("Retry router did not terminate within expected bounded iterations.")
+
+
+def test_route_from_retry_router_never_returns_invalid_node_for_bad_retry_targets() -> None:
+    state = _base_state(
+        _retry_counts_incremented=True,
+        retry_requested=True,
+        retry_targets=["invalid_target", "not_a_writer"],
+    )
+    route = route_from_retry_router(state)
+    assert route == OUTPUT_ASSEMBLER_NODE
+    assert route in AUTHORITATIVE_NODE_SET
