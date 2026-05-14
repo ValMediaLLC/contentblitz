@@ -1,4 +1,5 @@
 .venv*
+.venv/
 __pycache__/
 *.pyc
 .env
@@ -16,3 +17,4 @@ htmlcov/
 .streamlit/secrets.toml
 scripts/validate_phase1.py
 .contentblitz_sessions/
+.contentblitz_sessions*
