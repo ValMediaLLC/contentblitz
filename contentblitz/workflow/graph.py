@@ -49,14 +49,31 @@ END = "END"
 WORKFLOW_NODES: List[str] = list(AUTHORITATIVE_NODES)
 
 
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
+
+
 def merge_content_drafts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
     """Reducer for concurrent content_drafts updates from writer fan-out."""
     merged = dict(left or {})
     for key, value in (right or {}).items():
+        if value is None:
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             nested = dict(merged[key])
-            nested.update(value)
+            for nested_key, nested_value in value.items():
+                if nested_value is None:
+                    continue
+                nested[nested_key] = nested_value
             merged[key] = nested
+        elif isinstance(value, dict):
+            merged[key] = dict(value)
         else:
             merged[key] = value
     return merged
@@ -70,14 +87,195 @@ def merge_cost_controls(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str
     while preventing InvalidUpdateError on parallel writes.
     """
     merged = dict(left or {})
-    merged.update(right or {})
+    incoming = dict(right or {})
+
+    monotonic_counter_keys = (
+        "tokens_used_this_session",
+        "search_queries_used_this_session",
+        "image_generations_used_this_session",
+        "total_retries_used_this_session",
+    )
+    cap_keys = (
+        "token_budget_per_session",
+        "search_query_cap_per_session",
+        "image_generation_cap_per_session",
+        "max_total_retries_per_session",
+    )
+
+    for key in monotonic_counter_keys:
+        if key not in merged and key not in incoming:
+            continue
+        left_value = _safe_non_negative_int(merged.get(key))
+        right_value = _safe_non_negative_int(incoming.get(key))
+        if left_value is None and right_value is None:
+            continue
+        if left_value is None:
+            merged[key] = right_value
+        elif right_value is None:
+            merged[key] = left_value
+        else:
+            merged[key] = max(left_value, right_value)
+
+    for key in cap_keys:
+        if key not in merged and key not in incoming:
+            continue
+        left_value = _safe_non_negative_int(merged.get(key))
+        right_value = _safe_non_negative_int(incoming.get(key))
+        if left_value is None and right_value is None:
+            continue
+        if left_value is None:
+            merged[key] = right_value
+        elif right_value is None:
+            merged[key] = left_value
+        else:
+            # Keep stricter cap on conflicts to avoid accidental limit widening.
+            merged[key] = min(left_value, right_value)
+
+    merged["budget_exceeded"] = bool(merged.get("budget_exceeded", False)) or bool(
+        incoming.get("budget_exceeded", False)
+    )
+
+    handled = set(monotonic_counter_keys) | set(cap_keys) | {"budget_exceeded"}
+    for key, value in incoming.items():
+        if key in handled:
+            continue
+        if value is None and key in merged:
+            continue
+        merged[key] = value
     return merged
 
 
 def merge_draft_status(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
     """Reducer for concurrent draft_status updates from writer fan-out."""
     merged = dict(left or {})
-    merged.update(right or {})
+    for key, value in (right or {}).items():
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_unique_text_list(left: List[Any], right: List[Any]) -> List[str]:
+    """Reducer for user-safe text lists (warnings/status messages)."""
+    merged: List[str] = []
+    seen: set[str] = set()
+    for item in list(left or []) + list(right or []):
+        text = str(item).strip()
+        if not text or text.lower() in {"none", "null"}:
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+    return merged
+
+
+def merge_error_entries(left: List[Any], right: List[Any]) -> List[Dict[str, Any]]:
+    """Reducer for normalized error lists produced by concurrent branches."""
+    merged: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str, bool]] = set()
+    for item in list(left or []) + list(right or []):
+        if not isinstance(item, Mapping):
+            continue
+        normalized = dict(item)
+        message = str(normalized.get("message", "")).strip()
+        if not message or message.lower() in {"none", "null"}:
+            continue
+        normalized["message"] = message
+        source = str(
+            normalized.get("agent", normalized.get("node", "unknown"))
+        ).strip().lower()
+        error_type = str(normalized.get("type", "")).strip().lower()
+        code = str(normalized.get("code", "")).strip().lower()
+        recoverable = bool(normalized.get("recoverable", False))
+        dedupe_key = (
+            source,
+            error_type or code,
+            message,
+            recoverable,
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged.append(normalized)
+    return merged
+
+
+def merge_export_error_log(left: List[Any], right: List[Any]) -> List[Dict[str, Any]]:
+    """Reducer for export_metadata.error_log entries."""
+    merged: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in list(left or []) + list(right or []):
+        if not isinstance(item, Mapping):
+            continue
+        normalized = dict(item)
+        fmt = str(normalized.get("format", "")).strip().lower()
+        code = str(normalized.get("code", "")).strip().lower() or "export_error"
+        message = str(normalized.get("message", "")).strip()
+        if not message:
+            continue
+        normalized["format"] = fmt
+        normalized["code"] = code
+        normalized["message"] = message
+        key = (fmt, code, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(normalized)
+    return merged
+
+
+def merge_export_metadata(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer for export metadata that preserves completed format results."""
+    merged = dict(left or {})
+    incoming = dict(right or {})
+    if not incoming:
+        return merged
+
+    left_formats = list(merged.get("formats_requested", [])) if isinstance(merged.get("formats_requested"), list) else []
+    right_formats = list(incoming.get("formats_requested", [])) if isinstance(incoming.get("formats_requested"), list) else []
+    merged["formats_requested"] = list(dict.fromkeys([*left_formats, *right_formats]))
+
+    left_paths = dict(merged.get("export_paths", {})) if isinstance(merged.get("export_paths"), Mapping) else {}
+    right_paths = dict(incoming.get("export_paths", {})) if isinstance(incoming.get("export_paths"), Mapping) else {}
+    left_paths.update({k: v for k, v in right_paths.items() if v})
+    merged["export_paths"] = left_paths
+
+    left_status = dict(merged.get("export_status", {})) if isinstance(merged.get("export_status"), Mapping) else {}
+    right_status = dict(incoming.get("export_status", {})) if isinstance(incoming.get("export_status"), Mapping) else {}
+    for fmt in set(left_status) | set(right_status):
+        lval = str(left_status.get(fmt, "")).strip().lower()
+        rval = str(right_status.get(fmt, "")).strip().lower()
+        if "completed" in {lval, rval}:
+            left_status[fmt] = "completed"
+        elif "failed" in {lval, rval}:
+            left_status[fmt] = "failed"
+        elif rval:
+            left_status[fmt] = rval
+        elif lval:
+            left_status[fmt] = lval
+    merged["export_status"] = left_status
+
+    left_errors = list(merged.get("error_log", [])) if isinstance(merged.get("error_log"), list) else []
+    right_errors = list(incoming.get("error_log", [])) if isinstance(incoming.get("error_log"), list) else []
+    merged["error_log"] = merge_export_error_log(left_errors, right_errors)
+
+    left_messages = list(merged.get("status_messages", [])) if isinstance(merged.get("status_messages"), list) else []
+    right_messages = list(incoming.get("status_messages", [])) if isinstance(incoming.get("status_messages"), list) else []
+    merged["status_messages"] = merge_unique_text_list(left_messages, right_messages)
+
+    for key, value in incoming.items():
+        if key in {
+            "formats_requested",
+            "export_paths",
+            "export_status",
+            "error_log",
+            "status_messages",
+        }:
+            continue
+        if value is None and key in merged:
+            continue
+        merged[key] = value
     return merged
 
 
@@ -105,19 +303,19 @@ class WorkflowState(TypedDict, total=False):
     image_prompts: list[str]
     image_outputs: list[dict[str, Any]]
     tool_outputs: dict[str, Any]
-    errors: list[dict[str, Any]]
+    errors: Annotated[list[dict[str, Any]], merge_error_entries]
     final_response: str
     assembled_outputs: dict[str, Any]
     export_outputs: dict[str, Any]
     workflow_status: str
     export_requested: bool
-    export_metadata: dict[str, Any]
+    export_metadata: Annotated[dict[str, Any], merge_export_metadata]
     cache_metadata: dict[str, Any]
     cost_controls: Annotated[dict[str, Any], merge_cost_controls]
     retry_requested: bool
     retry_target: str
-    status_messages: list[str]
-    warnings: list[str]
+    status_messages: Annotated[list[str], merge_unique_text_list]
+    warnings: Annotated[list[str], merge_unique_text_list]
     prompt_injection_detected: bool
     prompt_injection_signals: list[str]
     sanitized_user_query: str

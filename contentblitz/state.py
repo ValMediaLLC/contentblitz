@@ -17,10 +17,17 @@ def merge_content_drafts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[st
     """Reducer-compatible merge for parallel content_drafts updates."""
     merged = dict(left or {})
     for key, value in (right or {}).items():
+        if value is None:
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             nested = dict(merged[key])
-            nested.update(value)
+            for nested_key, nested_value in value.items():
+                if nested_value is None:
+                    continue
+                nested[nested_key] = nested_value
             merged[key] = nested
+        elif isinstance(value, dict):
+            merged[key] = dict(value)
         else:
             merged[key] = value
     return merged
@@ -29,7 +36,10 @@ def merge_content_drafts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[st
 def merge_draft_status(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
     """Reducer-compatible merge for parallel draft status updates."""
     merged = dict(left or {})
-    merged.update(right or {})
+    for key, value in (right or {}).items():
+        if value is None:
+            continue
+        merged[key] = value
     return merged
 
 
