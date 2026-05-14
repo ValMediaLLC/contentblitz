@@ -28,3 +28,8 @@ def test_content_strategist_excludes_unrequested_optional_nodes() -> None:
     assert LINKEDIN_WRITER_NODE not in route
     assert IMAGE_AGENT_NODE not in route
 
+
+def test_content_strategist_handles_invalid_requested_outputs_shape_deterministically() -> None:
+    state = create_initial_state(requested_outputs="not-a-list")  # type: ignore[arg-type]
+    route = route_from_content_strategist(state)
+    assert route == [BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE]

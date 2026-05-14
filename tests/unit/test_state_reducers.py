@@ -16,6 +16,12 @@ from contentblitz.workflow.graph import (
     merge_error_entries,
     merge_export_error_log,
     merge_export_metadata,
+    merge_image_outputs,
+    merge_nested_dict_skip_none,
+    merge_progress_events,
+    merge_retry_counts,
+    merge_source_entries,
+    merge_ui_node_statuses,
     merge_unique_text_list,
 )
 
@@ -37,6 +43,39 @@ def _reduce_parallel_updates(base_state: dict, *branch_updates: dict) -> dict:
                 continue
             if key == "cost_controls":
                 merged[key] = merge_cost_controls(merged.get(key, {}), value)
+                continue
+            if key == "sources":
+                merged[key] = merge_source_entries(merged.get(key, []), value)
+                continue
+            if key == "image_prompts":
+                merged[key] = merge_unique_text_list(merged.get(key, []), value)
+                continue
+            if key == "image_outputs":
+                merged[key] = merge_image_outputs(merged.get(key, []), value)
+                continue
+            if key == "quality_scores":
+                merged[key] = merge_nested_dict_skip_none(merged.get(key, {}), value)
+                continue
+            if key == "retry_counts":
+                merged[key] = merge_retry_counts(merged.get(key, {}), value)
+                continue
+            if key == "progress_events":
+                merged[key] = merge_progress_events(merged.get(key, []), value)
+                continue
+            if key == "ui_node_statuses":
+                merged[key] = merge_ui_node_statuses(merged.get(key, {}), value)
+                continue
+            if key == "warnings":
+                merged[key] = merge_unique_text_list(merged.get(key, []), value)
+                continue
+            if key == "status_messages":
+                merged[key] = merge_unique_text_list(merged.get(key, []), value)
+                continue
+            if key == "errors":
+                merged[key] = merge_error_entries(merged.get(key, []), value)
+                continue
+            if key == "export_metadata":
+                merged[key] = merge_export_metadata(merged.get(key, {}), value)
                 continue
             merged[key] = value
     return merged
@@ -286,6 +325,14 @@ def test_unique_text_reducer_dedupes_and_ignores_null_placeholders() -> None:
     assert merged == ["Research degraded", "Retry used", "Image fallback used"]
 
 
+def test_unique_text_reducer_ignores_non_string_entries() -> None:
+    merged = merge_unique_text_list(
+        ["Warning A", 123, {"message": "not allowed"}, False, None, "Warning B"],
+        ["Warning B", 3.14, ["nested"], "Warning C"],
+    )
+    assert merged == ["Warning A", "Warning B", "Warning C"]
+
+
 def test_error_reducer_dedupes_same_error_and_preserves_unique_entries() -> None:
     left = [
         {
@@ -358,3 +405,153 @@ def test_export_metadata_reducer_preserves_completed_format_results() -> None:
         "HTML export succeeded.",
     ]
     assert merged["error_log"][0]["format"] == "html"
+
+
+def test_sources_reducer_dedupes_by_url_then_title_source_and_preserves_order() -> None:
+    left = [
+        {"title": "A", "url": "https://example.com/a", "source": "serp", "snippet": "left"},
+        {"title": "B", "source": "perplexity", "snippet": "fallback"},
+        "not-a-dict",
+    ]
+    right = [
+        {"title": "A newer", "url": "https://example.com/a", "source": "serp", "snippet": "right"},
+        {"title": "B", "source": "perplexity", "snippet": "dup by title+source"},
+        {"title": "C", "url": "https://example.com/c", "source": "serp"},
+        {"title": "", "url": "", "source": "", "snippet": ""},
+    ]
+
+    merged = merge_source_entries(left, right)
+
+    assert len(merged) == 3
+    assert merged[0]["url"] == "https://example.com/a"
+    assert merged[1]["title"] == "B"
+    assert merged[2]["url"] == "https://example.com/c"
+    # Preserve left-first stable ordering and first valid occurrence.
+    assert merged[0]["snippet"] == "left"
+
+
+def test_image_prompts_reducer_dedupes_and_ignores_empty_or_null_tokens() -> None:
+    merged = merge_unique_text_list(
+        ["Prompt A", "Prompt A", "  ", "None", "null", "Prompt B"],
+        ["Prompt B", "Prompt C", "", "None"],
+    )
+    assert merged == ["Prompt A", "Prompt B", "Prompt C"]
+
+
+def test_image_outputs_reducer_preserves_success_and_recoverable_failure() -> None:
+    left = [
+        {"id": "img-1", "status": "success", "provider": "dall-e-3", "url": "https://img.example/1.png"},
+        {"status": "failed", "provider": "dall-e-3", "prompt": "concept one", "error": "recoverable"},
+    ]
+    right = [
+        {"id": "img-1", "status": "success", "provider": "dall-e-2", "url": "https://img.example/1.png"},
+        {"status": "failed", "provider": "dall-e-3", "prompt": "concept one", "error": "recoverable"},
+        {"status": "success", "provider": "dall-e-2", "url": "data:image/png;base64,ABC"},
+        {"status": "success", "provider": "dall-e-2", "url": "https://img.example/2.png"},
+    ]
+
+    merged = merge_image_outputs(left, right)
+
+    assert len(merged) == 3
+    assert merged[0]["id"] == "img-1"
+    assert merged[1]["status"] == "failed"
+    assert merged[2]["url"] == "https://img.example/2.png"
+    assert all("base64" not in str(item).lower() for item in merged)
+    assert all(not str(item.get("url", "")).lower().startswith("data:image/") for item in merged)
+
+
+def test_quality_scores_merge_keeps_unrelated_scores_and_skips_none() -> None:
+    left = {
+        "blog": {"composite": 0.8, "validation_status": "passed"},
+        "citation_validation": {"status": "degraded", "invalid_count": 1},
+    }
+    right = {
+        "linkedin": {"composite": 0.72, "validation_status": "passed"},
+        "citation_validation": {"invalid_count": None, "duplicate_count": 2},
+        "blog": None,
+    }
+
+    merged = merge_nested_dict_skip_none(left, right)
+
+    assert merged["blog"]["composite"] == 0.8
+    assert merged["linkedin"]["composite"] == 0.72
+    assert merged["citation_validation"]["status"] == "degraded"
+    assert merged["citation_validation"]["invalid_count"] == 1
+    assert merged["citation_validation"]["duplicate_count"] == 2
+
+
+def test_retry_counts_reducer_uses_per_key_max_and_ignores_invalid_values() -> None:
+    left = {
+        "blog_writer": 1,
+        "linkedin_writer": 0,
+        "image_agent": 2,
+    }
+    right = {
+        "blog_writer": 3,
+        "linkedin_writer": True,
+        "image_agent": -4,
+        "quality_validator": "oops",
+    }
+
+    merged = merge_retry_counts(left, right)
+
+    assert merged["blog_writer"] == 3
+    assert merged["linkedin_writer"] == 0
+    assert merged["image_agent"] == 2
+    assert "quality_validator" not in merged
+
+
+def test_progress_events_reducer_is_stable_and_dedupes_exact_duplicates() -> None:
+    left = [
+        {
+            "timestamp": "2026-05-13T10:00:00+00:00",
+            "node_name": "query_handler_node",
+            "status": "completed",
+            "message": "done",
+        },
+        {"invalid": "entry"},
+    ]
+    right = [
+        {
+            "timestamp": "2026-05-13T10:00:00+00:00",
+            "node_name": "query_handler_node",
+            "status": "completed",
+            "message": "done",
+        },
+        {
+            "timestamp": "2026-05-13T10:00:01+00:00",
+            "node_name": "blog_writer_node",
+            "status": "running",
+            "message": "blog running",
+            "safe_metadata": {"attempt": 1, "raw": {"nested": "ignored"}},
+        },
+    ]
+
+    merged = merge_progress_events(left, right)
+
+    assert len(merged) == 2
+    assert merged[0]["node_name"] == "query_handler_node"
+    assert merged[1]["node_name"] == "blog_writer_node"
+    assert merged[1]["safe_metadata"]["attempt"] == 1
+    assert "raw" not in merged[1]["safe_metadata"]
+
+
+def test_ui_node_statuses_precedence_prevents_pending_overwrite() -> None:
+    left = {
+        "blog_writer_node": "completed",
+        "image_agent_node": "degraded",
+        "quality_validator_node": "failed",
+    }
+    right = {
+        "blog_writer_node": "pending",
+        "image_agent_node": "running",
+        "quality_validator_node": "completed",
+        "linkedin_writer_node": "running",
+    }
+
+    merged = merge_ui_node_statuses(left, right)
+
+    assert merged["blog_writer_node"] == "completed"
+    assert merged["image_agent_node"] == "degraded"
+    assert merged["quality_validator_node"] == "failed"
+    assert merged["linkedin_writer_node"] == "running"

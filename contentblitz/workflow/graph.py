@@ -47,6 +47,14 @@ from contentblitz.workflow.routing import (
 START = "START"
 END = "END"
 WORKFLOW_NODES: List[str] = list(AUTHORITATIVE_NODES)
+_UI_STATUS_PRECEDENCE: Dict[str, int] = {
+    "pending": 0,
+    "running": 1,
+    "skipped": 2,
+    "completed": 3,
+    "degraded": 4,
+    "failed": 5,
+}
 
 
 def _safe_non_negative_int(value: Any) -> int | None:
@@ -160,13 +168,234 @@ def merge_unique_text_list(left: List[Any], right: List[Any]) -> List[str]:
     merged: List[str] = []
     seen: set[str] = set()
     for item in list(left or []) + list(right or []):
-        text = str(item).strip()
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
         if not text or text.lower() in {"none", "null"}:
             continue
         if text in seen:
             continue
         seen.add(text)
         merged.append(text)
+    return merged
+
+
+def _clean_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text or text.lower() in {"none", "null"}:
+        return ""
+    return text
+
+
+def _source_identity(entry: Mapping[str, Any]) -> str:
+    url = _clean_text(entry.get("url"))
+    if url:
+        return f"url:{url.lower()}"
+    title = _clean_text(entry.get("title")).lower()
+    source = _clean_text(entry.get("source")).lower()
+    return f"title_source:{title}|{source}"
+
+
+def _has_meaningful_source_payload(entry: Mapping[str, Any]) -> bool:
+    return any(
+        _clean_text(entry.get(field))
+        for field in ("url", "title", "source", "snippet")
+    )
+
+
+def merge_source_entries(left: List[Any], right: List[Any]) -> List[Dict[str, Any]]:
+    """Reducer for source lists with deterministic dedupe and stable ordering."""
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in list(left or []) + list(right or []):
+        if not isinstance(item, Mapping):
+            continue
+        candidate = dict(item)
+        if not _has_meaningful_source_payload(candidate):
+            continue
+        identity = _source_identity(candidate)
+        # Skip malformed entries that have neither URL nor title+source identity.
+        if identity == "title_source:|":
+            continue
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(candidate)
+    return merged
+
+
+def _contains_base64_payload(value: str) -> bool:
+    lowered = value.lower()
+    return lowered.startswith("data:image/") or "base64," in lowered
+
+
+def _sanitize_image_output_entry(entry: Mapping[str, Any]) -> Dict[str, Any] | None:
+    candidate = dict(entry)
+    candidate.pop("base64", None)
+    candidate.pop("b64_json", None)
+
+    for key in ("url", "revised_prompt", "prompt", "provider", "id", "status", "mime_type"):
+        value = candidate.get(key)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if key == "url" and cleaned and _contains_base64_payload(cleaned):
+                # Drop unsafe embedded payload entries entirely.
+                return None
+            candidate[key] = cleaned
+
+    # Keep failed entries even without url/id so recoverable failures remain visible.
+    if not any(candidate.get(field) for field in ("status", "provider", "prompt", "id", "url", "error")):
+        return None
+    return candidate
+
+
+def _image_output_identity(entry: Mapping[str, Any]) -> str:
+    image_id = _clean_text(entry.get("id"))
+    if image_id:
+        return f"id:{image_id.lower()}"
+    url = _clean_text(entry.get("url"))
+    if url:
+        return f"url:{url.lower()}"
+    status = _clean_text(entry.get("status")).lower()
+    provider = _clean_text(entry.get("provider")).lower()
+    prompt = _clean_text(entry.get("prompt")).lower()
+    return f"fallback:{status}|{provider}|{prompt}"
+
+
+def merge_image_outputs(left: List[Any], right: List[Any]) -> List[Dict[str, Any]]:
+    """Reducer for image outputs with deterministic dedupe and base64 stripping."""
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in list(left or []) + list(right or []):
+        if not isinstance(item, Mapping):
+            continue
+        sanitized = _sanitize_image_output_entry(item)
+        if sanitized is None:
+            continue
+        identity = _image_output_identity(sanitized)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(sanitized)
+    return merged
+
+
+def merge_nested_dict_skip_none(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge nested dicts without wiping existing values via None updates."""
+    merged = dict(left or {})
+    for key, value in dict(right or {}).items():
+        if value is None:
+            continue
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = merge_nested_dict_skip_none(dict(existing), dict(value))
+            continue
+        merged[key] = value
+    return merged
+
+
+def merge_retry_counts(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, int]:
+    """Reducer for retry count dictionaries using per-key max semantics."""
+    merged: Dict[str, int] = {}
+    all_keys = set(dict(left or {}).keys()) | set(dict(right or {}).keys())
+    for key in all_keys:
+        left_value = _safe_non_negative_int(dict(left or {}).get(key))
+        right_value = _safe_non_negative_int(dict(right or {}).get(key))
+        if left_value is None and right_value is None:
+            continue
+        if left_value is None:
+            merged[str(key)] = right_value or 0
+        elif right_value is None:
+            merged[str(key)] = left_value
+        else:
+            merged[str(key)] = max(left_value, right_value)
+    return merged
+
+
+def _sanitize_progress_metadata(metadata: Any) -> Dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        return {}
+    sanitized: Dict[str, Any] = {}
+    for key, value in metadata.items():
+        meta_key = _clean_text(str(key))
+        if not meta_key:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            sanitized[meta_key] = value
+            continue
+        if isinstance(value, (str, int, float)):
+            sanitized[meta_key] = value
+    return sanitized
+
+
+def merge_progress_events(left: List[Any], right: List[Any]) -> List[Dict[str, Any]]:
+    """Reducer for progress events preserving stable order and deduping duplicates."""
+    merged: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    for item in list(left or []) + list(right or []):
+        if not isinstance(item, Mapping):
+            continue
+        node_name = _clean_text(item.get("node_name"))
+        status = _clean_text(item.get("status")).lower()
+        message = _clean_text(item.get("message"))
+        timestamp = _clean_text(item.get("timestamp"))
+        if not node_name or not status:
+            continue
+        dedupe_key = (timestamp, node_name, status, message)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged.append(
+            {
+                "node_name": node_name,
+                "status": status,
+                "message": message,
+                "timestamp": timestamp,
+                "safe_metadata": _sanitize_progress_metadata(item.get("safe_metadata")),
+            }
+        )
+    return merged
+
+
+def _normalize_ui_status(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in _UI_STATUS_PRECEDENCE:
+        return normalized
+    return ""
+
+
+def merge_ui_node_statuses(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, str]:
+    """Reducer for ui node statuses using deterministic precedence."""
+    merged: Dict[str, str] = {}
+    base = dict(left or {})
+    incoming = dict(right or {})
+
+    for key, value in base.items():
+        status = _normalize_ui_status(value)
+        if not status:
+            continue
+        merged[str(key)] = status
+
+    for key, value in incoming.items():
+        node = _clean_text(str(key))
+        if not node:
+            continue
+        incoming_status = _normalize_ui_status(value)
+        if not incoming_status:
+            continue
+        existing = merged.get(node, "")
+        if not existing:
+            merged[node] = incoming_status
+            continue
+        if _UI_STATUS_PRECEDENCE[incoming_status] >= _UI_STATUS_PRECEDENCE[existing]:
+            merged[node] = incoming_status
     return merged
 
 
@@ -291,17 +520,17 @@ class WorkflowState(TypedDict, total=False):
     clarification_needed: bool
     clarification_message: Any
     research_data: dict[str, Any]
-    sources: list[dict[str, Any]]
+    sources: Annotated[list[dict[str, Any]], merge_source_entries]
     content_brief: dict[str, dict[str, Any]]
     content_drafts: Annotated[dict[str, dict[str, Any]], merge_content_drafts]
     draft_status: Annotated[dict[str, str], merge_draft_status]
     best_drafts: dict[str, Any]
     attempt_history: dict[str, list[dict[str, Any]]]
     retry_feedback: dict[str, list[str]]
-    retry_counts: dict[str, int]
-    quality_scores: dict[str, Any]
-    image_prompts: list[str]
-    image_outputs: list[dict[str, Any]]
+    retry_counts: Annotated[dict[str, int], merge_retry_counts]
+    quality_scores: Annotated[dict[str, Any], merge_nested_dict_skip_none]
+    image_prompts: Annotated[list[str], merge_unique_text_list]
+    image_outputs: Annotated[list[dict[str, Any]], merge_image_outputs]
     tool_outputs: dict[str, Any]
     errors: Annotated[list[dict[str, Any]], merge_error_entries]
     final_response: str
@@ -316,6 +545,8 @@ class WorkflowState(TypedDict, total=False):
     retry_target: str
     status_messages: Annotated[list[str], merge_unique_text_list]
     warnings: Annotated[list[str], merge_unique_text_list]
+    progress_events: Annotated[list[dict[str, Any]], merge_progress_events]
+    ui_node_statuses: Annotated[dict[str, str], merge_ui_node_statuses]
     prompt_injection_detected: bool
     prompt_injection_signals: list[str]
     sanitized_user_query: str
