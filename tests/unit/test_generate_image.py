@@ -116,6 +116,24 @@ def test_missing_api_key_fails_safely(monkeypatch) -> None:
     assert result.error["code"] == "configuration_error"
 
 
+def test_live_calls_disabled_fails_safely_without_building_client(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+    client_built = {"value": False}
+
+    def _fake_builder(api_key: str):
+        client_built["value"] = True
+        raise AssertionError("Client should not be built when live calls are disabled.")
+
+    monkeypatch.setattr(generate_image_module, "_build_openai_client", _fake_builder)
+
+    result = generate_image_module.generate_image(prompt="A watercolor landscape.")
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+    assert client_built["value"] is False
+
+
 def test_prompt_safety_guard_is_applied(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     client_built = {"value": False}

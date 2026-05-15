@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from urllib import request
 from urllib.error import HTTPError, URLError
 
+from contentblitz.config import live_provider_calls_enabled
 from contentblitz.tools.provider_types import SearchResult, SearchWebResult
 
 _PROVIDER = "perplexity"
@@ -144,6 +145,14 @@ def _extract_citation_urls(payload: Mapping[str, Any]) -> List[str]:
 
 
 def search_perplexity(query: str, *, max_results: int = 5) -> SearchWebResult:
+    if not live_provider_calls_enabled():
+        return _degraded_result(
+            query=query,
+            code="live_calls_disabled",
+            message="Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+            recoverable=False,
+        )
+
     api_key = str(os.getenv("PERPLEXITY_API_KEY", "")).strip()
     if not api_key:
         return _degraded_result(

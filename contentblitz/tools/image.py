@@ -13,6 +13,8 @@ def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
 
     This adapter delegates to the typed `contentblitz.tools.generate_image`
     implementation and converts to the historical payload shape.
+    Live-call gating (`CONTENTBLITZ_ENABLE_LIVE_CALLS`) is enforced in
+    the delegated core tool.
     """
     result = _core_generate_image(
         prompt=prompt,

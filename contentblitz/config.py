@@ -59,6 +59,26 @@ INJECTION_GUARD = {
     ],
 }
 
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+
+
+def _read_bool_env(var_name: str, *, default: bool) -> bool:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    token = str(raw).strip().lower()
+    if token in _TRUE_ENV_VALUES:
+        return True
+    if token in _FALSE_ENV_VALUES:
+        return False
+    return default
+
+
+def live_provider_calls_enabled() -> bool:
+    """Return whether live provider API calls are enabled."""
+    return _read_bool_env("CONTENTBLITZ_ENABLE_LIVE_CALLS", default=True)
+
 
 def validate_retry_policy_keys(retry_counts: Mapping[str, int]) -> bool:
     """Return True when retry policy keys match state retry count keys exactly."""

@@ -83,3 +83,22 @@ def test_legacy_image_adapter_remains_compatible(monkeypatch) -> None:
     assert isinstance(legacy["images"], list)
     assert len(legacy["images"]) == 1
     assert legacy["images"][0]["url"] == "https://img.example/legacy.png"
+
+
+def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+
+    client_built = {"value": False}
+
+    def _fake_builder(api_key: str):
+        client_built["value"] = True
+        raise AssertionError("Image client should not be built when live calls are disabled.")
+
+    monkeypatch.setattr(generate_image_module, "_build_openai_client", _fake_builder)
+
+    result = generate_image_module.generate_image(prompt="Disabled-live-call contract case.")
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+    assert client_built["value"] is False

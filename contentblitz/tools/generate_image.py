@@ -15,7 +15,7 @@ from openai import (
     RateLimitError,
 )
 
-from contentblitz.config import INJECTION_GUARD
+from contentblitz.config import INJECTION_GUARD, live_provider_calls_enabled
 
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "dall-e-3"
@@ -263,6 +263,18 @@ def generate_image(
     blocked = _validate_prompt(safe_prompt)
     if blocked is not None:
         return _degraded_result(prompt=safe_prompt, model=chosen_model, error=blocked)
+
+    if not live_provider_calls_enabled():
+        return _degraded_result(
+            prompt=safe_prompt,
+            model=chosen_model,
+            error={
+                "code": "live_calls_disabled",
+                "message": "Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+                "provider": _PROVIDER,
+                "recoverable": False,
+            },
+        )
 
     api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
     if not api_key:

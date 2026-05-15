@@ -15,7 +15,7 @@ from openai import (
     RateLimitError,
 )
 
-from contentblitz.config import INJECTION_GUARD, RETRY_POLICY
+from contentblitz.config import INJECTION_GUARD, RETRY_POLICY, live_provider_calls_enabled
 
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "gpt-4o"
@@ -268,6 +268,17 @@ def generate_text(
     blocked_error = _validate_prompt(safe_prompt)
     if blocked_error is not None:
         return _degraded_result(model=model or _PRIMARY_MODEL, error=blocked_error)
+
+    if not live_provider_calls_enabled():
+        return _degraded_result(
+            model=model or _PRIMARY_MODEL,
+            error={
+                "code": "live_calls_disabled",
+                "message": "Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+                "provider": _PROVIDER,
+                "recoverable": False,
+            },
+        )
 
     api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
     if not api_key:
