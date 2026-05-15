@@ -60,7 +60,7 @@ def test_generate_image_contract_shape(monkeypatch) -> None:
     assert call["model"] == "dall-e-3"
     assert call["prompt"] == "A clean futuristic dashboard concept."
     assert call["size"] == "1024x1024"
-    assert call["response_format"] == "url"
+    assert "response_format" not in call
 
 
 def test_legacy_image_adapter_remains_compatible(monkeypatch) -> None:
@@ -102,3 +102,21 @@ def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
     assert result.error is not None
     assert result.error["code"] == "live_calls_disabled"
     assert client_built["value"] is False
+
+
+def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _mock_success_client(
+        monkeypatch,
+        url="asset_123abc",
+    )
+
+    legacy = legacy_image_module.generate_image(
+        prompt="Legacy adapter non-url image ref.",
+        style="default",
+    )
+    assert legacy["degraded"] is False
+    assert isinstance(legacy["images"], list)
+    assert len(legacy["images"]) == 1
+    assert legacy["images"][0]["id"] == "asset_123abc"
+    assert "url" not in legacy["images"][0]
