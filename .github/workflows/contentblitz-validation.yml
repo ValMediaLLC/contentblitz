@@ -1,0 +1,39 @@
+name: ContentBlitz Validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit
+
+      - name: Phase 3 validation
+        run: python scripts/validate_phase3.py
+
+      - name: Unit + integration tests
+        run: |
+          pytest tests/unit tests/integration \
+            --cov=contentblitz \
+            --cov-report=term-missing \
+            --cov-fail-under=80
+
+      - name: Security audit
+        run: pip-audit
+
+      - name: Secret scan
+        uses: trufflesecurity/trufflehog@main

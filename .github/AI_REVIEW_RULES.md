@@ -1,0 +1,9 @@
+- Do not mutate state outside ownership rules
+- retry_counts only modified by retry_router
+- tools must remain stateless
+- no routing function may return None
+- export_node must not mutate drafts
+- clarification_node must not mutate drafts
+- no real API calls in unit/integration tests
+- no secrets in code/tests/docs
+- no base64 image data in state
