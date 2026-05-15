@@ -2,7 +2,7 @@
 
 ## Scope
 
-Cost controls are implemented with agent-owned counters and deterministic guard logic.
+Cost controls are implemented with agent-owned counters, deterministic guard logic, and Phase 3 UI-safe visibility.
 
 Core module:
 
@@ -18,6 +18,8 @@ Primary agent integrations:
 - `image_agent.py`
 - `retry_router.py`
 - `output_assembler.py` (budget notice rendering)
+- `contentblitz/ui/rendering.py` (safe usage summary derivation)
+- `frontend/components/result_view.py` (usage display)
 
 ## Counters
 
@@ -66,6 +68,19 @@ Session caps/thresholds:
 - Retry router enforces per-agent retry policy and total session retry cap
 - Retry fan-out is reduced or stopped when caps are reached
 
+## Phase 3 UI Visibility
+
+UI usage summary derives safe counters from `cost_controls` and `usage_metrics` when available.
+
+Budget visibility states:
+
+- `normal`
+- `degraded`
+- `limited`
+- `budget_exceeded`
+
+Displayed values remain aggregate-only and do not expose provider billing payloads.
+
 ## Ownership Rules
 
 - Tools are stateless and do not update counters.
@@ -74,7 +89,7 @@ Session caps/thresholds:
 
 ## Known Limitation
 
-Parallel fan-out merges can undercount some counters in specific multimodal paths due to last-write merge behavior in reducer updates. This is tracked as a known limitation and does not change non-live test determinism.
+Parallel fan-out merge semantics use deterministic reconciliation, but additive interpretation across concurrent branch updates can still differ from serialized single-branch accounting in edge cases.
 
 ## Security Rules
 

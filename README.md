@@ -1,59 +1,27 @@
 # ContentBlitz
 
-ContentBlitz is a LangGraph-based multi-agent content orchestration system with Phase 2 provider integrations for text, web research, and image generation.
+ContentBlitz is a LangGraph-based multi-agent content orchestration system with a Phase 3 Streamlit UI, export pipeline, persistence/restore flow, and deterministic non-live validation.
 
-## Current State
+## Current Implementation
 
-- 12-node workflow is implemented and active.
-- Provider-backed tools are implemented for:
-  - OpenAI text generation
-  - SERP web search with Perplexity fallback support
-  - OpenAI DALL-E image generation with model fallback
-- Research caching and cost controls are integrated.
-- Unit and integration tests are deterministic and non-live by default.
-
-## Phase 2 Integrations
-
-- `contentblitz/tools/generate_text.py`
-  - Primary: `gpt-4o`
-  - Fallback: `gpt-4o-mini`
-  - Retries: `RETRY_POLICY[agent_key] + 1` attempts per model
-- `contentblitz/tools/search_web.py`
-  - Providers: `serp`, `perplexity`, `auto`
-  - `auto` tries SERP first, then Perplexity when SERP is degraded/unusable
-  - Normalized result schema via `SearchWebResult`
-- `contentblitz/tools/generate_image.py`
-  - Primary: `dall-e-3`
-  - Fallback: `dall-e-2`
-  - Returns URL or provider file reference only (no base64 payloads)
-
-## Cache and Cost Controls
-
-- Research cache key format:
-  - `research:{sha256_normalized_query}:{depth}`
-- Default cache backend:
-  - in-memory, process-local
-- Default cache TTL:
-  - 1800 seconds
-- Optional persistent cache prototype:
-  - Set `CONTENTBLITZ_CACHE_BACKEND=sqlite` to enable local SQLite cache
-  - Set `CONTENTBLITZ_CACHE_SQLITE_PATH` to choose the local DB path
-  - If cache backend env vars are not set, `in_memory` remains the default
-- Cost control counters:
-  - `tokens_used_this_session`
-  - `search_queries_used_this_session`
-  - `image_generations_used_this_session`
-  - `total_retries_used_this_session`
-  - `budget_exceeded`
-
-## Security Baseline
-
-- `.env` is never committed.
-- API keys are read only from environment variables.
-- Tools are stateless.
-- State never stores secrets.
-- Provider errors are normalized.
-- Base64 image data is never stored in state.
+- 12-node authoritative workflow graph is active.
+- Provider-backed tools are integrated for:
+  - OpenAI text generation (`gpt-4o` with `gpt-4o-mini` fallback)
+  - SERP search with Perplexity fallback
+  - OpenAI image generation (`dall-e-3` with `dall-e-2` fallback)
+- Phase 3 UI shell is implemented:
+  - Run Workflow page
+  - History/restore page
+  - About page
+- Export formats implemented:
+  - Markdown, HTML, PDF, DOCX
+- Guardrails implemented:
+  - prompt-injection detection/sanitization
+  - output sanitization
+  - citation/source validation
+  - export payload validation
+- Session persistence and restore are implemented with safe serialization.
+- Unit/integration tests are deterministic and non-live by default.
 
 ## Setup
 
@@ -77,7 +45,7 @@ pip install -r requirements.txt
 
 ## Environment Variables
 
-Create `.env` for optional live checks:
+Core provider and optional live-test flags:
 
 ```env
 OPENAI_API_KEY=
@@ -85,17 +53,41 @@ SERP_API_KEY=
 PERPLEXITY_API_KEY=
 CONTENTBLITZ_RUN_LIVE_TESTS=0
 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
+```
 
-# Optional cache backend configuration
-# If unset, ContentBlitz uses in-memory cache by default.
+Cache configuration (optional; default backend remains in-memory if unset):
+
+```env
 CONTENTBLITZ_CACHE_BACKEND=sqlite
 CONTENTBLITZ_CACHE_TTL_SECONDS=1800
 CONTENTBLITZ_CACHE_SQLITE_PATH=.tmp/contentblitz_cache.sqlite3
 ```
 
+UI/export/persistence directory overrides (optional):
+
+```env
+CONTENTBLITZ_EXPORT_DIR=exports
+CONTENTBLITZ_SESSION_DIR=.contentblitz_sessions
+```
+
+## Security Baseline
+
+- `.env` is never committed.
+- API keys are read only from environment variables.
+- Tools are stateless.
+- State never stores secrets.
+- Provider errors are normalized.
+- Base64 image data is never stored in workflow state or persisted runs.
+
 ## Validation and Testing
 
-Safe Phase 2 validation (non-live):
+Phase 3 validation (non-live, deterministic):
+
+```bash
+python scripts/validate_phase3.py --dry-run
+```
+
+Phase 2 validation (non-live, includes live-test skip gating checks):
 
 ```bash
 python scripts/validate_phase2.py
@@ -107,7 +99,7 @@ Unit and integration suite:
 pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
 ```
 
-Live tests should skip when flags are off:
+Live tests are optional and skip by default:
 
 ```bash
 pytest tests/live -rs
@@ -117,16 +109,25 @@ Optional live smoke:
 
 ```bash
 python scripts/dev/smoke_phase2_live.py --dry-run
-CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py -s -rs
-CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_search_web.py -s -rs
-CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 pytest tests/live/test_live_generate_image.py -s -rs
 ```
 
-Note: live smoke tests are optional and environment/network dependent. This README does not claim successful live provider execution.
+## Frontend Run Command
+
+```bash
+streamlit run frontend/app.py
+```
+
+UI startup does not require API keys and does not execute provider calls automatically.
 
 ## Key Docs
 
 - `docs/ContentBlitz_Execution_Spec.md`
+- `docs/PHASE3_UI_ARCHITECTURE.md`
+- `docs/EXPORT_SYSTEM.md`
+- `docs/VALIDATION_FRAMEWORK.md`
+- `docs/GUARDRAILS_AND_SANITIZATION.md`
+- `docs/SESSION_PERSISTENCE.md`
+- `docs/REDUCER_MERGE_STABILITY.md`
 - `docs/PHASE2_INTEGRATIONS.md`
 - `docs/PROVIDER_CONTRACTS.md`
 - `docs/CACHE_ARCHITECTURE.md`

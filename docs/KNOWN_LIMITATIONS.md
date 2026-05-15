@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document tracks known implementation and operational limits in the current Phase 2 codebase.
+This document tracks known implementation and operational limits in the current Phase 3 codebase.
 
 ## Provider/Network Variability
 
@@ -14,28 +14,29 @@ Implications:
 - degraded provider responses can appear during transient outages
 - CI-safe coverage focuses on mocked deterministic tests
 
-## Cache Backend Is Process-Local
+## Lightweight Guardrails (Not Full Moderation)
 
-Research caching currently uses an in-memory process store.
+Prompt-injection detection, output sanitization, citation validation, and export validation are deterministic and rule-based.
 
 Implications:
 
-- cache is not shared across process restarts
-- no persistent datastore is used
-- horizontal scaling cache coherence is not implemented
+- protection is intentionally lightweight and explainable
+- advanced adversarial safety coverage is out of scope
+- false positives/false negatives are still possible in edge cases
 
-## Counter Merge Edge Case in Parallel Fan-Out
+## Cache Backend Defaults and Operational Scope
 
-Cost control updates use dictionary merge reducers for parallel node writes.
+Default cache is in-memory.
 
-Known edge case:
+Implications:
 
-- in some multimodal fan-out flows, last-write behavior can undercount a subset of counters
-- tests validate deterministic behavior, but this remains a known accounting limitation
+- cache resets on process restart unless SQLite backend is enabled
+- SQLite backend is local-only and not intended as distributed cache infrastructure
+- no distributed cache invalidation is implemented
 
 ## Query Classification Bias
 
-Deterministic fallback classification remains conservative.
+Deterministic classification/routing remains conservative.
 
 Known behavior:
 
@@ -49,15 +50,15 @@ When providers return limited/unusable snippets:
 - summaries may fall back to deterministic synthesis language
 - directional quality can be lower than fully cited SERP-backed paths
 
-## No Persistent Storage Layer
+## Local Persistence Is File-Based
 
-Workflow state and cache are in-memory only.
+Run persistence uses local JSON files (`.contentblitz_sessions` by default).
 
-Not implemented:
+Implications:
 
-- database persistence
-- durable artifact storage
-- distributed cache invalidation
+- not a multi-user database-backed persistence layer
+- intended for local/developer usage in current scope
+- restore is read-only (no workflow rerun), but underlying exported files can be missing locally
 
 ## Optional Live Tests Are Not CI Gate
 
@@ -67,6 +68,25 @@ Implications:
 
 - live smoke checks are useful for manual operational validation
 - release safety is enforced primarily through unit/integration contract suites
+
+## Export Validation Can Mark Individual Formats Failed
+
+Export validation is format-specific and non-blocking per format.
+
+Implications:
+
+- one failed format does not necessarily block other requested formats
+- workflows can still complete with partial export success
+- failed export statuses are expected behavior in certain malformed/sanitized payload scenarios
+
+## Synced-Folder File Operation Nuances
+
+On some Windows/OneDrive setups, atomic file replace/delete behavior can be inconsistent for temporary files.
+
+Implications:
+
+- local persistence and cleanup operations may occasionally require retries
+- validator logic includes safe fallback handling to avoid false negative readiness results
 
 ## LangGraph Warning
 

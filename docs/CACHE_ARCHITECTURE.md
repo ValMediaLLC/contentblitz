@@ -2,17 +2,29 @@
 
 ## Scope
 
-Phase 2 research caching is implemented in:
+Research caching is implemented in:
 
 - `contentblitz/tools/cache.py`
+- `contentblitz/tools/cache_backends.py`
 - `contentblitz/core/cache_keys.py`
 - `contentblitz/agents/research_agent.py`
 
 ## Cache Backend
 
-- Default backend: in-memory process store
-- Storage location: module-level `_CACHE_STORE` in `tools/cache.py`
-- Persistence: process-local only (not shared across process restarts)
+- Default backend: `in_memory`
+- Optional backend: `sqlite` (local file-backed prototype)
+- Effective backend is resolved safely with fallback to `in_memory` on invalid config/path errors
+
+Environment variables:
+
+- `CONTENTBLITZ_CACHE_BACKEND=in_memory|sqlite`
+- `CONTENTBLITZ_CACHE_TTL_SECONDS=1800`
+- `CONTENTBLITZ_CACHE_SQLITE_PATH=.tmp/contentblitz_cache.sqlite3`
+
+Notes:
+
+- If backend vars are unset, `in_memory` is used.
+- SQLite path is constrained to project root.
 
 ## Cache Key Rule
 
@@ -32,7 +44,8 @@ Key generation rules:
 ## TTL Behavior
 
 - Default TTL: `1800` seconds
-- TTL is read from `state["cache_metadata"]["ttl_seconds"]` when writing
+- TTL reads from state metadata and env-backed defaults
+- `ttl_seconds=0` means no expiration
 - Expired entries are treated as misses and removed on read
 
 ## Read/Write Flow
@@ -82,6 +95,8 @@ Important:
 - Cache can be disabled via `state["cache_metadata"]["enabled"] = False`
 - `clear_cache()` exists for test isolation and manual validation
 - Values must be JSON-serializable to be cached
+- Cache backend functions remain stateless relative to workflow state
+- State updates are applied by agents, not by cache backend objects
 
 ## Security Rules
 
