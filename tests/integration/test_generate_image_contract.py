@@ -103,7 +103,6 @@ def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
     assert result.error["code"] == "live_calls_disabled"
     assert client_built["value"] is False
 
-
 def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     _mock_success_client(
