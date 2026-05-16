@@ -15,3 +15,10 @@ Required validation:
 - python scripts/validate_phase2.py
 - python scripts/validate_phase3.py
 - pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
+
+Ruff validation:
+- Follow pyproject.toml Ruff configuration.
+- Do not run broad auto-formatting during feature/bugfix commits.
+- Only modify files required for the requested change.
+- If formatting is needed, limit it to touched files.
+- Do not apply repo-wide ruff --fix or ruff format unless explicitly asked.
