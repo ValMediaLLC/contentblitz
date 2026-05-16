@@ -6,14 +6,8 @@ import streamlit as st
 
 from contentblitz.ui.rendering import build_render_payload
 from frontend.components.result_view import (
+    render_collapsible_output_sections,
     render_degraded_and_error_state,
-    render_export_status,
-    render_final_response,
-    render_partial_outputs,
-    render_result_header,
-    render_sources,
-    render_status_messages,
-    render_usage_summary,
 )
 from frontend.session import (
     clear_persistence_messages,
@@ -95,20 +89,33 @@ def render() -> None:
                 state=selected_record,
                 node_statuses=node_statuses,
             )
-            render_status_messages(
-                selected_record.get("status_messages", [])
-                if isinstance(selected_record.get("status_messages", []), list)
+            render_degraded_and_error_state(render_payload)
+            progress_events = (
+                list(selected_record.get("ui_progress_events", []))
+                if isinstance(selected_record.get("ui_progress_events", []), list)
                 else []
             )
-            render_degraded_and_error_state(render_payload)
-            render_usage_summary(render_payload)
-            render_partial_outputs(render_payload)
-            render_result_header(
-                {"ui_workflow_status": render_payload.get("workflow_status", "")}
+            render_collapsible_output_sections(
+                render_payload=render_payload,
+                status_messages=(
+                    selected_record.get("status_messages", [])
+                    if isinstance(selected_record.get("status_messages", []), list)
+                    else []
+                ),
+                execution_status=str(
+                    render_payload.get("workflow_status", "unknown")
+                ).strip()
+                or "unknown",
+                indicator_result={
+                    "ui_workflow_status": render_payload.get("workflow_status", ""),
+                    "workflow_status": render_payload.get("workflow_status", ""),
+                    "routing_decision": selected_record.get("routing_decision", ""),
+                },
+                node_statuses=node_statuses,
+                progress_events=progress_events,
+                raw_state=selected_record,
+                raw_submission=selected_record.get("ui_selected_options", {}),
             )
-            render_final_response(render_payload)
-            render_sources({"sources": render_payload.get("sources", [])})
-            render_export_status(render_payload)
 
     st.divider()
     st.subheader("Current Browser Session Timeline")

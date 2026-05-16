@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List
 
 from frontend.pages import history as history_page
 
@@ -142,27 +142,22 @@ def test_history_page_renders_usage_summary_for_loaded_run(monkeypatch) -> None:
         lambda *, state, node_statuses: render_payload,
     )
 
-    monkeypatch.setattr(history_page, "render_status_messages", lambda _messages: None)
     monkeypatch.setattr(
         history_page, "render_degraded_and_error_state", lambda _payload: None
     )
-    monkeypatch.setattr(history_page, "render_partial_outputs", lambda _payload: None)
-    monkeypatch.setattr(history_page, "render_result_header", lambda _result: None)
-    monkeypatch.setattr(history_page, "render_final_response", lambda _result: None)
-    monkeypatch.setattr(history_page, "render_sources", lambda _result: None)
-    monkeypatch.setattr(history_page, "render_export_status", lambda _payload: None)
-
-    captured: Dict[str, Any] = {}
-
-    def _capture_usage(payload: Mapping[str, Any]) -> None:
-        captured.update(payload)
-
-    monkeypatch.setattr(history_page, "render_usage_summary", _capture_usage)
+    section_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(
+        history_page,
+        "render_collapsible_output_sections",
+        lambda **kwargs: section_calls.append(dict(kwargs)),
+    )
 
     history_page.render()
 
-    assert "usage_summary" in captured
-    usage_summary = captured["usage_summary"]
+    assert len(section_calls) == 1
+    payload = section_calls[0]["render_payload"]
+    assert "usage_summary" in payload
+    usage_summary = payload["usage_summary"]
     assert isinstance(usage_summary, dict)
     assert usage_summary["search_queries"] == 3
     assert usage_summary["estimated_tokens_out"] == 3000
@@ -217,24 +212,19 @@ def test_history_page_renders_selected_run_output_when_partial_outputs_are_empty
         lambda *, state, node_statuses: dict(render_payload),
     )
 
-    monkeypatch.setattr(history_page, "render_status_messages", lambda _messages: None)
     monkeypatch.setattr(
         history_page, "render_degraded_and_error_state", lambda _payload: None
     )
-    monkeypatch.setattr(history_page, "render_usage_summary", lambda _payload: None)
-    monkeypatch.setattr(history_page, "render_partial_outputs", lambda _payload: None)
-    monkeypatch.setattr(history_page, "render_result_header", lambda _result: None)
-    monkeypatch.setattr(history_page, "render_sources", lambda _result: None)
-    monkeypatch.setattr(history_page, "render_export_status", lambda _payload: None)
-
-    captured: dict[str, Any] = {}
+    section_calls: List[Dict[str, Any]] = []
     monkeypatch.setattr(
         history_page,
-        "render_final_response",
-        lambda payload: captured.update(dict(payload)),
+        "render_collapsible_output_sections",
+        lambda **kwargs: section_calls.append(dict(kwargs)),
     )
 
     history_page.render()
 
-    assert captured.get("final_response", "").strip()
-    assert captured.get("partial_output_mode") == "none"
+    assert len(section_calls) == 1
+    payload = section_calls[0]["render_payload"]
+    assert str(payload.get("final_response", "")).strip()
+    assert payload.get("partial_output_mode") == "none"

@@ -8,7 +8,13 @@ from typing import Any, Mapping
 
 import streamlit as st
 
+from contentblitz.ui.error_display import redact_sensitive_text
 from contentblitz.workflow.routing import AUTHORITATIVE_NODES
+
+_DEBUG_TRACEBACK_MARKERS = (
+    "traceback (most recent call last):",
+    "stack trace",
+)
 
 
 def _safe_text(value: Any) -> str:
@@ -70,6 +76,44 @@ def _strip_wrapping_markdown_fence(body: str) -> str:
     if opening.startswith("```") and closing == "```":
         return "\n".join(lines[1:-1]).strip()
     return stripped
+
+
+def _contains_stack_trace(text: str) -> bool:
+    lowered = _safe_text(text).lower()
+    if any(marker in lowered for marker in _DEBUG_TRACEBACK_MARKERS):
+        return True
+    if '  file "' in lowered and " line " in lowered:
+        return True
+    return False
+
+
+def _sanitize_debug_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _sanitize_debug_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_debug_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_debug_value(item) for item in value]
+    if isinstance(value, (str, bytes)):
+        text = (
+            value.decode("utf-8", errors="replace")
+            if isinstance(value, bytes)
+            else _safe_text(value)
+        )
+        safe_text = redact_sensitive_text(text)
+        if _contains_stack_trace(safe_text):
+            return "Internal details were removed."
+        return safe_text
+    return value
+
+
+def _contains_base64_like(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    lowered = value.strip().lower()
+    if not lowered:
+        return False
+    return lowered.startswith("data:image/") or "base64" in lowered
 
 
 def _render_section(title: str, body: str) -> None:
@@ -414,39 +458,209 @@ def render_partial_outputs(render_payload: Mapping[str, Any]) -> None:
 
     image_outputs = render_payload.get("image_outputs", [])
     if isinstance(image_outputs, list) and image_outputs:
-        st.markdown("#### Image Outputs")
-        for item in image_outputs:
-            if not isinstance(item, Mapping):
-                continue
-            url = item.get("url")
-            local_path = item.get("local_path")
-            status = _status_label(str(item.get("status", "completed")))
-            provider = str(item.get("provider", "")).strip()
-            if isinstance(url, str) and url.strip():
-                display_url = url.strip()
-                st.markdown(f"- `{status}` | `{provider or 'unknown'}` | {display_url}")
-                st.image(display_url, caption=f"{provider or 'unknown'} ({status})")
-            elif isinstance(local_path, str) and local_path.strip():
-                display_local_path = local_path.strip()
-                st.markdown(
-                    f"- `{status}` | `{provider or 'unknown'}` | {display_local_path}"
-                )
-                st.image(
-                    display_local_path,
-                    caption=f"{provider or 'unknown'} ({status})",
-                )
+        _render_image_outputs(image_outputs)
+
+
+def _render_image_outputs(image_outputs: list[Mapping[str, Any]]) -> None:
+    st.markdown("#### Image Outputs")
+    for item in image_outputs:
+        if not isinstance(item, Mapping):
+            continue
+        url = item.get("url")
+        local_path = item.get("local_path")
+        if _contains_base64_like(url) or _contains_base64_like(local_path):
+            st.warning("A non-renderable image payload was hidden for safety.")
+            continue
+        status = _status_label(str(item.get("status", "completed")))
+        provider = _safe_text(item.get("provider", "")) or "unknown"
+        if status == "failed":
+            error_payload = item.get("error")
+            if isinstance(error_payload, Mapping):
+                safe_message = _safe_text(error_payload.get("message", ""))
+                if safe_message:
+                    st.warning(safe_message)
+                    continue
+            st.warning("Image generation encountered a recoverable issue.")
+            continue
+        if isinstance(url, str) and url.strip():
+            display_url = url.strip()
+            st.markdown(f"- `{status}` | `{provider}` | {display_url}")
+            st.image(display_url, caption=f"{provider} ({status})")
+        elif isinstance(local_path, str) and local_path.strip():
+            display_local_path = local_path.strip()
+            st.markdown(f"- `{status}` | `{provider}` | {display_local_path}")
+            st.image(
+                display_local_path,
+                caption=f"{provider} ({status})",
+            )
+        else:
+            identifier = _safe_text(item.get("id", "")) or "unavailable"
+            renderable = bool(item.get("renderable", False))
+            if renderable:
+                st.markdown(f"- `{status}` | `{provider}` | {identifier}")
             else:
-                identifier = _safe_text(item.get("id", "")) or "unavailable"
-                renderable = bool(item.get("renderable", False))
-                if renderable:
-                    st.markdown(
-                        f"- `{status}` | `{provider or 'unknown'}` | {identifier}"
-                    )
-                else:
-                    st.markdown(
-                        f"- `{status}` | `{provider or 'unknown'}` | {identifier} "
-                        "(non-renderable asset reference)"
-                    )
+                st.markdown(
+                    f"- `{status}` | `{provider}` | {identifier} "
+                    "(non-renderable asset reference)"
+                )
+
+
+def _render_sources_list(sources: list[Mapping[str, Any]]) -> None:
+    if not sources:
+        return
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, Mapping):
+            continue
+        title = _safe_text(source.get("title", "")) or f"Source {index}"
+        url = _safe_text(source.get("url", ""))
+        snippet = _safe_text(source.get("snippet", ""))
+        provider = _safe_text(source.get("source", ""))
+        published_at = _safe_text(source.get("published_at", ""))
+        metadata_items = [item for item in [provider, published_at] if item]
+        metadata_line = " | ".join(metadata_items)
+        if url:
+            heading = f"{index}. [{title}]({url})"
+        else:
+            heading = f"{index}. {title}"
+        st.markdown(
+            '<div class="cbx-source-card">'
+            f"<div>{heading}</div>"
+            + (
+                f'<div class="cbx-source-meta">{metadata_line}</div>'
+                if metadata_line
+                else ""
+            )
+            + (f'<div class="cbx-source-snippet">{snippet}</div>' if snippet else "")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_debug_panel(
+    *,
+    progress_events: list[Mapping[str, Any]],
+    raw_state: Mapping[str, Any] | None,
+    render_payload: Mapping[str, Any],
+    raw_submission: Mapping[str, Any] | None,
+) -> None:
+    with st.expander("Debug / Advanced", expanded=False):
+        if progress_events:
+            st.markdown("#### Progress Events")
+            for event in progress_events:
+                if not isinstance(event, Mapping):
+                    continue
+                timestamp = _safe_text(event.get("timestamp", ""))
+                node_name = _safe_text(event.get("node_name", ""))
+                status = _status_label(_safe_text(event.get("status", "pending")))
+                message = _safe_text(event.get("message", ""))
+                details = " | ".join(
+                    [item for item in [timestamp, node_name, status, message] if item]
+                )
+                if details:
+                    st.caption(details)
+
+        st.markdown("#### Internal Payloads")
+        if raw_submission is not None:
+            st.caption("Last Submitted Options")
+            st.json(_sanitize_debug_value(raw_submission))
+        if raw_state is not None:
+            st.caption("Raw Workflow State")
+            st.json(_sanitize_debug_value(raw_state))
+        st.caption("Render Payload")
+        st.json(_sanitize_debug_value(render_payload))
+
+
+def render_collapsible_output_sections(
+    *,
+    render_payload: Mapping[str, Any],
+    status_messages: list[str],
+    execution_status: str,
+    indicator_result: Mapping[str, Any] | None,
+    node_statuses: Mapping[str, Any],
+    progress_events: list[Mapping[str, Any]],
+    raw_state: Mapping[str, Any] | None = None,
+    raw_submission: Mapping[str, Any] | None = None,
+) -> None:
+    rendered = _build_rendered_output_sections(render_payload)
+    raw_requested_outputs = []
+    if isinstance(raw_state, Mapping):
+        raw_requested_outputs = raw_state.get("requested_outputs", [])
+    requested_outputs = {
+        _safe_text(item).lower() for item in raw_requested_outputs if _safe_text(item)
+    }
+    has_blog = bool(_safe_text(rendered.blog))
+    has_linkedin = bool(_safe_text(rendered.linkedin))
+    has_research = bool(_safe_text(rendered.research) or rendered.additional)
+    image_prompts = render_payload.get("image_prompts", [])
+    image_outputs = render_payload.get("image_outputs", [])
+    has_images = (
+        bool(image_prompts)
+        or bool(image_outputs)
+        or ("image" in requested_outputs)
+    )
+    sources = render_payload.get("sources", [])
+    export_status = render_payload.get("export_status", {})
+
+    with st.expander("Workflow", expanded=True):
+        render_execution_indicators(
+            execution_status=execution_status,
+            result=indicator_result,
+        )
+        render_node_execution_statuses(node_statuses)
+        render_status_messages(status_messages)
+        render_usage_summary(render_payload)
+        render_result_header(
+            {"ui_workflow_status": render_payload.get("workflow_status", "")}
+        )
+        if rendered.summary:
+            _render_section("Workflow Summary", rendered.summary)
+
+    if has_blog:
+        with st.expander("Blog", expanded=True):
+            st.markdown(_strip_wrapping_markdown_fence(rendered.blog))
+
+    if has_linkedin:
+        with st.expander("LinkedIn", expanded=False):
+            st.markdown(_strip_wrapping_markdown_fence(rendered.linkedin))
+
+    if has_images:
+        with st.expander("Images", expanded=True):
+            if isinstance(image_prompts, list) and image_prompts:
+                prompt_lines = [
+                    f"- {_safe_text(item)}"
+                    for item in image_prompts
+                    if _safe_text(item)
+                ]
+                if prompt_lines:
+                    _render_section("Image Prompts", "\n".join(prompt_lines))
+            if isinstance(image_outputs, list) and image_outputs:
+                _render_image_outputs(image_outputs)
+            elif "image" in requested_outputs:
+                st.info("No image outputs are currently available.")
+
+    if has_research:
+        with st.expander("Research", expanded=False):
+            if rendered.research:
+                st.markdown(_strip_wrapping_markdown_fence(rendered.research))
+            for heading, body in rendered.additional:
+                _render_section(heading, body)
+
+    if isinstance(sources, list) and sources:
+        with st.expander("Sources", expanded=False):
+            _render_sources_list(sources)
+
+    if isinstance(export_status, Mapping) and bool(
+        export_status.get("requested", False)
+    ):
+        with st.expander("Exports", expanded=False):
+            render_export_status(render_payload)
+
+    _render_debug_panel(
+        progress_events=progress_events,
+        raw_state=raw_state,
+        render_payload=render_payload,
+        raw_submission=raw_submission,
+    )
 
 
 def render_degraded_and_error_state(render_payload: Mapping[str, Any]) -> None:

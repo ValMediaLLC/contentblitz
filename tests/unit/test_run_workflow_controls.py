@@ -369,41 +369,20 @@ def test_node_execution_status_section_is_rendered_once_per_run(monkeypatch) -> 
         run_workflow_page, "get_last_submission", lambda: dict(store["last_submission"])
     )
 
-    render_node_status_calls: List[Dict[str, str]] = []
+    section_render_calls: List[Dict[str, Any]] = []
     monkeypatch.setattr(
         run_workflow_page,
-        "render_node_execution_statuses",
-        lambda node_statuses: render_node_status_calls.append(dict(node_statuses)),
-    )
-    monkeypatch.setattr(
-        run_workflow_page,
-        "render_execution_indicators",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        run_workflow_page, "render_progress_events", lambda _events: None
-    )
-    monkeypatch.setattr(
-        run_workflow_page, "render_status_messages", lambda _messages: None
+        "render_collapsible_output_sections",
+        lambda **kwargs: section_render_calls.append(dict(kwargs)),
     )
     monkeypatch.setattr(
         run_workflow_page, "render_degraded_and_error_state", lambda _payload: None
     )
-    monkeypatch.setattr(
-        run_workflow_page, "render_usage_summary", lambda _payload: None
-    )
-    monkeypatch.setattr(
-        run_workflow_page, "render_partial_outputs", lambda _payload: None
-    )
-    monkeypatch.setattr(run_workflow_page, "render_result_header", lambda _result: None)
-    monkeypatch.setattr(
-        run_workflow_page, "render_final_response", lambda _payload: None
-    )
-    monkeypatch.setattr(run_workflow_page, "render_sources", lambda _result: None)
-    monkeypatch.setattr(
-        run_workflow_page, "render_export_status", lambda _payload: None
-    )
 
     run_workflow_page.render()
 
-    assert len(render_node_status_calls) == 1
+    assert len(section_render_calls) == 1
+    assert (
+        section_render_calls[0]["node_statuses"].get("query_handler_node")
+        == "completed"
+    )

@@ -143,6 +143,27 @@ button[kind="primary"]:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.cbx-source-card {
+  background: var(--cbx-surface);
+  border: 1px solid var(--cbx-border);
+  border-radius: 0.78rem;
+  padding: 0.62rem 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.cbx-source-meta {
+  color: var(--cbx-subtext);
+  font-size: 0.78rem;
+  margin-top: 0.22rem;
+}
+
+.cbx-source-snippet {
+  color: var(--cbx-text);
+  font-size: 0.88rem;
+  margin-top: 0.3rem;
+  line-height: 1.35;
+}
 </style>
 """
 

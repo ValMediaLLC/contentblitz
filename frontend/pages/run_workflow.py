@@ -14,17 +14,8 @@ from contentblitz.ui.status import (
     workflow_requires_clarification,
 )
 from frontend.components.result_view import (
+    render_collapsible_output_sections,
     render_degraded_and_error_state,
-    render_execution_indicators,
-    render_export_status,
-    render_final_response,
-    render_node_execution_statuses,
-    render_partial_outputs,
-    render_progress_events,
-    render_result_header,
-    render_sources,
-    render_status_messages,
-    render_usage_summary,
 )
 from frontend.config import FRONTEND_CONFIG
 from frontend.services.orchestrator_client import stream_workflow_progress
@@ -307,9 +298,6 @@ def render() -> None:
         )
         result_for_indicators = dict(result)
         result_for_indicators["ui_workflow_status"] = indicator_workflow_status
-    render_execution_indicators(
-        execution_status=execution_status, result=result_for_indicators
-    )
     progress_events = get_progress_events()
     node_statuses = get_node_statuses()
     if not node_statuses and progress_events:
@@ -318,15 +306,6 @@ def render() -> None:
         node_statuses = apply_optional_node_skips(
             state=result, node_statuses=node_statuses
         )
-    render_node_execution_statuses(node_statuses)
-    render_progress_events(progress_events)
-    render_status_messages(get_status_messages())
-
-    with st.expander("Last Submitted Options", expanded=False):
-        st.json(get_last_submission())
-        if isinstance(result, dict):
-            st.caption("Orchestrator Returned Outputs")
-            st.json(result.get("requested_outputs", []))
 
     result = get_last_result()
     if not result:
@@ -338,11 +317,15 @@ def render() -> None:
         node_statuses=node_statuses,
     )
     render_degraded_and_error_state(render_payload)
-    render_usage_summary(render_payload)
-    render_partial_outputs(render_payload)
-    render_result_header(
-        {"ui_workflow_status": render_payload.get("workflow_status", "")}
+    render_collapsible_output_sections(
+        render_payload=render_payload,
+        status_messages=get_status_messages(),
+        execution_status=execution_status,
+        indicator_result=result_for_indicators
+        if isinstance(result_for_indicators, dict)
+        else {},
+        node_statuses=node_statuses,
+        progress_events=progress_events,
+        raw_state=result,
+        raw_submission=get_last_submission(),
     )
-    render_final_response(render_payload)
-    render_sources({"sources": render_payload.get("sources", [])})
-    render_export_status(render_payload)
