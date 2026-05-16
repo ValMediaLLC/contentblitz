@@ -102,8 +102,9 @@ def test_base64_is_never_returned(monkeypatch) -> None:
     )
 
     result = generate_image_module.generate_image(prompt="A minimalist icon sheet.")
-    assert result.degraded is True
-    assert result.image_url is None
+    assert result.degraded is False
+    assert isinstance(result.image_url, str)
+    assert result.image_url.startswith("asset_")
     assert "b64" not in str(result)
 
 
@@ -114,6 +115,24 @@ def test_missing_api_key_fails_safely(monkeypatch) -> None:
     assert result.degraded is True
     assert result.error is not None
     assert result.error["code"] == "configuration_error"
+
+
+def test_live_calls_disabled_fails_safely_without_building_client(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+    client_built = {"value": False}
+
+    def _fake_builder(api_key: str):
+        client_built["value"] = True
+        raise AssertionError("Client should not be built when live calls are disabled.")
+
+    monkeypatch.setattr(generate_image_module, "_build_openai_client", _fake_builder)
+
+    result = generate_image_module.generate_image(prompt="A watercolor landscape.")
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+    assert client_built["value"] is False
 
 
 def test_prompt_safety_guard_is_applied(monkeypatch) -> None:
@@ -133,3 +152,40 @@ def test_prompt_safety_guard_is_applied(monkeypatch) -> None:
     assert result.error is not None
     assert result.error["code"] == "prompt_rejected"
     assert client_built["value"] is False
+
+
+def test_model_not_found_falls_back_to_modern_image_model(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class _ModelMissingError(Exception):
+        def __str__(self) -> str:
+            return "The model 'dall-e-3' does not exist."
+
+    images = _install_fake_client(
+        monkeypatch,
+        [
+            _ModelMissingError(),
+            _ModelMissingError(),
+            _response_with_item({"b64_json": "ZXhhbXBsZS1pbWFnZS1ieXRlcw=="}),
+        ],
+    )
+
+    monkeypatch.setattr(
+        generate_image_module,
+        "_normalize_provider_error",
+        lambda exc: {
+            "code": "bad_request",
+            "message": "The image provider rejected the request format.",
+            "provider": "openai",
+            "status_code": 400,
+            "recoverable": False,
+        },
+    )
+
+    result = generate_image_module.generate_image(prompt="A cyberpunk fashion concept.")
+    assert result.degraded is False
+    assert result.model == "gpt-image-1"
+    assert isinstance(result.image_url, str)
+    assert result.image_url.startswith("asset_")
+    called_models = [call["model"] for call in images.calls]
+    assert called_models == ["dall-e-3", "dall-e-2", "gpt-image-1"]

@@ -132,6 +132,21 @@ def test_missing_serp_api_key_fails_safely(monkeypatch) -> None:
     assert result.error["code"] == "configuration_error"
 
 
+def test_live_calls_disabled_fails_safely_without_network(monkeypatch) -> None:
+    monkeypatch.setenv("SERP_API_KEY", "serp-test-key")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("HTTP layer should not be called when live calls are disabled.")
+
+    monkeypatch.setattr(search_web_module, "_http_get_json", _fail_if_called)
+
+    result = search_web_module.search_web("disabled live call query", provider="serp")
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+
+
 def test_malformed_provider_payload_returns_degraded_result(monkeypatch) -> None:
     monkeypatch.setenv("SERP_API_KEY", "serp-test-key")
     monkeypatch.setattr(

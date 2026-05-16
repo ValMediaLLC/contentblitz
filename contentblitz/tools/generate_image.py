@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
@@ -15,11 +16,12 @@ from openai import (
     RateLimitError,
 )
 
-from contentblitz.config import INJECTION_GUARD
+from contentblitz.config import INJECTION_GUARD, live_provider_calls_enabled
 
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "dall-e-3"
 _FALLBACK_MODEL = "dall-e-2"
+_MODERN_IMAGE_MODEL = "gpt-image-1"
 _DEFAULT_SIZE = "1024x1024"
 
 
@@ -56,6 +58,16 @@ def _safe_url_or_ref(value: Any) -> Optional[str]:
     if candidate.startswith(("file-", "img_", "image_", "asset_")):
         return candidate
     return None
+
+
+def _safe_asset_ref_from_b64(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:24]
+    return f"asset_{digest}"
 
 
 def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
@@ -109,6 +121,21 @@ def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
         "status_code": status_value,
         "recoverable": True,
     }
+
+
+def _should_try_modern_image_model(
+    exc: Exception,
+    *,
+    normalized_error: Mapping[str, Any] | None,
+    models_already_scheduled: list[str],
+) -> bool:
+    if _MODERN_IMAGE_MODEL in models_already_scheduled:
+        return False
+    code = _safe_text((normalized_error or {}).get("code")).lower()
+    if code != "bad_request":
+        return False
+    message = _safe_text(str(exc)).lower()
+    return "model" in message and "does not exist" in message
 
 
 def _rejected_prompt_error(reason: str) -> Dict[str, Any]:
@@ -191,7 +218,6 @@ def _call_provider(
         "prompt": prompt,
         "n": 1,
         "size": size,
-        "response_format": "url",
     }
     if quality is not None and str(quality).strip():
         # DALL-E 2 does not support variable quality options beyond standard.
@@ -215,6 +241,8 @@ def _call_provider(
     image_url = _safe_url_or_ref(first_item.get("url"))
     if image_url is None:
         image_url = _safe_url_or_ref(first_item.get("file_id") or first_item.get("id"))
+    if image_url is None:
+        image_url = _safe_asset_ref_from_b64(first_item.get("b64_json"))
 
     revised_prompt = _safe_text(first_item.get("revised_prompt")) or None
 
@@ -224,7 +252,7 @@ def _call_provider(
             model=model,
             error={
                 "code": "provider_payload_unusable",
-                "message": "Image provider returned no URL or file reference.",
+                "message": "Image provider returned no URL, file reference, or image asset.",
                 "provider": _PROVIDER,
                 "recoverable": True,
             },
@@ -264,6 +292,18 @@ def generate_image(
     if blocked is not None:
         return _degraded_result(prompt=safe_prompt, model=chosen_model, error=blocked)
 
+    if not live_provider_calls_enabled():
+        return _degraded_result(
+            prompt=safe_prompt,
+            model=chosen_model,
+            error={
+                "code": "live_calls_disabled",
+                "message": "Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+                "provider": _PROVIDER,
+                "recoverable": False,
+            },
+        )
+
     api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
     if not api_key:
         return _degraded_result(
@@ -284,7 +324,9 @@ def generate_image(
         models_to_try.append(_FALLBACK_MODEL)
 
     last_error: Optional[Dict[str, Any]] = None
-    for model_name in models_to_try:
+    index = 0
+    while index < len(models_to_try):
+        model_name = models_to_try[index]
         try:
             result = _call_provider(
                 client,
@@ -294,11 +336,20 @@ def generate_image(
                 quality=quality,
             )
         except Exception as exc:  # pragma: no cover - deterministic via mocks in tests
-            last_error = _normalize_provider_error(exc)
+            normalized = _normalize_provider_error(exc)
+            last_error = normalized
+            if _should_try_modern_image_model(
+                exc,
+                normalized_error=normalized,
+                models_already_scheduled=models_to_try,
+            ):
+                models_to_try.append(_MODERN_IMAGE_MODEL)
+            index += 1
             continue
 
         if result.degraded:
             last_error = result.error
+            index += 1
             continue
         return result
 

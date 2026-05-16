@@ -7,12 +7,18 @@ from typing import Any, Dict
 from contentblitz.tools.generate_image import generate_image as _core_generate_image
 
 
+def _is_http_url(value: str) -> bool:
+    return value.startswith(("http://", "https://"))
+
+
 def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
     """
     Legacy dict contract used by existing agents.
 
     This adapter delegates to the typed `contentblitz.tools.generate_image`
     implementation and converts to the historical payload shape.
+    Live-call gating (`CONTENTBLITZ_ENABLE_LIVE_CALLS`) is enforced in
+    the delegated core tool.
     """
     result = _core_generate_image(
         prompt=prompt,
@@ -27,7 +33,12 @@ def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
         and isinstance(result.image_url, str)
         and result.image_url.strip()
     ):
-        image_item: Dict[str, Any] = {"url": result.image_url}
+        cleaned_ref = result.image_url.strip()
+        image_item: Dict[str, Any]
+        if _is_http_url(cleaned_ref):
+            image_item = {"url": cleaned_ref}
+        else:
+            image_item = {"id": cleaned_ref}
         if result.revised_prompt:
             image_item["revised_prompt"] = result.revised_prompt
         images.append(image_item)

@@ -16,6 +16,21 @@ def test_missing_api_key_fails_safely_on_invocation(monkeypatch) -> None:
     assert result.error["code"] == "configuration_error"
 
 
+def test_live_calls_disabled_fails_safely_without_network(monkeypatch) -> None:
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-test")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+
+    def _fail_if_called(**_kwargs):
+        raise AssertionError("HTTP layer should not be called when live calls are disabled.")
+
+    monkeypatch.setattr(perplexity_module, "_http_post_json", _fail_if_called)
+    result = perplexity_module.search_perplexity("ai workflows", max_results=3)
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+
+
 def test_malformed_provider_payload_returns_degraded(monkeypatch) -> None:
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-test")
     monkeypatch.setattr(

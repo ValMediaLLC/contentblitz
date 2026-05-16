@@ -53,7 +53,12 @@ SERP_API_KEY=
 PERPLEXITY_API_KEY=
 CONTENTBLITZ_RUN_LIVE_TESTS=0
 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
+CONTENTBLITZ_ENABLE_LIVE_CALLS=1
 ```
+
+Runtime controls:
+
+- `CONTENTBLITZ_ENABLE_LIVE_CALLS` is the global provider-call gate used by text/search/image tools.
 
 Cache configuration (optional; default backend remains in-memory if unset):
 
@@ -118,6 +123,8 @@ streamlit run frontend/app.py
 ```
 
 UI startup does not require API keys and does not execute provider calls automatically.
+`frontend/app.py` auto-loads `.env` at startup when `python-dotenv` is available.
+Live calls are blocked when `CONTENTBLITZ_ENABLE_LIVE_CALLS=0`.
 
 ## Key Docs
 

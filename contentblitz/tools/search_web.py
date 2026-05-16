@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from urllib import parse, request
 from urllib.error import HTTPError, URLError
 
+from contentblitz.config import live_provider_calls_enabled
 from contentblitz.tools.perplexity import search_perplexity
 from contentblitz.tools.provider_types import SearchResult, SearchWebResult
 
@@ -335,6 +336,15 @@ def search_web(
             query=safe_query,
             code="invalid_query",
             message="Search query is empty.",
+            recoverable=False,
+        )
+
+    if not live_provider_calls_enabled():
+        return _degraded_result(
+            provider=provider_name,
+            query=safe_query,
+            code="live_calls_disabled",
+            message="Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
             recoverable=False,
         )
 

@@ -243,6 +243,28 @@ def test_missing_api_key_fails_safely_without_building_client(monkeypatch) -> No
     assert "traceback" not in str(result.error).lower()
 
 
+def test_live_calls_disabled_fails_safely_without_building_client(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
+    client_built = {"value": False}
+
+    def _fake_client_builder(*_args, **_kwargs):
+        client_built["value"] = True
+        raise AssertionError("Client should not be built when live calls are disabled.")
+
+    monkeypatch.setattr(generate_text_module, "_build_openai_client", _fake_client_builder)
+
+    result = generate_text_module.generate_text(
+        prompt="Generate text",
+        agent_key="blog_writer",
+    )
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "live_calls_disabled"
+    assert client_built["value"] is False
+
+
 def test_malformed_provider_response_is_handled_safely(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     _install_fake_client(
