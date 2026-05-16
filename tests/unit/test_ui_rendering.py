@@ -101,6 +101,27 @@ def test_final_response_is_included_when_available() -> None:
     assert payload["final_response"] == "Final assembled response."
 
 
+def test_completed_blog_session_derives_display_output_when_partial_mode_is_none() -> (
+    None
+):
+    state = _base_state()
+    state["workflow_status"] = "success"
+    state["final_response"] = ""
+    state["partial_output_mode"] = "none"
+    state["partial_outputs"] = {"blog": "", "linkedin": "", "research": ""}
+    state["content_drafts"]["blog"]["body"] = "Recovered blog body from content drafts."
+    state["ui_node_statuses"] = {"blog_writer_node": "completed"}
+
+    payload = build_render_payload(
+        state=state, node_statuses=build_initial_node_statuses()
+    )
+
+    assert (
+        payload["partial_outputs"]["blog"] == "Recovered blog body from content drafts."
+    )
+    assert payload["partial_output_mode"] == "blog_only"
+
+
 def test_image_output_rendering_rejects_base64_content() -> None:
     outputs = [
         {"status": "success", "url": "https://img.example/clean.png"},
@@ -200,10 +221,25 @@ def test_sources_are_deduplicated_for_display() -> None:
             "citation_available": True,
             "credibility_score": 0.9,
         },
+        {
+            "title": "Title Duplicate",
+            "url": None,
+            "snippet": "lower",
+            "citation_available": False,
+            "credibility_score": 0.2,
+        },
+        {
+            "title": "Title Duplicate",
+            "url": None,
+            "snippet": "higher",
+            "citation_available": False,
+            "credibility_score": 0.8,
+        },
     ]
     deduped = dedupe_sources_for_display(sources)
-    assert len(deduped) == 1
+    assert len(deduped) == 2
     assert deduped[0]["snippet"] == "better"
+    assert deduped[1]["snippet"] == "higher"
 
 
 def test_render_payload_does_not_mutate_workflow_state() -> None:

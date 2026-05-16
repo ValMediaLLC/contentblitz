@@ -108,6 +108,41 @@ button[kind="primary"]:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 20px rgba(3, 105, 161, 0.28);
 }
+
+.cbx-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.55rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.cbx-metric-card {
+  background: var(--cbx-surface);
+  border: 1px solid var(--cbx-border);
+  border-radius: 0.78rem;
+  padding: 0.5rem 0.62rem;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.04);
+}
+
+.cbx-metric-label {
+  color: var(--cbx-subtext);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+
+.cbx-metric-value {
+  color: var(--cbx-text);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 0.16rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>
 """
 

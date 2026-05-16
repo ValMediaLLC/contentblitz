@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import streamlit as st
+
 from contentblitz.ui.rendering import build_render_payload
 from frontend.components.result_view import (
     render_degraded_and_error_state,
@@ -80,7 +81,10 @@ def render() -> None:
         )
         if isinstance(selected_record, dict):
             col2.caption(
-                f"Run ID: `{selected_record.get('run_id', '')}` | Session ID: `{selected_record.get('session_id', '')}`"
+                "Run ID: "
+                f"`{selected_record.get('run_id', '')}`"
+                " | Session ID: "
+                f"`{selected_record.get('session_id', '')}`"
             )
             node_statuses = (
                 dict(selected_record.get("ui_node_statuses", {}))
@@ -102,9 +106,7 @@ def render() -> None:
             render_result_header(
                 {"ui_workflow_status": render_payload.get("workflow_status", "")}
             )
-            render_final_response(
-                {"final_response": render_payload.get("final_response", "")}
-            )
+            render_final_response(render_payload)
             render_sources({"sources": render_payload.get("sources", [])})
             render_export_status(render_payload)
 
@@ -121,5 +123,6 @@ def render() -> None:
         outputs = item.get("requested_outputs", [])
         status = str(item.get("workflow_status", "")).strip()
         st.markdown(
-            f"- `{timestamp}` | status: `{status or 'unknown'}` | outputs: `{outputs}` | query: {query}"
+            f"- `{timestamp}` | status: `{status or 'unknown'}` | "
+            f"outputs: `{outputs}` | query: {query}"
         )
