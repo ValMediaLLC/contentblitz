@@ -1,20 +1,61 @@
-.venv*
+# Virtual environments
 .venv/
+.venv-x64/
+.venv_arm64_backup/
+
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Pytest / temporary test output
 .pytest_cache/
-.pytest_tmp*/
+.pytest_tmp/
+.pytest_tmp_*/
+.pytest_basetemp/
 .pytest_basetemp*/
-.tmp/
-/exports/
+.pytest_basetemp_run/
 pytest-cache-files-*/
+
+# Ruff
+.ruff_cache/
+
+# Coverage
 .coverage
 .coverage.*
-coverage*
+coverage/
 coverage.*
 htmlcov/
-.streamlit/secrets.toml
-scripts/validate_phase1.py
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Runtime temp/session output
+.tmp/
 .contentblitz_sessions/
-.contentblitz_sessions*
+.contentblitz_sessions*/
+.contentblitz_sessions_phase3_test/
+
+# Generated exports/artifacts
+exports/
+exports/**
+
+# VS Code shared settings policy:
+# Ignore personal/local VS Code state but allow committed shared workspace config.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

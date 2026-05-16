@@ -28,6 +28,33 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     return default
 
 
+def _safe_asset_ref(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip()
+    if not candidate:
+        return ""
+    lowered = candidate.lower()
+    if lowered.startswith("data:image/") or "base64" in lowered:
+        return ""
+    return candidate
+
+
+def _renderable_image_asset(output: Mapping[str, Any]) -> str:
+    url = _safe_asset_ref(output.get("url"))
+    local_path = _safe_asset_ref(output.get("local_path"))
+    has_renderable_ref = bool(url or local_path)
+    explicit_renderable = output.get("renderable")
+    is_renderable = (
+        bool(explicit_renderable)
+        if isinstance(explicit_renderable, bool)
+        else has_renderable_ref
+    )
+    if not is_renderable:
+        return ""
+    return local_path or url
+
+
 def _select_text_draft(
     output_type: str,
     content_drafts: Mapping[str, Any],
@@ -36,15 +63,9 @@ def _select_text_draft(
 ) -> str:
     draft = _safe_dict(content_drafts.get(output_type, {}))
     current_body = str(draft.get("body", "")).strip()
-    current_score = _as_float(
-        _safe_dict(quality_scores.get(output_type, {})).get("composite"), default=-1.0
-    )
 
     best = _safe_dict(best_drafts.get(output_type, {}))
     best_body = str(best.get("body", "")).strip()
-    best_score = _as_float(
-        best.get("composite", best.get("composite_score")), default=-1.0
-    )
 
     if best_body:
         # Best drafts are preferred when available.
@@ -172,16 +193,13 @@ def _image_summary(
         if not isinstance(output, Mapping):
             continue
         status = str(output.get("status", "")).strip().lower()
-        if status == "success":
-            url = output.get("url")
-            asset = (
-                str(url).strip()
-                if isinstance(url, str) and url.strip()
-                else str(output.get("id", "")).strip()
-            )
+        asset = _renderable_image_asset(output)
+        if status != "failed" and asset:
             if asset:
                 success_assets.append(asset)
         elif status == "failed":
+            failed = True
+        elif status == "degraded":
             failed = True
 
     for error in errors:
@@ -205,22 +223,24 @@ def _assemble_image_output(
     errors: List[Dict[str, Any]],
 ) -> str:
     success_assets: List[str] = []
+    non_renderable_assets: List[str] = []
     failed = False
 
     for output in image_outputs:
         if not isinstance(output, Mapping):
             continue
         status = str(output.get("status", "")).strip().lower()
-        if status == "success":
-            url = output.get("url")
-            if isinstance(url, str) and url.strip():
-                success_assets.append(url.strip())
-            else:
-                image_id = str(output.get("id", "")).strip()
-                if image_id:
-                    success_assets.append(image_id)
+        asset = _renderable_image_asset(output)
+        if status != "failed" and asset:
+            success_assets.append(asset)
         elif status == "failed":
             failed = True
+        else:
+            image_id = str(output.get("id", "")).strip()
+            if image_id:
+                non_renderable_assets.append(image_id)
+            if status == "degraded":
+                failed = True
 
     for error in errors:
         if not isinstance(error, Mapping):
@@ -231,7 +251,19 @@ def _assemble_image_output(
             failed = True
 
     if success_assets:
+        if non_renderable_assets:
+            return (
+                "Image assets: "
+                + ", ".join(success_assets)
+                + ". Non-renderable provider asset ids: "
+                + ", ".join(non_renderable_assets)
+            )
         return "Image assets: " + ", ".join(success_assets)
+    if non_renderable_assets:
+        return (
+            "Image generation returned non-renderable provider asset ids: "
+            + ", ".join(non_renderable_assets)
+        )
     if failed:
         prompt_hint = image_prompts[-1] if image_prompts else "the requested concept"
         return (

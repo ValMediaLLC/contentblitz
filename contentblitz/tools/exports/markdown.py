@@ -418,7 +418,11 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
         status = _safe_text(item.get("status")).lower() or "unknown"
         provider = _safe_text(item.get("provider")) or "unknown"
         url = _safe_text(item.get("url"))
+        local_path = _safe_text(item.get("local_path"))
         identifier = _safe_text(item.get("id"))
+        renderable = bool(item.get("renderable", False))
+        if not renderable:
+            renderable = bool(url or local_path)
         if url.lower().startswith("data:image/") or "base64" in url.lower():
             continue
 
@@ -429,10 +433,15 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
             lines.append(f"- `{status}` | `{provider}` | {message}")
             continue
 
-        if url:
+        if local_path and renderable:
+            lines.append(f"- `{status}` | `{provider}` | local path `{local_path}`")
+        elif url and renderable:
             lines.append(f"- `{status}` | `{provider}` | {url}")
         elif identifier:
-            lines.append(f"- `{status}` | `{provider}` | {identifier}")
+            lines.append(
+                f"- `degraded` | `{provider}` | non-renderable provider asset "
+                f"id: `{identifier}`"
+            )
         else:
             lines.append(f"- `{status}` | `{provider}`")
 

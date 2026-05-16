@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 import streamlit as st
+
 from contentblitz.workflow.routing import AUTHORITATIVE_NODES
 
 
@@ -43,6 +44,7 @@ def _status_label(status: str) -> str:
     labels = {
         "pending": "pending",
         "running": "running",
+        "success": "completed",
         "completed": "completed",
         "skipped": "skipped",
         "degraded": "degraded",
@@ -215,13 +217,34 @@ def render_partial_outputs(render_payload: Mapping[str, Any]) -> None:
             if not isinstance(item, Mapping):
                 continue
             url = item.get("url")
+            local_path = item.get("local_path")
             status = _status_label(str(item.get("status", "completed")))
             provider = str(item.get("provider", "")).strip()
             if isinstance(url, str) and url.strip():
-                st.markdown(f"- `{status}` | `{provider or 'unknown'}` | {url.strip()}")
+                display_url = url.strip()
+                st.markdown(f"- `{status}` | `{provider or 'unknown'}` | {display_url}")
+                st.image(display_url, caption=f"{provider or 'unknown'} ({status})")
+            elif isinstance(local_path, str) and local_path.strip():
+                display_local_path = local_path.strip()
+                st.markdown(
+                    f"- `{status}` | `{provider or 'unknown'}` | {display_local_path}"
+                )
+                st.image(
+                    display_local_path,
+                    caption=f"{provider or 'unknown'} ({status})",
+                )
             else:
                 identifier = str(item.get("id", "")).strip() or "unavailable"
-                st.markdown(f"- `{status}` | `{provider or 'unknown'}` | {identifier}")
+                renderable = bool(item.get("renderable", False))
+                if renderable:
+                    st.markdown(
+                        f"- `{status}` | `{provider or 'unknown'}` | {identifier}"
+                    )
+                else:
+                    st.markdown(
+                        f"- `{status}` | `{provider or 'unknown'}` | {identifier} "
+                        "(non-renderable asset reference)"
+                    )
 
 
 def render_degraded_and_error_state(render_payload: Mapping[str, Any]) -> None:

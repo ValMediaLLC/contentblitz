@@ -45,6 +45,32 @@ def _safe_url(value: Any) -> str | None:
     return None
 
 
+def _safe_local_image_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    raw_path = value.strip()
+    if not raw_path:
+        return None
+    lowered = raw_path.lower()
+    if lowered.startswith("data:image/") or "base64" in lowered:
+        return None
+    try:
+        path = Path(raw_path)
+        resolved = (
+            path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
+        )
+        if not resolved.exists() or not resolved.is_file():
+            return None
+        if resolved.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            return None
+        try:
+            return resolved.relative_to(Path.cwd().resolve()).as_posix()
+        except Exception:
+            return resolved.as_posix()
+    except Exception:
+        return None
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
@@ -162,7 +188,9 @@ def sanitize_image_outputs_for_display(image_outputs: Any) -> list[dict[str, Any
             "status",
             "provider",
             "url",
+            "local_path",
             "id",
+            "renderable",
             "mime_type",
             "width",
             "height",
@@ -174,6 +202,10 @@ def sanitize_image_outputs_for_display(image_outputs: Any) -> list[dict[str, Any
                 continue
             if key in {"width", "height"}:
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    safe_entry[key] = value
+                continue
+            if key == "renderable":
+                if isinstance(value, bool):
                     safe_entry[key] = value
                 continue
 
@@ -190,10 +222,26 @@ def sanitize_image_outputs_for_display(image_outputs: Any) -> list[dict[str, Any
                 safe_entry[key] = safe_url
                 continue
 
+            if key == "local_path":
+                safe_local_path = _safe_local_image_path(sanitized_value)
+                if not safe_local_path:
+                    continue
+                safe_entry[key] = safe_local_path
+                continue
+
             safe_entry[key] = sanitized_value
 
         if "url" in safe_entry and _contains_base64_payload(safe_entry["url"]):
             continue
+        if "local_path" in safe_entry and _contains_base64_payload(
+            safe_entry["local_path"]
+        ):
+            continue
+
+        if "renderable" not in safe_entry:
+            safe_entry["renderable"] = bool(
+                safe_entry.get("url") or safe_entry.get("local_path")
+            )
 
         raw_error = raw.get("error")
         if raw_error is not None:
@@ -580,7 +628,8 @@ def build_render_payload(
     unsafe_content_removed = unsafe_content_removed or final_changed
     if export_errors and final_response:
         warnings.append(
-            "Export encountered a non-blocking failure; the final response is still available."
+            "Export encountered a non-blocking failure; "
+            "the final response is still available."
         )
 
     warnings.extend(

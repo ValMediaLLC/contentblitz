@@ -6,7 +6,9 @@ def _base_state(**overrides):
     state = create_initial_state(
         user_query="Create an image of a futuristic marketing dashboard",
         research_data={
-            "synthesized_summary": "Marketing teams rely on AI-assisted KPI forecasting.",
+            "synthesized_summary": (
+                "Marketing teams rely on AI-assisted KPI forecasting."
+            ),
             "keywords": ["ai", "dashboard", "forecasting"],
         },
         content_brief={
@@ -112,6 +114,35 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
     assert updates["image_outputs"]
     assert updates["image_outputs"][0]["status"] == "success"
     assert updates["image_outputs"][0]["url"] == "https://example.com/success.png"
+    assert updates["image_outputs"][0]["renderable"] is True
+    assert updates["draft_status"]["image"] == "complete"
+
+
+def test_successful_local_path_image_writes_renderable_output(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {"output": "Enhanced futuristic dashboard scene with clean lines."}
+
+    def fake_generate_image(prompt, style="default"):
+        return {
+            "provider_used": "gpt-image-1",
+            "images": [
+                {
+                    "local_path": "exports/images/fashion_001.png",
+                    "id": "img_1",
+                    "width": 1024,
+                    "height": 1024,
+                    "renderable": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(image_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image)
+    updates = image_agent_module.image_agent_node(_base_state())
+
+    assert updates["image_outputs"][0]["status"] == "success"
+    assert updates["image_outputs"][0]["local_path"] == "exports/images/fashion_001.png"
+    assert updates["image_outputs"][0]["renderable"] is True
     assert updates["draft_status"]["image"] == "complete"
 
 
@@ -165,6 +196,33 @@ def test_base64_is_never_stored(monkeypatch) -> None:
     payload = updates["image_outputs"][0]
     assert "b64_json" not in payload
     assert "base64" not in payload
+
+
+def test_non_renderable_asset_id_is_degraded_not_success(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {"output": "Enhanced prompt with atmosphere."}
+
+    def fake_generate_image(prompt, style="default"):
+        return {
+            "provider_used": "gpt-image-1",
+            "images": [
+                {
+                    "id": "img_asset_only_001",
+                    "renderable": False,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(image_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image)
+    updates = image_agent_module.image_agent_node(_base_state())
+
+    payload = updates["image_outputs"][0]
+    assert payload["status"] == "degraded"
+    assert payload["renderable"] is False
+    assert payload["id"] == "img_asset_only_001"
+    assert updates["tool_outputs"]["image_agent"]["status"] == "degraded"
+    assert updates["draft_status"]["image"] == "failed"
 
 
 def test_image_counter_increments_only_on_success(monkeypatch) -> None:

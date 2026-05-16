@@ -34,7 +34,11 @@ def _base_state(tmp_path: Path, **overrides):
                 "status": "failed",
                 "provider": "dall-e-3",
                 "error": {
-                    "message": "{'code': 'configuration_error', 'message': 'OPENAI_API_KEY is not configured.', 'provider': 'openai', 'recoverable': False}",
+                    "message": (
+                        "{'code': 'configuration_error', "
+                        "'message': 'OPENAI_API_KEY is not configured.', "
+                        "'provider': 'openai', 'recoverable': False}"
+                    ),
                     "recoverable": True,
                 },
             }
@@ -92,6 +96,29 @@ def test_markdown_document_contains_expected_sections_and_deduped_sources(
     assert "provider': 'openai'" not in markdown
     assert "recoverable': False" not in markdown
     assert "OPENAI_API_KEY" not in markdown
+
+
+def test_markdown_image_outputs_prefer_local_path_when_renderable(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    markdown = build_markdown_export_document(
+        _base_state(
+            tmp_path,
+            image_outputs=[
+                {
+                    "status": "success",
+                    "provider": "gpt-image-1",
+                    "url": "https://cdn.example.com/remote.png",
+                    "local_path": "exports/images/local.png",
+                    "renderable": True,
+                }
+            ],
+            sources=[],
+        )
+    )
+    assert "local path `exports/images/local.png`" in markdown
+    assert "https://cdn.example.com/remote.png" not in markdown
 
 
 def test_markdown_workflow_summary_prefers_ui_workflow_status(
@@ -190,7 +217,10 @@ def test_markdown_export_removes_sensitive_and_base64_payloads(
                 "provider": "dall-e-3",
                 "url": "data:image/png;base64,AAAA",
                 "error": {
-                    "message": "Traceback (most recent call last): OPENAI_API_KEY=sk-secret",
+                    "message": (
+                        "Traceback (most recent call last): "
+                        "OPENAI_API_KEY=sk-secret"
+                    ),
                     "recoverable": True,
                 },
             }
@@ -254,7 +284,10 @@ def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(
         status_messages=[],
         errors=[
             {
-                "message": "{'code': 'configuration_error', 'provider': 'openai', 'recoverable': False}",
+                "message": (
+                    "{'code': 'configuration_error', 'provider': 'openai', "
+                    "'recoverable': False}"
+                ),
                 "recoverable": True,
             }
         ],

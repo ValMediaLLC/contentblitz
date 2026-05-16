@@ -26,6 +26,19 @@ def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+def _safe_text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _is_base64_payload(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    lowered = value.strip().lower()
+    if not lowered:
+        return False
+    return lowered.startswith("data:image/") or "base64" in lowered
+
+
 def _derive_visual_concept(state: Dict[str, Any]) -> str:
     content_brief = _safe_dict(state.get("content_brief", {}))
     image_brief = _safe_dict(content_brief.get("image", {}))
@@ -105,10 +118,12 @@ def _sanitize_image_payload(payload: Any) -> Dict[str, Any]:
         return {}
     allowed_keys = (
         "url",
+        "local_path",
         "id",
         "mime_type",
         "width",
         "height",
+        "renderable",
         "revised_prompt",
     )
     sanitized: Dict[str, Any] = {}
@@ -117,6 +132,8 @@ def _sanitize_image_payload(payload: Any) -> Dict[str, Any]:
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
+            continue
+        if key in {"url", "local_path"} and _is_base64_payload(value):
             continue
         sanitized[key] = value
     return sanitized
@@ -187,7 +204,8 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "draft_status": {"image": "skipped"},
             "errors": _append_recoverable_image_error(
                 state,
-                "Image generation skipped because the image generation cap was reached.",
+                "Image generation skipped because the image generation cap "
+                "was reached.",
                 error_type="image_generation_cap_reached",
             ),
             "cost_controls": cost_controls,
@@ -298,14 +316,57 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "cost_controls": cost_controls,
         }
 
+    renderable_count = 0
+    for entry in sanitized_images:
+        has_renderable_ref = bool(
+            _safe_text(entry.get("url")) or _safe_text(entry.get("local_path"))
+        )
+        explicit_renderable = entry.get("renderable")
+        is_renderable = (
+            bool(explicit_renderable)
+            if isinstance(explicit_renderable, bool)
+            else has_renderable_ref
+        )
+        if is_renderable:
+            entry["status"] = "success"
+            entry["renderable"] = True
+            renderable_count += 1
+        else:
+            entry["status"] = "degraded"
+            entry["renderable"] = False
+
     image_outputs.extend(sanitized_images)
     cost_controls["image_generations_used_this_session"] = used + 1
+
+    if renderable_count <= 0:
+        non_renderable_reason = (
+            "Image provider returned a non-renderable asset reference."
+        )
+        tool_outputs["image_agent"] = {
+            "status": "degraded",
+            "recoverable": True,
+            "reason": non_renderable_reason,
+            "attempted": True,
+            "provider": provider,
+            "images_generated": len(sanitized_images),
+            "renderable_images": renderable_count,
+        }
+        return {
+            "image_prompts": image_prompts,
+            "image_outputs": image_outputs,
+            "tool_outputs": tool_outputs,
+            "draft_status": {"image": "failed"},
+            "errors": _append_recoverable_image_error(state, non_renderable_reason),
+            "cost_controls": cost_controls,
+        }
+
     tool_outputs["image_agent"] = {
         "status": "success",
         "recoverable": False,
         "attempted": True,
         "provider": provider,
         "images_generated": len(sanitized_images),
+        "renderable_images": renderable_count,
     }
     return {
         "image_prompts": image_prompts,

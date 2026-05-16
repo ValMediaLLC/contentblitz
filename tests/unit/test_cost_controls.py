@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 
 from contentblitz.agents import (
-    blog_writer as blog_writer_module,
     image_agent as image_agent_module,
+)
+from contentblitz.agents import (
     query_handler as query_handler_module,
+)
+from contentblitz.agents import (
     research_agent as research_agent_module,
+)
+from contentblitz.agents import (
     retry_router as retry_router_module,
 )
 from contentblitz.core.cost_controls import (
@@ -198,7 +203,10 @@ def test_tools_do_not_mutate_cost_counters(monkeypatch) -> None:
             model="dall-e-3",
             prompt=kwargs.get("prompt", ""),
             image_url="https://example.com/img.png",
+            local_path=None,
+            image_id=None,
             revised_prompt=None,
+            renderable=True,
             degraded=False,
             error=None,
         ),

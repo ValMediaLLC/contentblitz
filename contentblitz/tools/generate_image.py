@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from openai import (
@@ -17,6 +19,7 @@ from openai import (
 )
 
 from contentblitz.config import INJECTION_GUARD, live_provider_calls_enabled
+from contentblitz.tools.exports.filenames import resolve_export_dir
 
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "dall-e-3"
@@ -33,7 +36,10 @@ class GenerateImageResult:
     model: str
     prompt: str
     image_url: Optional[str]
+    local_path: Optional[str]
+    image_id: Optional[str]
     revised_prompt: Optional[str]
+    renderable: bool
     degraded: bool
     error: Optional[Dict[str, Any]]
 
@@ -55,19 +61,84 @@ def _safe_url_or_ref(value: Any) -> Optional[str]:
         return None
     if candidate.startswith(("http://", "https://")):
         return candidate
-    if candidate.startswith(("file-", "img_", "image_", "asset_")):
-        return candidate
     return None
 
 
-def _safe_asset_ref_from_b64(value: Any) -> Optional[str]:
+def _safe_image_id(value: Any) -> Optional[str]:
     if not isinstance(value, str):
         return None
     candidate = value.strip()
     if not candidate:
         return None
-    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:24]
-    return f"asset_{digest}"
+    lowered = candidate.lower()
+    if lowered.startswith("data:image/") or "base64" in lowered:
+        return None
+    return candidate
+
+
+def _safe_bytes_from_base64(value: Any) -> Optional[bytes]:
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if not token:
+        return None
+    try:
+        decoded = base64.b64decode(token, validate=True)
+    except Exception:
+        return None
+    return decoded if decoded else None
+
+
+def _safe_image_bytes(value: Any) -> Optional[bytes]:
+    if isinstance(value, bytes):
+        return value if value else None
+    if isinstance(value, bytearray):
+        blob = bytes(value)
+        return blob if blob else None
+    return None
+
+
+def _extension_from_format(value: Any) -> str:
+    token = _safe_text(value).strip().lower()
+    if "/" in token:
+        token = token.split("/")[-1].strip()
+    if token in {"jpg", "jpeg"}:
+        return "jpg"
+    if token in {"webp"}:
+        return "webp"
+    if token in {"gif"}:
+        return "gif"
+    return "png"
+
+
+def _write_image_bytes_to_local_path(
+    *,
+    image_bytes: bytes,
+    prompt: str,
+    model: str,
+    extension: str,
+) -> Optional[str]:
+    if not image_bytes:
+        return None
+
+    export_dir = resolve_export_dir().resolve()
+    image_dir = (export_dir / "images").resolve()
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    digest_seed = f"{prompt}|{model}|{hashlib.sha256(image_bytes).hexdigest()}".encode(
+        "utf-8"
+    )
+    digest = hashlib.sha256(digest_seed).hexdigest()[:24]
+    safe_ext = _extension_from_format(extension)
+    local_file = (image_dir / f"image_{digest}.{safe_ext}").resolve()
+    if local_file.parent != image_dir:
+        return None
+    local_file.write_bytes(image_bytes)
+
+    try:
+        return local_file.relative_to(Path.cwd().resolve()).as_posix()
+    except Exception:
+        return local_file.as_posix()
 
 
 def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
@@ -180,7 +251,10 @@ def _degraded_result(
         model=model,
         prompt=prompt,
         image_url=None,
+        local_path=None,
+        image_id=None,
         revised_prompt=None,
+        renderable=False,
         degraded=True,
         error=error,
     )
@@ -239,20 +313,49 @@ def _call_provider(
         )
 
     image_url = _safe_url_or_ref(first_item.get("url"))
-    if image_url is None:
-        image_url = _safe_url_or_ref(first_item.get("file_id") or first_item.get("id"))
-    if image_url is None:
-        image_url = _safe_asset_ref_from_b64(first_item.get("b64_json"))
+    local_path: Optional[str] = None
+    image_id = _safe_image_id(first_item.get("file_id") or first_item.get("id"))
+
+    image_bytes = _safe_image_bytes(first_item.get("image_bytes"))
+    if image_bytes is None:
+        image_bytes = _safe_image_bytes(first_item.get("bytes"))
+    if image_bytes is None:
+        image_bytes = _safe_bytes_from_base64(first_item.get("b64_json"))
+
+    if image_url is None and image_bytes is not None:
+        local_path = _write_image_bytes_to_local_path(
+            image_bytes=image_bytes,
+            prompt=prompt,
+            model=model,
+            extension=_safe_text(
+                first_item.get("output_format") or first_item.get("mime_type")
+            ),
+        )
 
     revised_prompt = _safe_text(first_item.get("revised_prompt")) or None
 
-    if image_url is None:
+    renderable = bool(image_url or local_path)
+    if not renderable and image_id:
+        return GenerateImageResult(
+            provider=_PROVIDER,
+            model=model,
+            prompt=prompt,
+            image_url=None,
+            local_path=None,
+            image_id=image_id,
+            revised_prompt=revised_prompt,
+            renderable=False,
+            degraded=False,
+            error=None,
+        )
+
+    if not renderable:
         return _degraded_result(
             prompt=prompt,
             model=model,
             error={
                 "code": "provider_payload_unusable",
-                "message": "Image provider returned no URL, file reference, or image asset.",
+                "message": "Image provider returned no renderable image artifact.",
                 "provider": _PROVIDER,
                 "recoverable": True,
             },
@@ -263,7 +366,10 @@ def _call_provider(
         model=model,
         prompt=prompt,
         image_url=image_url,
+        local_path=local_path,
+        image_id=image_id,
         revised_prompt=revised_prompt,
+        renderable=True,
         degraded=False,
         error=None,
     )
@@ -298,7 +404,10 @@ def generate_image(
             model=chosen_model,
             error={
                 "code": "live_calls_disabled",
-                "message": "Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+                "message": (
+                    "Live provider calls are disabled by "
+                    "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+                ),
                 "provider": _PROVIDER,
                 "recoverable": False,
             },
