@@ -26,8 +26,16 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
             "research_report": {"body": "Research report integration body"},
         },
         best_drafts={
-            "blog": {"body": "Blog integration draft body", "composite": 0.91, "version": 1},
-            "linkedin": {"body": "LinkedIn integration draft body", "composite": 0.9, "version": 1},
+            "blog": {
+                "body": "Blog integration draft body",
+                "composite": 0.91,
+                "version": 1,
+            },
+            "linkedin": {
+                "body": "LinkedIn integration draft body",
+                "composite": 0.9,
+                "version": 1,
+            },
         },
         quality_scores={
             "blog": {"validation_status": "passed", "composite": 0.91},
@@ -38,7 +46,10 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
             {
                 "status": "failed",
                 "provider": "dall-e-3",
-                "error": {"message": "OPENAI_API_KEY is not configured", "recoverable": True},
+                "error": {
+                    "message": "OPENAI_API_KEY is not configured",
+                    "recoverable": True,
+                },
             }
         ],
         sources=[
@@ -64,7 +75,9 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
     )
 
 
-def test_pdf_export_pipeline_creates_file_and_preserves_sections(tmp_path, monkeypatch) -> None:
+def test_pdf_export_pipeline_creates_file_and_preserves_sections(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=True, formats_requested=["pdf"])
     assembled = output_assembler_node(state)
@@ -108,7 +121,9 @@ def test_pdf_export_skipped_behavior_when_not_requested(tmp_path, monkeypatch) -
     assert metadata["export_status"] == {}
 
 
-def test_persisted_session_restores_pdf_export_metadata_safely(tmp_path, monkeypatch) -> None:
+def test_persisted_session_restores_pdf_export_metadata_safely(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=True, formats_requested=["pdf"])
     assembled = output_assembler_node(state)

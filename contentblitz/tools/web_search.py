@@ -34,7 +34,9 @@ def search_web(query: str, depth: str = "standard") -> Dict[str, Any]:
         "provider_primary": "serp_api",
         "provider_fallback": "perplexity",
         "provider_used": typed_result.provider,
-        "results": [_legacy_result_item(item.as_dict()) for item in typed_result.results],
+        "results": [
+            _legacy_result_item(item.as_dict()) for item in typed_result.results
+        ],
         "used_external_api": not typed_result.degraded,
         "degraded": typed_result.degraded,
         "error": typed_result.error,

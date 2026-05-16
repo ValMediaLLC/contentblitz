@@ -9,7 +9,7 @@ from contentblitz.safety.output_sanitizer import (
 
 
 def test_markdown_sanitizer_removes_script_tags_and_event_handlers() -> None:
-    raw = "Safe text <script>alert(1)</script><a onclick=\"alert(1)\">click</a>"
+    raw = 'Safe text <script>alert(1)</script><a onclick="alert(1)">click</a>'
     sanitized, changed = sanitize_markdown_output(raw)
     lowered = sanitized.lower()
     assert changed is True

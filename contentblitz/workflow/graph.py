@@ -200,8 +200,7 @@ def _source_identity(entry: Mapping[str, Any]) -> str:
 
 def _has_meaningful_source_payload(entry: Mapping[str, Any]) -> bool:
     return any(
-        _clean_text(entry.get(field))
-        for field in ("url", "title", "source", "snippet")
+        _clean_text(entry.get(field)) for field in ("url", "title", "source", "snippet")
     )
 
 
@@ -237,7 +236,15 @@ def _sanitize_image_output_entry(entry: Mapping[str, Any]) -> Dict[str, Any] | N
     candidate.pop("base64", None)
     candidate.pop("b64_json", None)
 
-    for key in ("url", "revised_prompt", "prompt", "provider", "id", "status", "mime_type"):
+    for key in (
+        "url",
+        "revised_prompt",
+        "prompt",
+        "provider",
+        "id",
+        "status",
+        "mime_type",
+    ):
         value = candidate.get(key)
         if isinstance(value, str):
             cleaned = value.strip()
@@ -247,7 +254,10 @@ def _sanitize_image_output_entry(entry: Mapping[str, Any]) -> Dict[str, Any] | N
             candidate[key] = cleaned
 
     # Keep failed entries even without url/id so recoverable failures remain visible.
-    if not any(candidate.get(field) for field in ("status", "provider", "prompt", "id", "url", "error")):
+    if not any(
+        candidate.get(field)
+        for field in ("status", "provider", "prompt", "id", "url", "error")
+    ):
         return None
     return candidate
 
@@ -284,7 +294,9 @@ def merge_image_outputs(left: List[Any], right: List[Any]) -> List[Dict[str, Any
     return merged
 
 
-def merge_nested_dict_skip_none(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+def merge_nested_dict_skip_none(
+    left: Dict[str, Any], right: Dict[str, Any]
+) -> Dict[str, Any]:
     """Merge nested dicts without wiping existing values via None updates."""
     merged = dict(left or {})
     for key, value in dict(right or {}).items():
@@ -371,7 +383,9 @@ def _normalize_ui_status(value: Any) -> str:
     return ""
 
 
-def merge_ui_node_statuses(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, str]:
+def merge_ui_node_statuses(
+    left: Dict[str, Any], right: Dict[str, Any]
+) -> Dict[str, str]:
     """Reducer for ui node statuses using deterministic precedence."""
     merged: Dict[str, str] = {}
     base = dict(left or {})
@@ -411,9 +425,11 @@ def merge_error_entries(left: List[Any], right: List[Any]) -> List[Dict[str, Any
         if not message or message.lower() in {"none", "null"}:
             continue
         normalized["message"] = message
-        source = str(
-            normalized.get("agent", normalized.get("node", "unknown"))
-        ).strip().lower()
+        source = (
+            str(normalized.get("agent", normalized.get("node", "unknown")))
+            .strip()
+            .lower()
+        )
         error_type = str(normalized.get("type", "")).strip().lower()
         code = str(normalized.get("code", "")).strip().lower()
         recoverable = bool(normalized.get("recoverable", False))
@@ -454,24 +470,50 @@ def merge_export_error_log(left: List[Any], right: List[Any]) -> List[Dict[str, 
     return merged
 
 
-def merge_export_metadata(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+def merge_export_metadata(
+    left: Dict[str, Any], right: Dict[str, Any]
+) -> Dict[str, Any]:
     """Reducer for export metadata that preserves completed format results."""
     merged = dict(left or {})
     incoming = dict(right or {})
     if not incoming:
         return merged
 
-    left_formats = list(merged.get("formats_requested", [])) if isinstance(merged.get("formats_requested"), list) else []
-    right_formats = list(incoming.get("formats_requested", [])) if isinstance(incoming.get("formats_requested"), list) else []
+    left_formats = (
+        list(merged.get("formats_requested", []))
+        if isinstance(merged.get("formats_requested"), list)
+        else []
+    )
+    right_formats = (
+        list(incoming.get("formats_requested", []))
+        if isinstance(incoming.get("formats_requested"), list)
+        else []
+    )
     merged["formats_requested"] = list(dict.fromkeys([*left_formats, *right_formats]))
 
-    left_paths = dict(merged.get("export_paths", {})) if isinstance(merged.get("export_paths"), Mapping) else {}
-    right_paths = dict(incoming.get("export_paths", {})) if isinstance(incoming.get("export_paths"), Mapping) else {}
+    left_paths = (
+        dict(merged.get("export_paths", {}))
+        if isinstance(merged.get("export_paths"), Mapping)
+        else {}
+    )
+    right_paths = (
+        dict(incoming.get("export_paths", {}))
+        if isinstance(incoming.get("export_paths"), Mapping)
+        else {}
+    )
     left_paths.update({k: v for k, v in right_paths.items() if v})
     merged["export_paths"] = left_paths
 
-    left_status = dict(merged.get("export_status", {})) if isinstance(merged.get("export_status"), Mapping) else {}
-    right_status = dict(incoming.get("export_status", {})) if isinstance(incoming.get("export_status"), Mapping) else {}
+    left_status = (
+        dict(merged.get("export_status", {}))
+        if isinstance(merged.get("export_status"), Mapping)
+        else {}
+    )
+    right_status = (
+        dict(incoming.get("export_status", {}))
+        if isinstance(incoming.get("export_status"), Mapping)
+        else {}
+    )
     for fmt in set(left_status) | set(right_status):
         lval = str(left_status.get(fmt, "")).strip().lower()
         rval = str(right_status.get(fmt, "")).strip().lower()
@@ -485,12 +527,28 @@ def merge_export_metadata(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[s
             left_status[fmt] = lval
     merged["export_status"] = left_status
 
-    left_errors = list(merged.get("error_log", [])) if isinstance(merged.get("error_log"), list) else []
-    right_errors = list(incoming.get("error_log", [])) if isinstance(incoming.get("error_log"), list) else []
+    left_errors = (
+        list(merged.get("error_log", []))
+        if isinstance(merged.get("error_log"), list)
+        else []
+    )
+    right_errors = (
+        list(incoming.get("error_log", []))
+        if isinstance(incoming.get("error_log"), list)
+        else []
+    )
     merged["error_log"] = merge_export_error_log(left_errors, right_errors)
 
-    left_messages = list(merged.get("status_messages", [])) if isinstance(merged.get("status_messages"), list) else []
-    right_messages = list(incoming.get("status_messages", [])) if isinstance(incoming.get("status_messages"), list) else []
+    left_messages = (
+        list(merged.get("status_messages", []))
+        if isinstance(merged.get("status_messages"), list)
+        else []
+    )
+    right_messages = (
+        list(incoming.get("status_messages", []))
+        if isinstance(incoming.get("status_messages"), list)
+        else []
+    )
     merged["status_messages"] = merge_unique_text_list(left_messages, right_messages)
 
     for key, value in incoming.items():
@@ -551,6 +609,7 @@ class WorkflowState(TypedDict, total=False):
     prompt_injection_signals: list[str]
     sanitized_user_query: str
 
+
 NODE_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     QUERY_HANDLER_NODE: query_handler_node,
     CLARIFICATION_NODE: clarification_node,
@@ -568,7 +627,7 @@ NODE_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
 
 
 def _merge_state_updates(
-    node_fn: Callable[[Dict[str, Any]], Dict[str, Any]]
+    node_fn: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     """
     Adapt node partial updates into full-state returns for StateGraph(dict).
@@ -589,18 +648,43 @@ def _merge_state_updates(
 
     return _wrapped
 
+
 # Static graph metadata (authoritative shape).
 GRAPH_STRUCTURE: Dict[str, List[str]] = {
     START: [QUERY_HANDLER_NODE],
-    QUERY_HANDLER_NODE: [CLARIFICATION_NODE, IMAGE_AGENT_NODE, RESEARCH_AGENT_NODE, CONTENT_STRATEGIST_NODE, ERROR_HANDLER_NODE],
+    QUERY_HANDLER_NODE: [
+        CLARIFICATION_NODE,
+        IMAGE_AGENT_NODE,
+        RESEARCH_AGENT_NODE,
+        CONTENT_STRATEGIST_NODE,
+        ERROR_HANDLER_NODE,
+    ],
     CLARIFICATION_NODE: [END],
-    RESEARCH_AGENT_NODE: [CONTENT_STRATEGIST_NODE, OUTPUT_ASSEMBLER_NODE, ERROR_HANDLER_NODE],
-    CONTENT_STRATEGIST_NODE: [BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, ERROR_HANDLER_NODE],
+    RESEARCH_AGENT_NODE: [
+        CONTENT_STRATEGIST_NODE,
+        OUTPUT_ASSEMBLER_NODE,
+        ERROR_HANDLER_NODE,
+    ],
+    CONTENT_STRATEGIST_NODE: [
+        BLOG_WRITER_NODE,
+        LINKEDIN_WRITER_NODE,
+        IMAGE_AGENT_NODE,
+        ERROR_HANDLER_NODE,
+    ],
     BLOG_WRITER_NODE: [QUALITY_VALIDATOR_NODE],
     LINKEDIN_WRITER_NODE: [QUALITY_VALIDATOR_NODE],
     IMAGE_AGENT_NODE: [QUALITY_VALIDATOR_NODE],
-    QUALITY_VALIDATOR_NODE: [RETRY_ROUTER_NODE, OUTPUT_ASSEMBLER_NODE, ERROR_HANDLER_NODE],
-    RETRY_ROUTER_NODE: [BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, OUTPUT_ASSEMBLER_NODE],
+    QUALITY_VALIDATOR_NODE: [
+        RETRY_ROUTER_NODE,
+        OUTPUT_ASSEMBLER_NODE,
+        ERROR_HANDLER_NODE,
+    ],
+    RETRY_ROUTER_NODE: [
+        BLOG_WRITER_NODE,
+        LINKEDIN_WRITER_NODE,
+        IMAGE_AGENT_NODE,
+        OUTPUT_ASSEMBLER_NODE,
+    ],
     OUTPUT_ASSEMBLER_NODE: [EXPORT_NODE, ERROR_HANDLER_NODE],
     EXPORT_NODE: [END],
     ERROR_HANDLER_NODE: [END],
@@ -667,7 +751,9 @@ def build_langgraph() -> Any:
     graph.add_conditional_edges(QUALITY_VALIDATOR_NODE, route_from_quality_validator)
     graph.add_conditional_edges(RETRY_ROUTER_NODE, route_from_retry_router)
 
-    graph.add_conditional_edges(OUTPUT_ASSEMBLER_NODE, _route_from_output_assembler_for_graph)
+    graph.add_conditional_edges(
+        OUTPUT_ASSEMBLER_NODE, _route_from_output_assembler_for_graph
+    )
     graph.add_edge(EXPORT_NODE, LANGGRAPH_END)
     graph.add_edge(ERROR_HANDLER_NODE, LANGGRAPH_END)
 

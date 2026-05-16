@@ -42,7 +42,12 @@ def test_near_token_cap_prefers_gpt4o_mini() -> None:
 
 def test_exceeded_token_cap_sets_budget_exceeded_true(monkeypatch) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
-        return {"output": json.dumps({"intent": "content_creation", "requested_outputs": ["blog"]}), "usage": {"total_tokens": 30}}
+        return {
+            "output": json.dumps(
+                {"intent": "content_creation", "requested_outputs": ["blog"]}
+            ),
+            "usage": {"total_tokens": 30},
+        }
 
     monkeypatch.setattr(query_handler_module, "generate_text", fake_generate_text)
     state = create_initial_state(
@@ -89,7 +94,9 @@ def test_search_cap_prevents_additional_search_calls(monkeypatch) -> None:
     assert updates["research_data"]["degraded_reason"] == "search_cap_reached"
 
 
-def test_image_cap_prevents_generation_and_writes_recoverable_error(monkeypatch) -> None:
+def test_image_cap_prevents_generation_and_writes_recoverable_error(
+    monkeypatch,
+) -> None:
     calls = {"image": 0}
 
     def fake_generate_image(prompt, style="default"):
@@ -119,7 +126,9 @@ def test_image_cap_prevents_generation_and_writes_recoverable_error(monkeypatch)
 def test_retry_cap_prevents_retry_fan_out() -> None:
     state = create_initial_state(
         retry_requested=True,
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.6}},
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.6}
+        },
         cost_controls={
             "tokens_used_this_session": 0,
             "search_queries_used_this_session": 0,

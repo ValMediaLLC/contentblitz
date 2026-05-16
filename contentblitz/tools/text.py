@@ -23,7 +23,9 @@ def generate_text(
     Internally this delegates to the typed OpenAI-backed tool in
     `contentblitz.tools.generate_text`.
     """
-    attempt_limit = int(RETRY_POLICY.get(agent_key, 0)) + 1 if agent_key in RETRY_POLICY else 0
+    attempt_limit = (
+        int(RETRY_POLICY.get(agent_key, 0)) + 1 if agent_key in RETRY_POLICY else 0
+    )
     result = _core_generate_text(
         prompt=prompt,
         agent_key=agent_key,

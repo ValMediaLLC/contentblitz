@@ -22,7 +22,7 @@ _MALFORMED_HEADING_RE = re.compile(r"^(#{1,6})([^ #].*)$")
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",
@@ -135,17 +135,32 @@ def _normalize_image_error_message(error: Any) -> str:
         or '"provider":' in lowered_message
         or lowered_provider == "openai"
         or any(marker in lowered_message for marker in _STACK_TRACE_MARKERS)
-        or any(token in lowered_message for token in ("openai_api_key", "serp_api_key", "perplexity_api_key"))
+        or any(
+            token in lowered_message
+            for token in ("openai_api_key", "serp_api_key", "perplexity_api_key")
+        )
     )
 
     if suspicious_payload:
-        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
+        return (
+            _GENERIC_IMAGE_ERROR_RECOVERABLE
+            if recoverable
+            else _GENERIC_IMAGE_ERROR_FATAL
+        )
 
     message = _normalize_error_message(error)
     if not message:
-        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
+        return (
+            _GENERIC_IMAGE_ERROR_RECOVERABLE
+            if recoverable
+            else _GENERIC_IMAGE_ERROR_FATAL
+        )
     if message.startswith("{") and "code" in message and "provider" in message:
-        return _GENERIC_IMAGE_ERROR_RECOVERABLE if recoverable else _GENERIC_IMAGE_ERROR_FATAL
+        return (
+            _GENERIC_IMAGE_ERROR_RECOVERABLE
+            if recoverable
+            else _GENERIC_IMAGE_ERROR_FATAL
+        )
     return message
 
 
@@ -236,7 +251,9 @@ def _render_workflow_summary(state: Mapping[str, Any]) -> str:
         for item in _safe_list(state.get("requested_outputs", []))
         if _safe_text(item)
     ]
-    requested_outputs_text = ", ".join(requested_outputs) if requested_outputs else "none"
+    requested_outputs_text = (
+        ", ".join(requested_outputs) if requested_outputs else "none"
+    )
     lines = [
         "## Workflow Summary",
         f"- Workflow Status: `{workflow_status}`",
@@ -269,10 +286,15 @@ def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
 
     research_data = _safe_dict(state.get("research_data", {}))
     if bool(research_data.get("degraded", False)):
-        warnings.append("Research results are degraded and may require manual verification.")
+        warnings.append(
+            "Research results are degraded and may require manual verification."
+        )
 
     image_outputs = _safe_list(state.get("image_outputs", []))
-    if any(_safe_text(_safe_dict(item).get("status")).lower() == "failed" for item in image_outputs):
+    if any(
+        _safe_text(_safe_dict(item).get("status")).lower() == "failed"
+        for item in image_outputs
+    ):
         warnings.append("Image generation encountered a recoverable issue.")
 
     for error in _safe_list(state.get("errors", [])):
@@ -302,9 +324,16 @@ def _normalized_status(value: Any) -> str:
     return _STATUS_ALIASES.get(raw, raw)
 
 
-def _aggregate_export_workflow_status(state: Mapping[str, Any], warnings: List[str]) -> str:
+def _aggregate_export_workflow_status(
+    state: Mapping[str, Any], warnings: List[str]
+) -> str:
     ui_workflow_status = _normalized_status(state.get("ui_workflow_status"))
-    if ui_workflow_status in {"failed", "awaiting_clarification", "partial_success", "success"}:
+    if ui_workflow_status in {
+        "failed",
+        "awaiting_clarification",
+        "partial_success",
+        "success",
+    }:
         return ui_workflow_status
 
     node_statuses = {
@@ -314,13 +343,20 @@ def _aggregate_export_workflow_status(state: Mapping[str, Any], warnings: List[s
     }
     workflow_status = _normalized_status(state.get("workflow_status"))
 
-    if workflow_status == "failed" or any(status == "failed" for status in node_statuses.values()):
+    if workflow_status == "failed" or any(
+        status == "failed" for status in node_statuses.values()
+    ):
         return "failed"
 
-    if bool(state.get("clarification_needed", False)) or workflow_status == "awaiting_clarification":
+    if (
+        bool(state.get("clarification_needed", False))
+        or workflow_status == "awaiting_clarification"
+    ):
         return "awaiting_clarification"
 
-    research_degraded = bool(_safe_dict(state.get("research_data", {})).get("degraded", False))
+    research_degraded = bool(
+        _safe_dict(state.get("research_data", {})).get("degraded", False)
+    )
     recoverable_error_present = any(
         bool(_safe_dict(item).get("recoverable", False))
         for item in _safe_list(state.get("errors", []))
@@ -362,7 +398,11 @@ def _render_text_section(title: str, content: str) -> str:
 
 
 def _render_image_prompts(state: Mapping[str, Any]) -> str:
-    prompts = [_safe_text(item) for item in _safe_list(state.get("image_prompts", [])) if _safe_text(item)]
+    prompts = [
+        _safe_text(item)
+        for item in _safe_list(state.get("image_prompts", []))
+        if _safe_text(item)
+    ]
     if not prompts:
         return ""
     lines = ["## Image Prompts"]
@@ -433,7 +473,9 @@ def build_markdown_export_document(state: Mapping[str, Any]) -> str:
     """
     content_drafts = _safe_dict(state.get("content_drafts", {}))
     blog_body = _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
-    linkedin_body = _safe_text(_safe_dict(content_drafts.get("linkedin", {})).get("body"))
+    linkedin_body = _safe_text(
+        _safe_dict(content_drafts.get("linkedin", {})).get("body")
+    )
     research_body = _safe_text(
         _safe_dict(content_drafts.get("research_report", {})).get("body")
     )

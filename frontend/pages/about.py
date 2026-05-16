@@ -17,4 +17,3 @@ def render() -> None:
             ]
         )
     )
-

@@ -38,7 +38,9 @@ def _base_state(**overrides):
 
 def test_blog_retry_increments_blog_writer_before_routing() -> None:
     state = _base_state(
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.62}}
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.62}
+        }
     )
     updates = retry_router_module.retry_router_node(state)
     routed_state = _merge_updates(state, updates)
@@ -82,8 +84,13 @@ def test_both_retry_fan_out() -> None:
 
 def test_max_retry_prevents_dispatch() -> None:
     state = _base_state(
-        retry_counts={**create_initial_state()["retry_counts"], "blog_writer": RETRY_POLICY["blog_writer"]},
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+        retry_counts={
+            **create_initial_state()["retry_counts"],
+            "blog_writer": RETRY_POLICY["blog_writer"],
+        },
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.60}
+        },
     )
     updates = retry_router_module.retry_router_node(state)
     routed_state = _merge_updates(state, updates)
@@ -97,7 +104,9 @@ def test_max_retry_prevents_dispatch() -> None:
 
 def test_session_retry_cap_routes_to_output_assembler() -> None:
     state = _base_state(
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.60}
+        },
         cost_controls={
             "tokens_used_this_session": 0,
             "search_queries_used_this_session": 0,
@@ -116,7 +125,9 @@ def test_session_retry_cap_routes_to_output_assembler() -> None:
 
 def test_retry_feedback_populated() -> None:
     state = _base_state(
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.63}}
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.63}
+        }
     )
     updates = retry_router_module.retry_router_node(state)
 
@@ -128,7 +139,9 @@ def test_retry_feedback_populated() -> None:
 
 def test_route_after_retry_router_sees_post_increment_counts() -> None:
     state = _base_state(
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.61}}
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.61}
+        }
     )
     first_updates = retry_router_module.retry_router_node(state)
     first_state = _merge_updates(state, first_updates)
@@ -156,7 +169,9 @@ def test_explicit_retry_target_without_retry_needed_score_does_not_increment() -
 
 def test_retry_routing_terminates_within_retry_caps() -> None:
     state = _base_state(
-        quality_scores={"blog": {"validation_status": "retry_needed", "composite": 0.60}},
+        quality_scores={
+            "blog": {"validation_status": "retry_needed", "composite": 0.60}
+        },
         retry_counts={**create_initial_state()["retry_counts"], "blog_writer": 0},
     )
 
@@ -170,10 +185,14 @@ def test_retry_routing_terminates_within_retry_caps() -> None:
             assert route == OUTPUT_ASSEMBLER_NODE
             break
     else:
-        raise AssertionError("Retry router did not terminate within expected bounded iterations.")
+        raise AssertionError(
+            "Retry router did not terminate within expected bounded iterations."
+        )
 
 
-def test_route_from_retry_router_never_returns_invalid_node_for_bad_retry_targets() -> None:
+def test_route_from_retry_router_never_returns_invalid_node_for_bad_retry_targets() -> (
+    None
+):
     state = _base_state(
         _retry_counts_incremented=True,
         retry_requested=True,

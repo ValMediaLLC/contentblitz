@@ -134,9 +134,7 @@ class ContentBlitzState:
     cache_metadata: Dict[str, Any] = field(
         default_factory=build_cache_metadata_defaults
     )
-    cost_controls: Dict[str, Any] = field(
-        default_factory=build_cost_controls_defaults
-    )
+    cost_controls: Dict[str, Any] = field(default_factory=build_cost_controls_defaults)
 
 
 def create_initial_state(**overrides: Any) -> Dict[str, Any]:

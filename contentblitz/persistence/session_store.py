@@ -43,7 +43,9 @@ class LocalSessionStore:
 
         path = self._run_path(run_id)
         temp_path = path.with_suffix(".tmp")
-        serialized = json.dumps(dict(run_payload), indent=2, ensure_ascii=True, sort_keys=True)
+        serialized = json.dumps(
+            dict(run_payload), indent=2, ensure_ascii=True, sort_keys=True
+        )
         temp_path.write_text(serialized, encoding="utf-8")
         temp_path.replace(path)
         return run_id

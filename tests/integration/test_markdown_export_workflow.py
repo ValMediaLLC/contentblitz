@@ -26,8 +26,16 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
             "research_report": {"body": "Research report integration body"},
         },
         best_drafts={
-            "blog": {"body": "Blog integration draft body", "composite": 0.91, "version": 1},
-            "linkedin": {"body": "LinkedIn integration draft body", "composite": 0.9, "version": 1},
+            "blog": {
+                "body": "Blog integration draft body",
+                "composite": 0.91,
+                "version": 1,
+            },
+            "linkedin": {
+                "body": "LinkedIn integration draft body",
+                "composite": 0.9,
+                "version": 1,
+            },
         },
         quality_scores={
             "blog": {"validation_status": "passed", "composite": 0.91},
@@ -38,7 +46,10 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
             {
                 "status": "failed",
                 "provider": "dall-e-3",
-                "error": {"message": "OPENAI_API_KEY is not configured", "recoverable": True},
+                "error": {
+                    "message": "OPENAI_API_KEY is not configured",
+                    "recoverable": True,
+                },
             }
         ],
         sources=[
@@ -62,7 +73,9 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
     )
 
 
-def test_markdown_export_pipeline_creates_file_and_preserves_sections(tmp_path, monkeypatch) -> None:
+def test_markdown_export_pipeline_creates_file_and_preserves_sections(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=True, formats_requested=["markdown"])
     assembled = output_assembler_node(state)
@@ -96,7 +109,9 @@ def test_markdown_export_pipeline_creates_file_and_preserves_sections(tmp_path, 
     assert "- Workflow Status: `partial_success`" in content
 
 
-def test_export_skipped_behavior_no_markdown_path_when_not_requested(tmp_path, monkeypatch) -> None:
+def test_export_skipped_behavior_no_markdown_path_when_not_requested(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=False, formats_requested=[])
     assembled = output_assembler_node(state)
@@ -108,7 +123,9 @@ def test_export_skipped_behavior_no_markdown_path_when_not_requested(tmp_path, m
     assert metadata["export_status"] == {}
 
 
-def test_markdown_workflow_summary_uses_aggregated_status(tmp_path, monkeypatch) -> None:
+def test_markdown_workflow_summary_uses_aggregated_status(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=True, formats_requested=["markdown"])
     state["workflow_status"] = "success"
@@ -137,7 +154,9 @@ def test_markdown_workflow_summary_uses_aggregated_status(tmp_path, monkeypatch)
     assert "Research results are degraded" in content
 
 
-def test_persisted_session_restores_export_metadata_safely(tmp_path, monkeypatch) -> None:
+def test_persisted_session_restores_export_metadata_safely(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _workflow_state(export_requested=True, formats_requested=["markdown"])
     assembled = output_assembler_node(state)

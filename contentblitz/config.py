@@ -75,7 +75,11 @@ def build_cache_metadata_defaults() -> Dict[str, Any]:
         except (TypeError, ValueError):
             defaults["ttl_seconds"] = CACHE_METADATA_DEFAULTS["ttl_seconds"]
 
-    raw_backend = str(os.getenv("CONTENTBLITZ_CACHE_BACKEND", defaults["backend"])).strip().lower()
+    raw_backend = (
+        str(os.getenv("CONTENTBLITZ_CACHE_BACKEND", defaults["backend"]))
+        .strip()
+        .lower()
+    )
     if raw_backend in {"sqlite", "in_memory", "in-memory", "memory", "inmemory"}:
         defaults["backend"] = "sqlite" if raw_backend == "sqlite" else "in_memory"
     else:

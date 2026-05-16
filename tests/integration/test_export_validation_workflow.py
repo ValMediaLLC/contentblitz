@@ -27,8 +27,16 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
             "research_report": {"body": "Research report integration body"},
         },
         best_drafts={
-            "blog": {"body": "Blog integration draft body", "composite": 0.91, "version": 1},
-            "linkedin": {"body": "LinkedIn integration draft body", "composite": 0.9, "version": 1},
+            "blog": {
+                "body": "Blog integration draft body",
+                "composite": 0.91,
+                "version": 1,
+            },
+            "linkedin": {
+                "body": "LinkedIn integration draft body",
+                "composite": 0.9,
+                "version": 1,
+            },
         },
         quality_scores={
             "blog": {"validation_status": "passed", "composite": 0.91},
@@ -55,15 +63,21 @@ def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> 
     )
 
 
-def test_invalid_markdown_does_not_block_valid_html_export(tmp_path, monkeypatch) -> None:
+def test_invalid_markdown_does_not_block_valid_html_export(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
 
     def fake_markdown_validation(*args, **kwargs):
         return {"valid": False, "warnings": [], "errors": ["malformed markdown"]}
 
-    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_markdown_validation)
+    monkeypatch.setattr(
+        export_node_module, "validate_markdown_export", fake_markdown_validation
+    )
 
-    state = _workflow_state(export_requested=True, formats_requested=["markdown", "html"])
+    state = _workflow_state(
+        export_requested=True, formats_requested=["markdown", "html"]
+    )
     assembled = output_assembler_node(state)
     merged = {**state, **assembled}
 
@@ -83,9 +97,13 @@ def test_validation_failure_metadata_restores_safely(tmp_path, monkeypatch) -> N
     def fake_markdown_validation(*args, **kwargs):
         return {"valid": False, "warnings": [], "errors": ["malformed markdown"]}
 
-    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_markdown_validation)
+    monkeypatch.setattr(
+        export_node_module, "validate_markdown_export", fake_markdown_validation
+    )
 
-    state = _workflow_state(export_requested=True, formats_requested=["markdown", "pdf"])
+    state = _workflow_state(
+        export_requested=True, formats_requested=["markdown", "pdf"]
+    )
     assembled = output_assembler_node(state)
     merged = {**state, **assembled}
     export_updates = export_node_module.export_node(merged)
@@ -107,7 +125,9 @@ def test_validation_failure_metadata_restores_safely(tmp_path, monkeypatch) -> N
     assert export_metadata["export_status"]["pdf"] in {"completed", "failed"}
 
 
-def test_invalid_citations_add_warning_without_blocking_safe_markdown_export(tmp_path, monkeypatch) -> None:
+def test_invalid_citations_add_warning_without_blocking_safe_markdown_export(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
 
     state = _workflow_state(export_requested=True, formats_requested=["markdown"])
@@ -134,4 +154,7 @@ def test_invalid_citations_add_warning_without_blocking_safe_markdown_export(tmp
         if item.get("code") == "markdown_validation_warning"
     ]
     assert warning_entries
-    assert any("citation validation" in entry.get("message", "").lower() for entry in warning_entries)
+    assert any(
+        "citation validation" in entry.get("message", "").lower()
+        for entry in warning_entries
+    )

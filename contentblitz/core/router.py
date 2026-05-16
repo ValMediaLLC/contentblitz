@@ -35,4 +35,3 @@ def route_with_retry(
 def retry_snapshot(state: MutableMapping[str, Any]) -> Dict[str, int]:
     """Return a copy of retry counters."""
     return dict(state.get("retry_counts", {}))
-

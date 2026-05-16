@@ -36,7 +36,9 @@ def _assert_result_shape(result, *, max_results: int) -> None:
         assert item.title
         assert isinstance(item.citation_available, bool)
         if item.citation_available:
-            assert isinstance(item.url, str) and item.url.startswith(("http://", "https://"))
+            assert isinstance(item.url, str) and item.url.startswith(
+                ("http://", "https://")
+            )
 
 
 def test_live_search_web_serp_provider():
@@ -60,7 +62,9 @@ def test_live_search_web_auto_provider():
     has_serp = bool(os.getenv("SERP_API_KEY"))
     has_perplexity = bool(os.getenv("PERPLEXITY_API_KEY"))
     if not has_serp and not has_perplexity:
-        pytest.skip("SERP_API_KEY or PERPLEXITY_API_KEY is required for provider='auto'.")
+        pytest.skip(
+            "SERP_API_KEY or PERPLEXITY_API_KEY is required for provider='auto'."
+        )
 
     result = search_web(
         query="best practices for AI content quality workflows",

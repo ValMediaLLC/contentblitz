@@ -9,7 +9,7 @@ from typing import Any, Tuple
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",
@@ -40,13 +40,13 @@ _UNSAFE_TAG_RE = re.compile(r"(?is)</?(?:iframe|object|embed)\b[^>]*>")
 _EVENT_HANDLER_ATTR_RE = re.compile(
     r"""(?is)\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"""
 )
-_UNSAFE_URL_SCHEME_RE = re.compile(r"(?i)\b(?:javascript|data|file|ftp|mailto|vbscript)\s*:")
+_UNSAFE_URL_SCHEME_RE = re.compile(
+    r"(?i)\b(?:javascript|data|file|ftp|mailto|vbscript)\s*:"
+)
 _DATA_IMAGE_RE = re.compile(r"(?i)data:image/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+")
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
-_HTML_ATTR_URL_RE = re.compile(
-    r"""(?is)\b(href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')"""
-)
+_HTML_ATTR_URL_RE = re.compile(r"""(?is)\b(href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
 
@@ -126,9 +126,7 @@ def _strip_unsafe_lines(text: str) -> str:
         stripped = line.strip()
         lowered = stripped.lower()
         if _PROMPT_LEAK_RE.search(lowered) and (
-            _PROMPT_LEAK_ACTION_RE.search(lowered)
-            or ":" in lowered
-            or "=" in lowered
+            _PROMPT_LEAK_ACTION_RE.search(lowered) or ":" in lowered or "=" in lowered
         ):
             continue
         if any(marker in lowered for marker in _STACK_TRACE_MARKERS):

@@ -78,7 +78,10 @@ def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> 
     state = {
         "workflow_status": "partial_success",
         "final_response": "Final response exists despite warnings.",
-        "research_data": {"degraded": True, "synthesized_summary": "Degraded research summary"},
+        "research_data": {
+            "degraded": True,
+            "synthesized_summary": "Degraded research summary",
+        },
         "content_drafts": {
             "blog": {"body": "Partial blog draft"},
             "linkedin": {"body": "Partial linkedin draft"},
@@ -127,12 +130,17 @@ def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> 
             "export_paths": {"markdown": "exports/content.md"},
             "error_log": [{"message": "PDF export failed: OPENAI_API_KEY=sk-secret"}],
         },
-        "cost_controls": {"total_retries_used_this_session": 1, "budget_exceeded": False},
+        "cost_controls": {
+            "total_retries_used_this_session": 1,
+            "budget_exceeded": False,
+        },
     }
 
     render_payload = build_render_payload(state=state, node_statuses=node_statuses)
     messages = build_status_messages(state=state, node_statuses=node_statuses)
-    summary = summarize_workflow_status(node_statuses, workflow_status=state["workflow_status"])
+    summary = summarize_workflow_status(
+        node_statuses, workflow_status=state["workflow_status"]
+    )
 
     assert summary == "partial_success"
     assert node_statuses["query_handler_node"] == "completed"
@@ -150,7 +158,10 @@ def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> 
     assert all("Traceback" not in item["message"] for item in render_payload["errors"])
     assert all("sk-secret" not in item["message"] for item in render_payload["errors"])
     assert any("degraded" in warning.lower() for warning in render_payload["warnings"])
-    assert any("Image generation encountered a recoverable issue" in message for message in messages)
+    assert any(
+        "Image generation encountered a recoverable issue" in message
+        for message in messages
+    )
 
 
 @pytest.mark.parametrize(
@@ -160,9 +171,13 @@ def test_mocked_full_workflow_progress_path_renders_partial_success_safely() -> 
         "create futuristic shark-themed beachwear image concepts",
     ],
 )
-def test_image_only_routing_and_rendering_remain_deterministic(query: str, monkeypatch) -> None:
+def test_image_only_routing_and_rendering_remain_deterministic(
+    query: str, monkeypatch
+) -> None:
     def fail_query_classification(*args, **kwargs):
-        raise AssertionError("query_handler.generate_text should not run for explicit image-only requests.")
+        raise AssertionError(
+            "query_handler.generate_text should not run for explicit image-only requests."
+        )
 
     def fake_prompt_enhancer(*args, **kwargs):
         return {"output": "Enhanced image prompt", "total_tokens": 0}
@@ -177,7 +192,9 @@ def test_image_only_routing_and_rendering_remain_deterministic(query: str, monke
             "error": {"code": "provider_failure"},
         }
 
-    monkeypatch.setattr(query_handler_module, "generate_text", fail_query_classification)
+    monkeypatch.setattr(
+        query_handler_module, "generate_text", fail_query_classification
+    )
     monkeypatch.setattr(image_agent_module, "generate_text", fake_prompt_enhancer)
     monkeypatch.setattr(image_agent_module, "generate_image", fake_image_provider)
 
@@ -202,7 +219,9 @@ def test_image_only_routing_and_rendering_remain_deterministic(query: str, monke
         state=final_result,
         node_statuses=derive_node_statuses(events),
     )
-    render_payload = build_render_payload(state=final_result, node_statuses=node_statuses)
+    render_payload = build_render_payload(
+        state=final_result, node_statuses=node_statuses
+    )
     summary = summarize_workflow_status(
         node_statuses,
         workflow_status=str(final_result.get("workflow_status", "")),
@@ -222,4 +241,9 @@ def test_image_only_routing_and_rendering_remain_deterministic(query: str, monke
     assert render_payload["partial_outputs"]["blog"] == ""
     assert render_payload["partial_outputs"]["linkedin"] == ""
     assert render_payload["image_prompts"]
-    assert any("recoverable issue" in msg.lower() for msg in build_status_messages(state=final_result, node_statuses=node_statuses))
+    assert any(
+        "recoverable issue" in msg.lower()
+        for msg in build_status_messages(
+            state=final_result, node_statuses=node_statuses
+        )
+    )

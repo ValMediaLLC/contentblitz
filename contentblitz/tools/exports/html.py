@@ -28,7 +28,7 @@ _NONE_NULL_RE = re.compile(r"\b(?:none|null)\b", flags=re.IGNORECASE)
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _SCRIPT_TAG_RE = re.compile(r"(?is)<script\b[^>]*>.*?</script>")
 _UNSAFE_TAG_RE = re.compile(r"(?is)</?(?:iframe|object|embed)\b[^>]*>")
@@ -102,7 +102,10 @@ def _normalize_image_error_message(error: Any) -> str:
         or '"provider":' in lowered
         or provider == "openai"
         or any(marker in lowered for marker in _STACK_TRACE_MARKERS)
-        or any(token in lowered for token in ("openai_api_key", "serp_api_key", "perplexity_api_key"))
+        or any(
+            token in lowered
+            for token in ("openai_api_key", "serp_api_key", "perplexity_api_key")
+        )
     )
     if suspicious:
         return (
@@ -182,7 +185,9 @@ def _render_image_outputs(state: Mapping[str, Any]) -> str:
 
         value = ""
         if url:
-            value = f"<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>"
+            value = (
+                f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>'
+            )
         elif identifier:
             value = escape(identifier)
         else:
@@ -226,13 +231,13 @@ def _render_sources(state: Mapping[str, Any]) -> str:
         citation_available = bool(item.get("citation_available", False)) and bool(url)
 
         if citation_available:
-            title_html = (
-                f"<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{escape(title)}</a>"
-            )
+            title_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer">{escape(title)}</a>'
         else:
             title_html = escape(title)
 
-        snippet_html = f"<div class=\"snippet\">{escape(snippet)}</div>" if snippet else ""
+        snippet_html = (
+            f'<div class="snippet">{escape(snippet)}</div>' if snippet else ""
+        )
         entries.append(f"<li>{title_html}{snippet_html}</li>")
 
     return "<section><h2>Sources</h2><ol>" + "".join(entries) + "</ol></section>"
@@ -249,8 +254,12 @@ def build_html_export_document(state: Mapping[str, Any]) -> str:
     """Build a full safe HTML export document with embedded styling."""
     content_drafts = _safe_dict(state.get("content_drafts", {}))
     blog_body = _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
-    linkedin_body = _safe_text(_safe_dict(content_drafts.get("linkedin", {})).get("body"))
-    research_body = _safe_text(_safe_dict(content_drafts.get("research_report", {})).get("body"))
+    linkedin_body = _safe_text(
+        _safe_dict(content_drafts.get("linkedin", {})).get("body")
+    )
+    research_body = _safe_text(
+        _safe_dict(content_drafts.get("research_report", {})).get("body")
+    )
     if not research_body:
         research_data = _safe_dict(state.get("research_data", {}))
         research_body = _safe_text(

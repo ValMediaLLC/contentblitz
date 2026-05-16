@@ -68,7 +68,9 @@ def _base_state(tmp_path: Path, **overrides):
     return state
 
 
-def test_markdown_document_contains_expected_sections_and_deduped_sources(tmp_path, monkeypatch) -> None:
+def test_markdown_document_contains_expected_sections_and_deduped_sources(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     markdown = build_markdown_export_document(_base_state(tmp_path))
     assert "# ContentBlitz Export" in markdown
@@ -81,7 +83,10 @@ def test_markdown_document_contains_expected_sections_and_deduped_sources(tmp_pa
     assert "## Sources" in markdown
     # source URL should only appear once after dedupe
     assert markdown.count("https://example.com/a") == 1
-    assert "- `failed` | `dall-e-3` | Image generation encountered a recoverable issue." in markdown
+    assert (
+        "- `failed` | `dall-e-3` | Image generation encountered a recoverable issue."
+        in markdown
+    )
     assert "{'code':" not in markdown
     assert "configuration_error" not in markdown
     assert "provider': 'openai'" not in markdown
@@ -89,7 +94,9 @@ def test_markdown_document_contains_expected_sections_and_deduped_sources(tmp_pa
     assert "OPENAI_API_KEY" not in markdown
 
 
-def test_markdown_workflow_summary_prefers_ui_workflow_status(tmp_path, monkeypatch) -> None:
+def test_markdown_workflow_summary_prefers_ui_workflow_status(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     markdown = build_markdown_export_document(
         _base_state(
@@ -102,7 +109,9 @@ def test_markdown_workflow_summary_prefers_ui_workflow_status(tmp_path, monkeypa
     assert "- Workflow Status: `success`" not in markdown
 
 
-def test_markdown_workflow_summary_uses_partial_success_for_degraded_nodes(tmp_path, monkeypatch) -> None:
+def test_markdown_workflow_summary_uses_partial_success_for_degraded_nodes(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     markdown = build_markdown_export_document(
         _base_state(
@@ -124,7 +133,9 @@ def test_markdown_workflow_summary_uses_partial_success_for_degraded_nodes(tmp_p
     assert "Research results are degraded" in markdown
 
 
-def test_markdown_workflow_summary_remains_success_when_clean(tmp_path, monkeypatch) -> None:
+def test_markdown_workflow_summary_remains_success_when_clean(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     markdown = build_markdown_export_document(
         _base_state(
@@ -145,7 +156,9 @@ def test_markdown_workflow_summary_remains_success_when_clean(tmp_path, monkeypa
     assert "- Workflow Status: `success`" in markdown
 
 
-def test_markdown_export_node_creates_file_and_sets_metadata(tmp_path, monkeypatch) -> None:
+def test_markdown_export_node_creates_file_and_sets_metadata(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(tmp_path)
     updates = export_node_module.export_node(state)
@@ -165,7 +178,9 @@ def test_markdown_export_node_creates_file_and_sets_metadata(tmp_path, monkeypat
     assert "Image generation encountered a recoverable issue." in content
 
 
-def test_markdown_export_removes_sensitive_and_base64_payloads(tmp_path, monkeypatch) -> None:
+def test_markdown_export_removes_sensitive_and_base64_payloads(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
@@ -198,7 +213,9 @@ def test_markdown_export_removes_sensitive_and_base64_payloads(tmp_path, monkeyp
     assert "data:image/" not in content.lower()
 
 
-def test_markdown_export_downgrades_unsafe_links_but_preserves_safe_links(tmp_path, monkeypatch) -> None:
+def test_markdown_export_downgrades_unsafe_links_but_preserves_safe_links(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
@@ -227,7 +244,9 @@ def test_markdown_export_downgrades_unsafe_links_but_preserves_safe_links(tmp_pa
     assert "data:image/" not in content.lower()
 
 
-def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(tmp_path, monkeypatch) -> None:
+def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
@@ -248,7 +267,9 @@ def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(tmp_path, m
     assert "a recoverable workflow issue was encountered." in lowered
 
 
-def test_resolve_markdown_export_path_stays_inside_export_dir(tmp_path, monkeypatch) -> None:
+def test_resolve_markdown_export_path_stays_inside_export_dir(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     path = resolve_markdown_export_path("../unsafe/../../attempt")
     assert path.suffix == ".md"

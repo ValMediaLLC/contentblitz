@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Mapping
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",
@@ -179,7 +179,9 @@ def validate_citation_sources(
                 "source": _safe_text(source.get("source")),
                 "published_at": _safe_text(source.get("published_at")) or None,
                 "citation_available": bool(safe_url),
-                "credibility_score": _as_float(source.get("credibility_score"), default=0.0),
+                "credibility_score": _as_float(
+                    source.get("credibility_score"), default=0.0
+                ),
             }
         )
 
@@ -202,4 +204,3 @@ def validate_citation_sources(
         "warning": warning,
         "valid_source_count": valid_source_count,
     }
-

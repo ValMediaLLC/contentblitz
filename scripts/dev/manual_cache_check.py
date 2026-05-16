@@ -30,7 +30,9 @@ def build_state(query):
 
 
 def main():
-    query = input("Enter research query: ").strip() or "latest AI content marketing trends"
+    query = (
+        input("Enter research query: ").strip() or "latest AI content marketing trends"
+    )
     clear_cache()
 
     print("\n==============================")
@@ -43,7 +45,9 @@ def main():
 
     first_sources = len(first.get("sources", []))
     first_cache_keys = first.get("cache_metadata", {}).get("keys", [])
-    first_searches = first.get("cost_controls", {}).get("search_queries_used_this_session", 0)
+    first_searches = first.get("cost_controls", {}).get(
+        "search_queries_used_this_session", 0
+    )
 
     print("Sources:", first_sources)
     print("Cache keys:", first_cache_keys)
@@ -56,7 +60,9 @@ def main():
     second = build_state(query)
 
     def fail_if_search_called(*args, **kwargs):
-        raise AssertionError("FAIL: search_web was called on Run 2. Cache was not used.")
+        raise AssertionError(
+            "FAIL: search_web was called on Run 2. Cache was not used."
+        )
 
     try:
         with patch(
@@ -68,7 +74,9 @@ def main():
 
         second_sources = len(second.get("sources", []))
         second_cache_keys = second.get("cache_metadata", {}).get("keys", [])
-        second_searches = second.get("cost_controls", {}).get("search_queries_used_this_session", 0)
+        second_searches = second.get("cost_controls", {}).get(
+            "search_queries_used_this_session", 0
+        )
 
         print("Sources:", second_sources)
         print("Cache keys:", second_cache_keys)

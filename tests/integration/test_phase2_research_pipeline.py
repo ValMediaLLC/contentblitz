@@ -47,7 +47,9 @@ def _make_text_client(response_resolver):
             ),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _research_text_resolver(*, prompt: str, model: str) -> dict[str, object]:
@@ -58,7 +60,9 @@ def _research_text_resolver(*, prompt: str, model: str) -> dict[str, object]:
     return {"text": "generic", "total_tokens": 5}
 
 
-def _research_only_state(*, query: str = "research phase2 query", cost_controls: dict | None = None) -> dict:
+def _research_only_state(
+    *, query: str = "research phase2 query", cost_controls: dict | None = None
+) -> dict:
     state = create_initial_state(
         user_query="",
         requested_outputs=["research"],
@@ -119,7 +123,9 @@ def test_research_only_with_serp_success_and_cache_miss_hit(monkeypatch) -> None
     monkeypatch.setattr(
         search_web_module,
         "_http_get_json",
-        lambda _url: (_ for _ in ()).throw(AssertionError("SERP should not be called on cache hit.")),
+        lambda _url: (_ for _ in ()).throw(
+            AssertionError("SERP should not be called on cache hit.")
+        ),
     )
     state_b = _research_only_state(query="research latest ai content marketing trends")
     result_b = graph.invoke(state_b)
@@ -194,7 +200,9 @@ def test_search_cap_reached_produces_partial_success(monkeypatch) -> None:
     monkeypatch.setattr(
         search_web_module,
         "_http_get_json",
-        lambda _url: (_ for _ in ()).throw(AssertionError("SERP should not run when search cap is reached.")),
+        lambda _url: (_ for _ in ()).throw(
+            AssertionError("SERP should not run when search cap is reached.")
+        ),
     )
 
     graph = build_langgraph()

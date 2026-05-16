@@ -41,7 +41,9 @@ def _build_initial_state(
     export_formats: List[str] | None,
 ) -> Dict[str, Any]:
     safe_query = str(user_query).strip()
-    safe_outputs = [str(item).strip() for item in requested_outputs if str(item).strip()]
+    safe_outputs = [
+        str(item).strip() for item in requested_outputs if str(item).strip()
+    ]
     safe_export_formats = [
         str(item).strip().lower()
         for item in (export_formats or [])
@@ -89,7 +91,11 @@ def _status_from_node_update(node_name: str, updates: Mapping[str, Any]) -> str:
         return "completed"
 
     if node_name == IMAGE_AGENT_NODE:
-        draft_status = str(_safe_dict(updates.get("draft_status", {})).get("image", "")).strip().lower()
+        draft_status = (
+            str(_safe_dict(updates.get("draft_status", {})).get("image", ""))
+            .strip()
+            .lower()
+        )
         if draft_status == "skipped":
             return "skipped"
         if draft_status == "failed":
@@ -143,9 +149,13 @@ def _event_metadata(updates: Mapping[str, Any]) -> Dict[str, Any]:
         if retry_target:
             metadata["retry_target"] = retry_target
     if "research_data" in updates:
-        metadata["research_degraded"] = bool(_safe_dict(updates.get("research_data", {})).get("degraded", False))
+        metadata["research_degraded"] = bool(
+            _safe_dict(updates.get("research_data", {})).get("degraded", False)
+        )
     if "export_metadata" in updates:
-        export_errors = _safe_list(_safe_dict(updates.get("export_metadata", {})).get("error_log", []))
+        export_errors = _safe_list(
+            _safe_dict(updates.get("export_metadata", {})).get("error_log", [])
+        )
         metadata["export_error_count"] = len(export_errors)
     return metadata
 

@@ -63,7 +63,8 @@ def test_blog_research_flow_renders_sources_usage_and_safe_output(monkeypatch) -
     assert payload["usage_summary"]["estimated_tokens_out"] > 0
     assert payload["export_status"]["requested"] is False
     assert any(
-        event.get("node_name") == "output_assembler_node" and event.get("status") == "completed"
+        event.get("node_name") == "output_assembler_node"
+        and event.get("status") == "completed"
         for event in events
     )
 
@@ -71,7 +72,11 @@ def test_blog_research_flow_renders_sources_usage_and_safe_output(monkeypatch) -
         [
             payload.get("final_response", ""),
             *payload.get("warnings", []),
-            *[item.get("message", "") for item in payload.get("errors", []) if isinstance(item, dict)],
+            *[
+                item.get("message", "")
+                for item in payload.get("errors", [])
+                if isinstance(item, dict)
+            ],
         ]
     ).lower()
     assert "traceback" not in combined_text
@@ -115,7 +120,10 @@ def test_multi_output_flow_keeps_image_failure_recoverable_and_exports_safe(
     assert payload["image_prompts"]
     assert any(item.get("status") == "failed" for item in payload["image_outputs"])
     assert any(
-        ("recoverable" in warning.lower() or "image generation failed" in warning.lower())
+        (
+            "recoverable" in warning.lower()
+            or "image generation failed" in warning.lower()
+        )
         for warning in payload["warnings"]
     )
     assert any(event.get("node_name") == "export_node" for event in events)
@@ -137,7 +145,11 @@ def test_multi_output_flow_keeps_image_failure_recoverable_and_exports_safe(
         [
             payload.get("final_response", ""),
             *payload.get("warnings", []),
-            *[item.get("message", "") for item in payload.get("errors", []) if isinstance(item, dict)],
+            *[
+                item.get("message", "")
+                for item in payload.get("errors", [])
+                if isinstance(item, dict)
+            ],
         ]
     ).lower()
     assert "traceback" not in combined_text

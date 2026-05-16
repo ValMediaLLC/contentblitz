@@ -189,7 +189,8 @@ def _deterministic_fallback(query: str) -> Dict[str, Any]:
         token in q for token in ("image", "poster", "illustration", "graphic", "visual")
     )
     research_requested = any(
-        token in q for token in ("research", "analyze", "analysis", "investigate", "sources")
+        token in q
+        for token in ("research", "analyze", "analysis", "investigate", "sources")
     )
     blog_requested = any(token in q for token in ("blog", "article", "post"))
     linkedin_requested = "linkedin" in q
@@ -198,7 +199,17 @@ def _deterministic_fallback(query: str) -> Dict[str, Any]:
         not q
         or len(words) <= 2
         or q in {"help", "not sure", "something", "anything"}
-        or ("help" in q and not any((image_requested, research_requested, blog_requested, linkedin_requested)))
+        or (
+            "help" in q
+            and not any(
+                (
+                    image_requested,
+                    research_requested,
+                    blog_requested,
+                    linkedin_requested,
+                )
+            )
+        )
     )
 
     if vague_query:
@@ -295,24 +306,28 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
-        return _with_lifecycle_fields({
-            "cost_controls": cost_controls,
-            "errors": _append_budget_error(
-                state,
-                "Session token budget exceeded before query classification.",
-            ),
-            "routing_decision": "error_handler_node",
-        })
+        return _with_lifecycle_fields(
+            {
+                "cost_controls": cost_controls,
+                "errors": _append_budget_error(
+                    state,
+                    "Session token budget exceeded before query classification.",
+                ),
+                "routing_decision": "error_handler_node",
+            }
+        )
 
     if budget_exceeded:
-        return _with_lifecycle_fields({
-            "cost_controls": cost_controls,
-            "errors": _append_budget_error(
-                state,
-                "Session budget exceeded before query classification.",
-            ),
-            "routing_decision": "error_handler_node",
-        })
+        return _with_lifecycle_fields(
+            {
+                "cost_controls": cost_controls,
+                "errors": _append_budget_error(
+                    state,
+                    "Session budget exceeded before query classification.",
+                ),
+                "routing_decision": "error_handler_node",
+            }
+        )
 
     existing_errors = state.get("errors", [])
     if isinstance(existing_errors, list) and len(existing_errors) > 0:
@@ -333,7 +348,11 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if effective_query and effective_query != query:
             injection_updates["user_query"] = effective_query
 
-    if query and injection_result.detected and not _has_safe_prompt_intent(effective_query):
+    if (
+        query
+        and injection_result.detected
+        and not _has_safe_prompt_intent(effective_query)
+    ):
         injection_updates["sanitized_user_query"] = ""
         injection_updates.pop("user_query", None)
         clarification_updates = {
@@ -349,9 +368,14 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return _with_lifecycle_fields({**clarification_updates, **injection_updates})
 
     preset_outputs = _normalize_outputs(state.get("requested_outputs", []))
-    if effective_query and preset_outputs == ["image"] and not bool(state.get("clarification_needed", False)):
+    if (
+        effective_query
+        and preset_outputs == ["image"]
+        and not bool(state.get("clarification_needed", False))
+    ):
         image_only = {
-            "intent": str(state.get("intent", "")).strip().lower() or "image_generation",
+            "intent": str(state.get("intent", "")).strip().lower()
+            or "image_generation",
             "requested_outputs": ["image"],
             "research_required": False,
             "clarification_needed": False,
@@ -403,14 +427,16 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     cost_controls = apply_text_tokens(cost_controls, llm_response)
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
-        return _with_lifecycle_fields({
-            "cost_controls": cost_controls,
-            "errors": _append_budget_error(
-                state,
-                "Session token budget exceeded during query classification.",
-            ),
-            "routing_decision": "error_handler_node",
-        })
+        return _with_lifecycle_fields(
+            {
+                "cost_controls": cost_controls,
+                "errors": _append_budget_error(
+                    state,
+                    "Session token budget exceeded during query classification.",
+                ),
+                "routing_decision": "error_handler_node",
+            }
+        )
     classified = _parse_llm_classification(llm_response)
     if classified is None:
         classified = _deterministic_fallback(effective_query)

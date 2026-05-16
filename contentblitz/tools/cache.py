@@ -97,7 +97,9 @@ def _resolve_sqlite_path() -> Path:
     raw = str(os.getenv("CONTENTBLITZ_CACHE_SQLITE_PATH", _DEFAULT_SQLITE_PATH)).strip()
     candidate = Path(raw) if raw else Path(_DEFAULT_SQLITE_PATH)
     root = Path.cwd().resolve()
-    resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    resolved = (
+        candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    )
     try:
         resolved.relative_to(root)
     except ValueError as exc:
@@ -115,7 +117,9 @@ def _active_backend() -> tuple[str, InMemoryCacheBackend | SQLiteCacheBackend]:
         cache_key = str(sqlite_path)
         backend = _SQLITE_BACKENDS.get(cache_key)
         if backend is None:
-            backend = SQLiteCacheBackend(sqlite_path, now_fn=lambda: _now_epoch_seconds())
+            backend = SQLiteCacheBackend(
+                sqlite_path, now_fn=lambda: _now_epoch_seconds()
+            )
             _SQLITE_BACKENDS[cache_key] = backend
         return "sqlite", backend
     return "in_memory", _IN_MEMORY_BACKEND
@@ -183,14 +187,20 @@ def _cache_metadata_update(state: Mapping[str, Any], cache_key: str) -> Dict[str
     cache_meta["ttl_seconds"] = _cache_ttl_seconds(state)
     cache_meta["backend"] = get_cache_backend_name()
 
-    keys = list(cache_meta.get("keys", [])) if isinstance(cache_meta.get("keys", []), list) else []
+    keys = (
+        list(cache_meta.get("keys", []))
+        if isinstance(cache_meta.get("keys", []), list)
+        else []
+    )
     if cache_key not in keys:
         keys.append(cache_key)
     cache_meta["keys"] = keys
     return {"cache_metadata": cache_meta}
 
 
-def touch_cached_research_key(state: Mapping[str, Any], cache_key: str) -> Dict[str, Any]:
+def touch_cached_research_key(
+    state: Mapping[str, Any], cache_key: str
+) -> Dict[str, Any]:
     """Return state updates that record cache key visibility on cache hits."""
     if not _cache_enabled(state):
         return {}

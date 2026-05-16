@@ -21,7 +21,7 @@ _NONE_NULL_RE = re.compile(r"\b(?:none|null)\b", flags=re.IGNORECASE)
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",

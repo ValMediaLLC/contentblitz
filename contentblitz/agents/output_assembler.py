@@ -15,7 +15,10 @@ def _safe_list(value: Any) -> List[Any]:
 
 
 def _requested_outputs(state: Mapping[str, Any]) -> List[str]:
-    outputs = [str(item).strip().lower() for item in _safe_list(state.get("requested_outputs", []))]
+    outputs = [
+        str(item).strip().lower()
+        for item in _safe_list(state.get("requested_outputs", []))
+    ]
     return [item for item in outputs if item]
 
 
@@ -33,11 +36,15 @@ def _select_text_draft(
 ) -> str:
     draft = _safe_dict(content_drafts.get(output_type, {}))
     current_body = str(draft.get("body", "")).strip()
-    current_score = _as_float(_safe_dict(quality_scores.get(output_type, {})).get("composite"), default=-1.0)
+    current_score = _as_float(
+        _safe_dict(quality_scores.get(output_type, {})).get("composite"), default=-1.0
+    )
 
     best = _safe_dict(best_drafts.get(output_type, {}))
     best_body = str(best.get("body", "")).strip()
-    best_score = _as_float(best.get("composite", best.get("composite_score")), default=-1.0)
+    best_score = _as_float(
+        best.get("composite", best.get("composite_score")), default=-1.0
+    )
 
     if best_body:
         # Best drafts are preferred when available.
@@ -92,23 +99,32 @@ def _render_sources_section(deduped_sources: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _render_research_inline_report(state: Mapping[str, Any], deduped_sources: List[Dict[str, Any]]) -> str:
+def _render_research_inline_report(
+    state: Mapping[str, Any], deduped_sources: List[Dict[str, Any]]
+) -> str:
     content_drafts = _safe_dict(state.get("content_drafts", {}))
     report = _safe_dict(content_drafts.get("research_report", {}))
     title = str(report.get("title", "")).strip() or "Research Report"
     body = str(report.get("body", "")).strip()
-    sections = [str(item).strip() for item in _safe_list(report.get("sections", [])) if str(item).strip()]
+    sections = [
+        str(item).strip()
+        for item in _safe_list(report.get("sections", []))
+        if str(item).strip()
+    ]
 
     if not body:
         query = str(state.get("user_query", "")).strip() or "Requested Topic"
         research_data = _safe_dict(state.get("research_data", {}))
-        summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-            research_data.get("summary", "")
-        ).strip()
+        summary = (
+            str(research_data.get("synthesized_summary", "")).strip()
+            or str(research_data.get("summary", "")).strip()
+        )
         if not summary:
             summary = f"Limited research data was available for '{query}'."
         key_facts = [
-            str(item).strip() for item in _safe_list(research_data.get("key_facts", [])) if str(item).strip()
+            str(item).strip()
+            for item in _safe_list(research_data.get("key_facts", []))
+            if str(item).strip()
         ]
         if not key_facts:
             key_facts = [
@@ -146,7 +162,9 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> Tuple[List[str], boo
     return warnings, partial
 
 
-def _image_summary(image_outputs: List[Dict[str, Any]], errors: List[Dict[str, Any]]) -> Tuple[str, bool]:
+def _image_summary(
+    image_outputs: List[Dict[str, Any]], errors: List[Dict[str, Any]]
+) -> Tuple[str, bool]:
     success_assets: List[str] = []
     failed = False
 
@@ -156,7 +174,11 @@ def _image_summary(image_outputs: List[Dict[str, Any]], errors: List[Dict[str, A
         status = str(output.get("status", "")).strip().lower()
         if status == "success":
             url = output.get("url")
-            asset = str(url).strip() if isinstance(url, str) and url.strip() else str(output.get("id", "")).strip()
+            asset = (
+                str(url).strip()
+                if isinstance(url, str) and url.strip()
+                else str(output.get("id", "")).strip()
+            )
             if asset:
                 success_assets.append(asset)
         elif status == "failed":
@@ -165,9 +187,8 @@ def _image_summary(image_outputs: List[Dict[str, Any]], errors: List[Dict[str, A
     for error in errors:
         if not isinstance(error, Mapping):
             continue
-        if (
-            str(error.get("agent", "")).strip() == "image_agent"
-            and bool(error.get("recoverable", False))
+        if str(error.get("agent", "")).strip() == "image_agent" and bool(
+            error.get("recoverable", False)
         ):
             failed = True
 
@@ -204,9 +225,8 @@ def _assemble_image_output(
     for error in errors:
         if not isinstance(error, Mapping):
             continue
-        if (
-            str(error.get("agent", "")).strip() == "image_agent"
-            and bool(error.get("recoverable", False))
+        if str(error.get("agent", "")).strip() == "image_agent" and bool(
+            error.get("recoverable", False)
         ):
             failed = True
 
@@ -225,9 +245,10 @@ def _assemble_image_output(
 
 def _assemble_research_output(state: Mapping[str, Any]) -> str:
     research_data = _safe_dict(state.get("research_data", {}))
-    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-        research_data.get("summary", "")
-    ).strip()
+    summary = (
+        str(research_data.get("synthesized_summary", "")).strip()
+        or str(research_data.get("summary", "")).strip()
+    )
     if not summary:
         query = str(state.get("user_query", "")).strip() or "requested topic"
         summary = f"Research summary is limited for '{query}'."
@@ -250,10 +271,18 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     best_drafts = _safe_dict(state.get("best_drafts", {}))
     quality_scores = _safe_dict(state.get("quality_scores", {}))
     errors = deepcopy(_safe_list(state.get("errors", [])))
-    sources = deepcopy([item for item in _safe_list(state.get("sources", [])) if isinstance(item, Mapping)])
+    sources = deepcopy(
+        [
+            item
+            for item in _safe_list(state.get("sources", []))
+            if isinstance(item, Mapping)
+        ]
+    )
     image_prompts = deepcopy(_safe_list(state.get("image_prompts", [])))
     image_outputs = [
-        dict(item) for item in _safe_list(state.get("image_outputs", [])) if isinstance(item, Mapping)
+        dict(item)
+        for item in _safe_list(state.get("image_outputs", []))
+        if isinstance(item, Mapping)
     ]
 
     deduped_sources = _dedupe_sources([dict(item) for item in sources])
@@ -275,14 +304,18 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             usable_content = True
     else:
         if "blog" in outputs:
-            blog_body = _select_text_draft("blog", content_drafts, best_drafts, quality_scores)
+            blog_body = _select_text_draft(
+                "blog", content_drafts, best_drafts, quality_scores
+            )
             if blog_body:
                 sections.append("## Blog Draft\n" + blog_body)
                 assembled_outputs["blog"] = blog_body
                 usable_content = True
 
         if "linkedin" in outputs:
-            linkedin_body = _select_text_draft("linkedin", content_drafts, best_drafts, quality_scores)
+            linkedin_body = _select_text_draft(
+                "linkedin", content_drafts, best_drafts, quality_scores
+            )
             if linkedin_body:
                 sections.append("## LinkedIn Draft\n" + linkedin_body)
                 assembled_outputs["linkedin"] = linkedin_body
@@ -341,7 +374,9 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         workflow_status = "failed"
     else:
-        final_response = "\n\n".join([section.strip() for section in sections if section.strip()]).strip()
+        final_response = "\n\n".join(
+            [section.strip() for section in sections if section.strip()]
+        ).strip()
         if not final_response:
             final_response = "Content assembled, but response formatting was empty."
             workflow_status = "failed"
@@ -350,7 +385,9 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))
     formats_requested = _safe_list(export_metadata.get("formats_requested", []))
-    export_requested = bool(state.get("export_requested", False)) or bool(formats_requested)
+    export_requested = bool(state.get("export_requested", False)) or bool(
+        formats_requested
+    )
 
     return {
         "final_response": final_response,

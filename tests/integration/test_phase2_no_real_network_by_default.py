@@ -23,12 +23,16 @@ def _make_text_client():
             usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _make_image_client():
     def generate(**kwargs):
-        return SimpleNamespace(data=[SimpleNamespace(url="https://img.example/network-safe.png")])
+        return SimpleNamespace(
+            data=[SimpleNamespace(url="https://img.example/network-safe.png")]
+        )
 
     return SimpleNamespace(images=SimpleNamespace(generate=generate))
 
@@ -42,8 +46,16 @@ def test_no_real_network_calls_when_providers_are_mocked(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
 
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: _make_image_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_openai_client",
+        lambda api_key: _make_image_client(),
+    )
     monkeypatch.setattr(
         search_web_module,
         "_http_get_json",
@@ -63,7 +75,9 @@ def test_no_real_network_calls_when_providers_are_mocked(monkeypatch):
         prompt="network blocked text",
         agent_key="query_handler",
     )
-    search_result = search_web_module.search_web("network blocked search", provider="serp")
+    search_result = search_web_module.search_web(
+        "network blocked search", provider="serp"
+    )
     image_result = generate_image_module.generate_image(prompt="network blocked image")
 
     assert text_result.degraded is False
@@ -86,7 +100,9 @@ def test_missing_keys_short_circuit_without_network(monkeypatch):
         agent_key="query_handler",
     )
     serp_result = search_web_module.search_web("missing key serp", provider="serp")
-    perplexity_result = search_web_module.search_web("missing key perplexity", provider="perplexity")
+    perplexity_result = search_web_module.search_web(
+        "missing key perplexity", provider="perplexity"
+    )
     image_result = generate_image_module.generate_image(prompt="missing key image")
 
     assert text_result.degraded is True

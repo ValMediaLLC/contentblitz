@@ -21,7 +21,9 @@ def _text_response(*, content: str, model: str = "gpt-4o-mini"):
 
 
 def _make_text_client(create_fn):
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create_fn)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_fn))
+    )
 
 
 def _make_image_client(generate_fn):
@@ -161,7 +163,12 @@ def test_search_web_auto_serp_degraded_then_perplexity_success(monkeypatch):
             query=query,
             results=[],
             degraded=True,
-            error={"code": "provider_unavailable", "message": "x", "provider": "serp", "recoverable": True},
+            error={
+                "code": "provider_unavailable",
+                "message": "x",
+                "provider": "serp",
+                "recoverable": True,
+            },
         ),
     )
     monkeypatch.setattr(
@@ -202,7 +209,12 @@ def test_search_web_auto_both_providers_degraded(monkeypatch):
             query=query,
             results=[],
             degraded=True,
-            error={"code": "provider_error", "message": "x", "provider": "serp", "recoverable": True},
+            error={
+                "code": "provider_error",
+                "message": "x",
+                "provider": "serp",
+                "recoverable": True,
+            },
         ),
     )
     monkeypatch.setattr(
@@ -213,7 +225,12 @@ def test_search_web_auto_both_providers_degraded(monkeypatch):
             query=query,
             results=[],
             degraded=True,
-            error={"code": "provider_error", "message": "y", "provider": "perplexity", "recoverable": True},
+            error={
+                "code": "provider_error",
+                "message": "y",
+                "provider": "perplexity",
+                "recoverable": True,
+            },
         ),
     )
 
@@ -231,7 +248,9 @@ def test_generate_image_dalle3_success_contract(monkeypatch):
 
     def generate(**kwargs):
         calls.append(kwargs)
-        return _image_response(url="https://img.example/success.png", revised_prompt="revised")
+        return _image_response(
+            url="https://img.example/success.png", revised_prompt="revised"
+        )
 
     monkeypatch.setattr(
         generate_image_module,
@@ -333,7 +352,9 @@ def test_tools_never_mutate_state_and_return_normalized_objects(monkeypatch):
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
-        lambda api_key: _make_text_client(lambda **kwargs: _text_response(content="ok", model=kwargs["model"])),
+        lambda api_key: _make_text_client(
+            lambda **kwargs: _text_response(content="ok", model=kwargs["model"])
+        ),
     )
     monkeypatch.setattr(
         search_web_module,
@@ -352,12 +373,18 @@ def test_tools_never_mutate_state_and_return_normalized_objects(monkeypatch):
     monkeypatch.setattr(
         generate_image_module,
         "_build_openai_client",
-        lambda api_key: _make_image_client(lambda **kwargs: _image_response(url="https://img.example/a.png")),
+        lambda api_key: _make_image_client(
+            lambda **kwargs: _image_response(url="https://img.example/a.png")
+        ),
     )
 
-    text_result = generate_text_module.generate_text(prompt="state immutability", agent_key="query_handler")
+    text_result = generate_text_module.generate_text(
+        prompt="state immutability", agent_key="query_handler"
+    )
     web_result = search_web_module.search_web("state immutability web", provider="serp")
-    image_result = generate_image_module.generate_image(prompt="state immutability image")
+    image_result = generate_image_module.generate_image(
+        prompt="state immutability image"
+    )
 
     assert is_dataclass(text_result)
     assert is_dataclass(web_result)

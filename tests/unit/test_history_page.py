@@ -94,7 +94,9 @@ def test_history_page_renders_usage_summary_for_loaded_run(monkeypatch) -> None:
             "ui_node_statuses": {},
         },
     )
-    monkeypatch.setattr(history_page, "restore_persisted_run", lambda _run_id: (True, "ok"))
+    monkeypatch.setattr(
+        history_page, "restore_persisted_run", lambda _run_id: (True, "ok")
+    )
     monkeypatch.setattr(history_page, "get_run_history", lambda: [])
 
     render_payload: Dict[str, Any] = {
@@ -130,7 +132,9 @@ def test_history_page_renders_usage_summary_for_loaded_run(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(history_page, "render_status_messages", lambda _messages: None)
-    monkeypatch.setattr(history_page, "render_degraded_and_error_state", lambda _payload: None)
+    monkeypatch.setattr(
+        history_page, "render_degraded_and_error_state", lambda _payload: None
+    )
     monkeypatch.setattr(history_page, "render_partial_outputs", lambda _payload: None)
     monkeypatch.setattr(history_page, "render_result_header", lambda _result: None)
     monkeypatch.setattr(history_page, "render_final_response", lambda _result: None)

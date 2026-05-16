@@ -116,7 +116,11 @@ def test_prompt_injection_workflow_restores_and_renders_without_leakage() -> Non
             str(restored.get("final_response", "")),
             str(restored.get("sanitized_user_query", "")),
             " ".join(
-                str((restored.get("content_drafts", {}) or {}).get(key, {}).get("body", ""))
+                str(
+                    (restored.get("content_drafts", {}) or {})
+                    .get(key, {})
+                    .get("body", "")
+                )
                 for key in ("blog", "linkedin", "research_report")
             ),
             " ".join(

@@ -38,7 +38,9 @@ def test_degraded_research_blog_flow_aggregates_to_partial_success() -> None:
         "research_data": {"degraded": True},
         "requested_outputs": ["blog", "research"],
     }
-    summary = summarize_workflow_status(statuses, workflow_status=state["workflow_status"])
+    summary = summarize_workflow_status(
+        statuses, workflow_status=state["workflow_status"]
+    )
     messages = build_status_messages(state=state, node_statuses=statuses)
     assert summary == "partial_success"
     assert any("Research results are degraded" in message for message in messages)
@@ -54,7 +56,9 @@ def test_degraded_research_linkedin_flow_aggregates_to_partial_success() -> None
         "research_data": {"degraded": True},
         "requested_outputs": ["linkedin", "research"],
     }
-    summary = summarize_workflow_status(statuses, workflow_status=state["workflow_status"])
+    summary = summarize_workflow_status(
+        statuses, workflow_status=state["workflow_status"]
+    )
     assert summary == "partial_success"
 
 
@@ -67,7 +71,9 @@ def test_degraded_image_only_flow_aggregates_to_partial_success() -> None:
         "requested_outputs": ["image"],
         "image_outputs": [{"status": "failed"}],
     }
-    summary = summarize_workflow_status(statuses, workflow_status=state["workflow_status"])
+    summary = summarize_workflow_status(
+        statuses, workflow_status=state["workflow_status"]
+    )
     messages = build_status_messages(state=state, node_statuses=statuses)
     assert summary == "partial_success"
     assert any("recoverable issue" in message for message in messages)
@@ -105,7 +111,9 @@ def test_clean_flow_aggregates_to_success() -> None:
     statuses["quality_validator_node"] = "completed"
     statuses["output_assembler_node"] = "completed"
     state = {"workflow_status": "success", "requested_outputs": ["blog"]}
-    summary = summarize_workflow_status(statuses, workflow_status=state["workflow_status"])
+    summary = summarize_workflow_status(
+        statuses, workflow_status=state["workflow_status"]
+    )
     assert summary == "success"
 
 
@@ -115,11 +123,16 @@ def test_recoverable_image_failure_is_reported_as_warning() -> None:
     state = {
         "workflow_status": "partial_success",
         "image_outputs": [{"status": "failed"}],
-        "errors": [{"agent": "image_agent", "recoverable": True, "message": "safe warning"}],
+        "errors": [
+            {"agent": "image_agent", "recoverable": True, "message": "safe warning"}
+        ],
         "requested_outputs": ["image"],
     }
     messages = build_status_messages(state=state, node_statuses=statuses)
-    assert any("Image generation encountered a recoverable issue" in message for message in messages)
+    assert any(
+        "Image generation encountered a recoverable issue" in message
+        for message in messages
+    )
 
 
 def test_export_failure_is_non_blocking_when_final_response_exists() -> None:
@@ -129,7 +142,10 @@ def test_export_failure_is_non_blocking_when_final_response_exists() -> None:
         "workflow_status": "partial_success",
         "final_response": "Final text exists.",
         "export_requested": True,
-        "export_metadata": {"formats_requested": ["pdf"], "error_log": [{"message": "pdf export failed"}]},
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [{"message": "pdf export failed"}],
+        },
     }
     messages = build_status_messages(state=state, node_statuses=statuses)
     assert any("exports failed" in message.lower() for message in messages)
@@ -138,7 +154,11 @@ def test_export_failure_is_non_blocking_when_final_response_exists() -> None:
 def test_export_off_marks_export_node_skipped() -> None:
     statuses = build_initial_node_statuses()
     statuses["export_node"] = "completed"
-    state = {"workflow_status": "success", "export_requested": False, "export_metadata": {"formats_requested": []}}
+    state = {
+        "workflow_status": "success",
+        "export_requested": False,
+        "export_metadata": {"formats_requested": []},
+    }
     normalized = apply_optional_node_skips(state=state, node_statuses=statuses)
     assert normalized["export_node"] == "skipped"
 
@@ -146,8 +166,13 @@ def test_export_off_marks_export_node_skipped() -> None:
 def test_terminal_failure_message_is_safe() -> None:
     statuses = build_initial_node_statuses()
     statuses["error_handler_node"] = "failed"
-    state = {"workflow_status": "failed", "errors": [{"message": "raw internal details"}]}
-    summary = summarize_workflow_status(statuses, workflow_status=state["workflow_status"])
+    state = {
+        "workflow_status": "failed",
+        "errors": [{"message": "raw internal details"}],
+    }
+    summary = summarize_workflow_status(
+        statuses, workflow_status=state["workflow_status"]
+    )
     messages = build_status_messages(state=state, node_statuses=statuses)
     assert summary == "failed"
     assert any("terminal failure" in message.lower() for message in messages)

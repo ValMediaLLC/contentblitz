@@ -147,8 +147,16 @@ def _sample_state(*, export_formats: list[str]) -> dict[str, Any]:
             "research_report": {"body": "Research report body."},
         },
         best_drafts={
-            "blog": {"body": "# Blog Draft\n\nStructured blog body.", "composite": 0.9, "version": 1},
-            "linkedin": {"body": "LinkedIn draft body.", "composite": 0.89, "version": 1},
+            "blog": {
+                "body": "# Blog Draft\n\nStructured blog body.",
+                "composite": 0.9,
+                "version": 1,
+            },
+            "linkedin": {
+                "body": "LinkedIn draft body.",
+                "composite": 0.89,
+                "version": 1,
+            },
         },
         quality_scores={
             "blog": {"validation_status": "passed", "composite": 0.9},
@@ -182,7 +190,9 @@ def _sample_state(*, export_formats: list[str]) -> dict[str, Any]:
 
 
 def _fake_generate_text_factory(call_counts: dict[str, int]):
-    def _fake_generate_text(*, prompt: str, agent_key: str, model: str = "", **kwargs) -> dict[str, Any]:
+    def _fake_generate_text(
+        *, prompt: str, agent_key: str, model: str = "", **kwargs
+    ) -> dict[str, Any]:
         del kwargs
         call_counts["generate_text"] = call_counts.get("generate_text", 0) + 1
         lowered = prompt.lower()
@@ -226,7 +236,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                 }
             return {
                 "output": json.dumps(payload),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -243,7 +257,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                             "ai content operations forecasts 2026",
                         ]
                     ),
-                    "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                    "usage": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 5,
+                        "total_tokens": 10,
+                    },
                     "degraded": False,
                     "error": None,
                     "model": model or "mock-model",
@@ -257,7 +275,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                         "content operations case studies",
                     ]
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -267,7 +289,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
         if "synthesize a concise research brief from these findings." in lowered:
             return {
                 "output": "Synthesis created from mocked, deterministic findings.",
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -285,7 +311,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                         "angle": "repeatable systems",
                     }
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -303,7 +333,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                         "angle": "operational insight",
                     }
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -319,7 +353,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                         "visual_direction": "cinematic contrast",
                     }
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -332,7 +370,11 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                     "# AI Productivity Workflows\n\n"
                     "Repeatable research, drafting, and review loops improve content quality."
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -348,17 +390,28 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
                     "What process step do you standardize first?\n"
                     "#AI #ContentOps #Marketing"
                 ),
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
                 "provider": "mock",
             }
 
-        if "enhance this image generation prompt for clarity and visual detail." in lowered:
+        if (
+            "enhance this image generation prompt for clarity and visual detail."
+            in lowered
+        ):
             return {
                 "output": "Create futuristic apparel campaign concept art with cinematic lighting.",
-                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 5,
+                    "total_tokens": 10,
+                },
                 "degraded": False,
                 "error": None,
                 "model": model or "mock-model",
@@ -369,7 +422,10 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
             "output": "",
             "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
             "degraded": True,
-            "error": {"code": "mock_unhandled_prompt", "message": "Unhandled mock prompt."},
+            "error": {
+                "code": "mock_unhandled_prompt",
+                "message": "Unhandled mock prompt.",
+            },
             "model": model or "mock-model",
             "provider": "mock",
         }
@@ -378,7 +434,9 @@ def _fake_generate_text_factory(call_counts: dict[str, int]):
 
 
 def _fake_search_web_factory(call_counts: dict[str, int]):
-    def _fake_search_web(*, query: str, depth: str = "standard", **kwargs) -> dict[str, Any]:
+    def _fake_search_web(
+        *, query: str, depth: str = "standard", **kwargs
+    ) -> dict[str, Any]:
         del kwargs
         call_counts["search_web"] = call_counts.get("search_web", 0) + 1
         lowered = query.lower()
@@ -428,7 +486,9 @@ def _fake_search_web_factory(call_counts: dict[str, int]):
 
 
 def _fake_generate_image_factory(call_counts: dict[str, int]):
-    def _fake_generate_image(*, prompt: str, style: str = "default", **kwargs) -> dict[str, Any]:
+    def _fake_generate_image(
+        *, prompt: str, style: str = "default", **kwargs
+    ) -> dict[str, Any]:
         del kwargs
         call_counts["generate_image"] = call_counts.get("generate_image", 0) + 1
         if "futuristic apparel" in prompt.lower():
@@ -476,7 +536,9 @@ class Phase3Validator:
             fn()
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
-            self.results.append(ValidationResult(name=name, passed=False, detail=detail))
+            self.results.append(
+                ValidationResult(name=name, passed=False, detail=detail)
+            )
             _fail(name, detail)
             if self.verbose:
                 traceback.print_exc()
@@ -503,7 +565,9 @@ class Phase3Validator:
         _safe_write_check(session_dir)
         _safe_write_check(tmp_dir)
 
-        key_count = sum(1 for key in PROVIDER_ENV_KEYS if str(os.getenv(key, "")).strip())
+        key_count = sum(
+            1 for key in PROVIDER_ENV_KEYS if str(os.getenv(key, "")).strip()
+        )
         if key_count == 0:
             _pass("No live provider keys required", "keys not present")
         else:
@@ -536,8 +600,14 @@ class Phase3Validator:
         docx_doc = build_docx_export_document(state)
 
         _require(markdown_doc.strip(), "Markdown export document was empty.")
-        _require("<script" not in markdown_doc.lower(), "Unsafe script survived markdown rendering.")
-        _require(validate_markdown_export(markdown_doc)["valid"], "Markdown validator failed.")
+        _require(
+            "<script" not in markdown_doc.lower(),
+            "Unsafe script survived markdown rendering.",
+        )
+        _require(
+            validate_markdown_export(markdown_doc)["valid"],
+            "Markdown validator failed.",
+        )
         _require(validate_html_export(html_doc)["valid"], "HTML validator failed.")
         _require(validate_pdf_export(pdf_doc)["valid"], "PDF validator failed.")
         _require(validate_docx_export(docx_doc)["valid"], "DOCX validator failed.")
@@ -554,12 +624,17 @@ class Phase3Validator:
             merged = {**state, **assembled}
             updates = export_node(merged)
             metadata = updates.get("export_metadata", {})
-            _require(isinstance(metadata, dict), "export_metadata missing from export node output.")
+            _require(
+                isinstance(metadata, dict),
+                "export_metadata missing from export node output.",
+            )
 
             status = dict(metadata.get("export_status", {}))
             paths = dict(metadata.get("export_paths", {}))
             for fmt in ("markdown", "html", "pdf", "docx"):
-                _require(status.get(fmt) == "completed", f"{fmt} export did not complete.")
+                _require(
+                    status.get(fmt) == "completed", f"{fmt} export did not complete."
+                )
                 path_value = str(paths.get(fmt, "")).strip()
                 _require(path_value, f"{fmt} export path missing.")
                 path = Path(path_value)
@@ -595,19 +670,31 @@ class Phase3Validator:
                 stack.enter_context(
                     patch(
                         "socket.create_connection",
-                        side_effect=AssertionError("Network access is disabled in Phase 3 dry-run validation."),
+                        side_effect=AssertionError(
+                            "Network access is disabled in Phase 3 dry-run validation."
+                        ),
                     )
                 )
                 stack.enter_context(
                     patch(
                         "urllib.request.urlopen",
-                        side_effect=AssertionError("Network access is disabled in Phase 3 dry-run validation."),
+                        side_effect=AssertionError(
+                            "Network access is disabled in Phase 3 dry-run validation."
+                        ),
                     )
                 )
                 for module in (qh, ra, cs, bw, lw, ia):
-                    stack.enter_context(patch.object(module, "generate_text", side_effect=fake_generate_text))
-                stack.enter_context(patch.object(ra, "search_web", side_effect=fake_search_web))
-                stack.enter_context(patch.object(ia, "generate_image", side_effect=fake_generate_image))
+                    stack.enter_context(
+                        patch.object(
+                            module, "generate_text", side_effect=fake_generate_text
+                        )
+                    )
+                stack.enter_context(
+                    patch.object(ra, "search_web", side_effect=fake_search_web)
+                )
+                stack.enter_context(
+                    patch.object(ia, "generate_image", side_effect=fake_generate_image)
+                )
 
                 graph = build_langgraph()
 
@@ -616,11 +703,18 @@ class Phase3Validator:
                 )
                 blog_result = graph.invoke(blog_state)
                 _require(
-                    str(blog_result.get("workflow_status", "")).strip().lower() in {"success", "partial_success"},
+                    str(blog_result.get("workflow_status", "")).strip().lower()
+                    in {"success", "partial_success"},
                     "Blog workflow did not complete safely.",
                 )
                 _require(
-                    bool(str(blog_result.get("content_drafts", {}).get("blog", {}).get("body", "")).strip()),
+                    bool(
+                        str(
+                            blog_result.get("content_drafts", {})
+                            .get("blog", {})
+                            .get("body", "")
+                        ).strip()
+                    ),
                     "Blog draft body missing in blog workflow.",
                 )
 
@@ -628,7 +722,9 @@ class Phase3Validator:
                     user_query="research AI content marketing trends for 2026",
                 )
                 degraded_result = graph.invoke(degraded_state)
-                degraded_signal = bool(degraded_result.get("research_data", {}).get("degraded", False))
+                degraded_signal = bool(
+                    degraded_result.get("research_data", {}).get("degraded", False)
+                )
                 if not degraded_signal:
                     warnings = degraded_result.get("warnings") or []
                     status_messages = degraded_result.get("status_messages") or []
@@ -636,13 +732,17 @@ class Phase3Validator:
                         *list(warnings),
                         *list(status_messages),
                     ]
-                    degraded_signal = any("degrad" in str(msg).strip().lower() for msg in degraded_messages)
+                    degraded_signal = any(
+                        "degrad" in str(msg).strip().lower()
+                        for msg in degraded_messages
+                    )
                 _require(
                     degraded_signal,
                     "Degraded workflow did not surface degraded state safely.",
                 )
                 _require(
-                    str(degraded_result.get("workflow_status", "")).strip().lower() in {"partial_success", "success"},
+                    str(degraded_result.get("workflow_status", "")).strip().lower()
+                    in {"partial_success", "success"},
                     "Degraded workflow did not complete safely.",
                 )
 
@@ -665,7 +765,8 @@ class Phase3Validator:
                 multi_result_a = graph.invoke(multi_state)
                 multi_result_b = graph.invoke(multi_state)
                 _require(
-                    str(multi_result_a.get("workflow_status", "")).strip().lower() == "partial_success",
+                    str(multi_result_a.get("workflow_status", "")).strip().lower()
+                    == "partial_success",
                     "Multi-output workflow did not produce partial_success when image failed recoverably.",
                 )
                 _require(
@@ -677,17 +778,28 @@ class Phase3Validator:
                     "Image failure was not preserved as recoverable output metadata.",
                 )
                 _require(
-                    bool(multi_result_a.get("content_drafts", {}).get("blog", {}).get("body", "").strip()),
+                    bool(
+                        multi_result_a.get("content_drafts", {})
+                        .get("blog", {})
+                        .get("body", "")
+                        .strip()
+                    ),
                     "Blog draft missing in multi-output workflow.",
                 )
                 _require(
-                    bool(multi_result_a.get("content_drafts", {}).get("linkedin", {}).get("body", "").strip()),
+                    bool(
+                        multi_result_a.get("content_drafts", {})
+                        .get("linkedin", {})
+                        .get("body", "")
+                        .strip()
+                    ),
                     "LinkedIn draft missing in multi-output workflow.",
                 )
                 export_meta_a = dict(multi_result_a.get("export_metadata", {}))
                 export_meta_b = dict(multi_result_b.get("export_metadata", {}))
                 _require(
-                    export_meta_a.get("export_paths") == export_meta_b.get("export_paths"),
+                    export_meta_a.get("export_paths")
+                    == export_meta_b.get("export_paths"),
                     "Export paths were not deterministic between identical dry-run workflow executions.",
                 )
 
@@ -700,12 +812,19 @@ class Phase3Validator:
                     "Prompt injection was not detected in dry-run workflow validation.",
                 )
                 _require(
-                    str(injection_result.get("workflow_status", "")).strip().lower() == "awaiting_clarification",
+                    str(injection_result.get("workflow_status", "")).strip().lower()
+                    == "awaiting_clarification",
                     "Prompt injection handling did not route to safe clarification behavior.",
                 )
                 lowered_final = str(injection_result.get("final_response", "")).lower()
-                _require("system prompt" not in lowered_final, "Unsafe prompt-injection content leaked to final response.")
-                _require("api key" not in lowered_final, "Unsafe key-related content leaked to final response.")
+                _require(
+                    "system prompt" not in lowered_final,
+                    "Unsafe prompt-injection content leaked to final response.",
+                )
+                _require(
+                    "api key" not in lowered_final,
+                    "Unsafe key-related content leaked to final response.",
+                )
 
                 self._session_seed_state = multi_result_a
                 self._provider_call_counts = dict(call_counts)
@@ -729,7 +848,10 @@ class Phase3Validator:
         from contentblitz.persistence.session_store import LocalSessionStore
         from contentblitz.ui.rendering import build_render_payload
 
-        _require(self._session_seed_state is not None, "Workflow seed state missing for restore validation.")
+        _require(
+            self._session_seed_state is not None,
+            "Workflow seed state missing for restore validation.",
+        )
         seed_state = dict(self._session_seed_state)
 
         tmp = _mkdtemp_path(prefix="cbx_phase3_validate_sessions_")
@@ -758,7 +880,9 @@ class Phase3Validator:
                     encoding="utf-8",
                 )
             loaded = store.load_run(run_id)
-            _require(isinstance(loaded, dict), "Session record failed to load after save.")
+            _require(
+                isinstance(loaded, dict), "Session record failed to load after save."
+            )
             restored = deserialize_workflow_run(loaded)
 
             _require(
@@ -800,12 +924,16 @@ class Phase3Validator:
         _print_header("ContentBlitz Phase 3 Validation")
         print(f"Mode: {mode_label} (non-live)")
 
-        forced_failure = str(os.getenv("CONTENTBLITZ_PHASE3_FORCE_FAIL", "")).strip().lower()
+        forced_failure = (
+            str(os.getenv("CONTENTBLITZ_PHASE3_FORCE_FAIL", "")).strip().lower()
+        )
 
         self._run_check("Environment validation", self.validate_environment)
         self._run_check("UI imports", self.validate_ui_imports)
         self._run_check("Export validation", self.validate_export_pipeline)
-        self._run_check("Non-live export generation", self.validate_non_live_export_generation)
+        self._run_check(
+            "Non-live export generation", self.validate_non_live_export_generation
+        )
         self._run_check("Dry-run workflow validation", self.validate_workflow_dry_run)
         self._run_check("Session restore validation", self.validate_session_restore)
 
@@ -817,7 +945,10 @@ class Phase3Validator:
                     detail="CONTENTBLITZ_PHASE3_FORCE_FAIL requested failure.",
                 )
             )
-            _fail("Forced failure gate", "CONTENTBLITZ_PHASE3_FORCE_FAIL requested failure.")
+            _fail(
+                "Forced failure gate",
+                "CONTENTBLITZ_PHASE3_FORCE_FAIL requested failure.",
+            )
 
         _print_header("Phase 3 Validation Summary")
         failed = [item for item in self.results if not item.passed]

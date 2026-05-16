@@ -72,7 +72,9 @@ def _base_state(tmp_path: Path, **overrides):
     return state
 
 
-def test_pdf_document_contains_expected_sections_and_markers(tmp_path, monkeypatch) -> None:
+def test_pdf_document_contains_expected_sections_and_markers(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     pdf_bytes = build_pdf_export_document(_base_state(tmp_path))
     assert pdf_bytes.startswith(b"%PDF-")
@@ -115,7 +117,9 @@ def test_pdf_export_node_creates_file_and_sets_metadata(tmp_path, monkeypatch) -
     assert content.rstrip().endswith(b"%%EOF")
 
 
-def test_pdf_export_removes_sensitive_and_base64_payloads(tmp_path, monkeypatch) -> None:
+def test_pdf_export_removes_sensitive_and_base64_payloads(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,

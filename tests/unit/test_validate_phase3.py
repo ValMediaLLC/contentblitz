@@ -39,4 +39,3 @@ def test_validate_phase3_environment_validation_succeeds_without_provider_keys(
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
 
     validator.validate_environment()
-

@@ -39,11 +39,18 @@ def _fallback_brief(
     brand_voice: Mapping[str, Any],
     research_data: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    tone = str(brand_voice.get("tone", "clear and practical")).strip() or "clear and practical"
-    audience = str(brand_voice.get("audience", "professional audience")).strip() or "professional audience"
-    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-        research_data.get("summary", "")
-    ).strip()
+    tone = (
+        str(brand_voice.get("tone", "clear and practical")).strip()
+        or "clear and practical"
+    )
+    audience = (
+        str(brand_voice.get("audience", "professional audience")).strip()
+        or "professional audience"
+    )
+    summary = (
+        str(research_data.get("synthesized_summary", "")).strip()
+        or str(research_data.get("summary", "")).strip()
+    )
     if not summary:
         summary = f"Research context for '{user_query or 'the topic'}' is limited."
 
@@ -124,11 +131,18 @@ def _build_brief_prompt(
     research_data: Mapping[str, Any],
     sources: List[Mapping[str, Any]],
 ) -> str:
-    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-        research_data.get("summary", "")
-    ).strip()
-    tone = str(brand_voice.get("tone", "clear and practical")).strip() or "clear and practical"
-    audience = str(brand_voice.get("audience", "professional audience")).strip() or "professional audience"
+    summary = (
+        str(research_data.get("synthesized_summary", "")).strip()
+        or str(research_data.get("summary", "")).strip()
+    )
+    tone = (
+        str(brand_voice.get("tone", "clear and practical")).strip()
+        or "clear and practical"
+    )
+    audience = (
+        str(brand_voice.get("audience", "professional audience")).strip()
+        or "professional audience"
+    )
     return (
         f"Create a JSON content brief for '{output_type}'.\n"
         f"User query: {user_query}\n"
@@ -146,9 +160,10 @@ def _build_research_report(
     research_data: Mapping[str, Any],
     sources: List[Mapping[str, Any]],
 ) -> Dict[str, Any]:
-    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-        research_data.get("summary", "")
-    ).strip()
+    summary = (
+        str(research_data.get("synthesized_summary", "")).strip()
+        or str(research_data.get("summary", "")).strip()
+    )
     if not summary:
         summary = f"Research context for '{user_query or 'the topic'}' is limited."
     title = f"Research Report: {user_query or 'Requested Topic'}"
@@ -175,7 +190,11 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     intent = str(state.get("intent", "")).strip()
     brand_voice = _safe_dict(state.get("brand_voice", {}))
     research_data = _safe_dict(state.get("research_data", {}))
-    sources = [item for item in _safe_list(state.get("sources", [])) if isinstance(item, Mapping)]
+    sources = [
+        item
+        for item in _safe_list(state.get("sources", []))
+        if isinstance(item, Mapping)
+    ]
 
     content_brief = deepcopy(_safe_dict(state.get("content_brief", {})))
     content_brief.setdefault("blog", {})
@@ -229,7 +248,9 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "final_response": None,
     }
 
-    if "research" in outputs and any(item in outputs for item in ("blog", "linkedin", "image")):
+    if "research" in outputs and any(
+        item in outputs for item in ("blog", "linkedin", "image")
+    ):
         content_drafts = deepcopy(_safe_dict(state.get("content_drafts", {})))
         content_drafts.setdefault("research_report", {"body": ""})
         content_drafts["research_report"] = _build_research_report(

@@ -45,15 +45,16 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
             return True
     errors = normalize_errors_for_display(_safe_list(state.get("errors", [])))
     for error in errors:
-        if (
-            str(error.get("agent", "")).strip().lower() == "image_agent"
-            and bool(error.get("recoverable", False))
+        if str(error.get("agent", "")).strip().lower() == "image_agent" and bool(
+            error.get("recoverable", False)
         ):
             return True
     return False
 
 
-def _has_terminal_failure(state: Mapping[str, Any], node_statuses: Mapping[str, str]) -> bool:
+def _has_terminal_failure(
+    state: Mapping[str, Any], node_statuses: Mapping[str, str]
+) -> bool:
     workflow_status = str(state.get("workflow_status", "")).strip().lower()
     if workflow_status in {"failed", "error", "error_handled"}:
         return True
@@ -145,7 +146,9 @@ def apply_optional_node_skips(
     }
     export_metadata = _safe_dict(state.get("export_metadata", {}))
     formats_requested = _safe_list(export_metadata.get("formats_requested", []))
-    export_requested = bool(state.get("export_requested", False)) or bool(formats_requested)
+    export_requested = bool(state.get("export_requested", False)) or bool(
+        formats_requested
+    )
 
     def _mark_skipped(node_name: str) -> None:
         current = updated.get(node_name, "pending")
@@ -175,7 +178,10 @@ def workflow_requires_clarification(
 ) -> bool:
     if bool(state.get("clarification_needed", False)):
         return True
-    if str(state.get("workflow_status", "")).strip().lower() == "awaiting_clarification":
+    if (
+        str(state.get("workflow_status", "")).strip().lower()
+        == "awaiting_clarification"
+    ):
         return True
     clarification_status = normalize_progress_status(
         node_statuses.get("clarification_node", "pending")

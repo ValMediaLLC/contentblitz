@@ -133,9 +133,9 @@ def scenario_session_retry_cap_reached() -> None:
         requested_outputs=["blog"],
     )
 
-    state["cost_controls"]["total_retries_used_this_session"] = state["cost_controls"].get(
-        "max_total_retries_per_session", 3
-    )
+    state["cost_controls"]["total_retries_used_this_session"] = state[
+        "cost_controls"
+    ].get("max_total_retries_per_session", 3)
 
     state["quality_scores"] = {
         "blog": {

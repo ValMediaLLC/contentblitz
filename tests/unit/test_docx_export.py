@@ -80,7 +80,9 @@ def _base_state(tmp_path: Path, **overrides):
     return state
 
 
-def test_docx_document_contains_expected_sections_and_markers(tmp_path, monkeypatch) -> None:
+def test_docx_document_contains_expected_sections_and_markers(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     docx_bytes = build_docx_export_document(_base_state(tmp_path))
     assert docx_bytes.startswith(b"PK")
@@ -120,7 +122,9 @@ def test_docx_export_node_creates_file_and_sets_metadata(tmp_path, monkeypatch) 
     assert content.startswith(b"PK")
 
 
-def test_docx_export_removes_sensitive_and_base64_payloads(tmp_path, monkeypatch) -> None:
+def test_docx_export_removes_sensitive_and_base64_payloads(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
@@ -178,31 +182,31 @@ def test_validate_docx_export_rejects_sensitive_payloads() -> None:
         archive.writestr(
             "[Content_Types].xml",
             (
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
-                "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
-                "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-                "<Override PartName=\"/word/document.xml\" "
-                "ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
                 "</Types>"
             ),
         )
         archive.writestr(
             "_rels/.rels",
             (
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                "<Relationship Id=\"rId1\" "
-                "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" "
-                "Target=\"word/document.xml\"/>"
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                'Target="word/document.xml"/>'
                 "</Relationships>"
             ),
         )
         archive.writestr(
             "word/document.xml",
             (
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
                 "<w:body><w:p><w:r><w:t>Traceback (most recent call last): OPENAI_API_KEY=sk-secret data:image/png;base64,AAAA</w:t></w:r></w:p></w:body>"
                 "</w:document>"
             ),
@@ -216,9 +220,10 @@ def test_validate_docx_export_rejects_sensitive_payloads() -> None:
     assert "base64" in joined
 
 
-def test_resolve_docx_export_path_stays_inside_export_dir(tmp_path, monkeypatch) -> None:
+def test_resolve_docx_export_path_stays_inside_export_dir(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     path = resolve_docx_export_path("../unsafe/../../attempt")
     assert path.suffix == ".docx"
     assert path.parent == (tmp_path / "exports").resolve()
-

@@ -28,7 +28,10 @@ def test_budget_exceeded_notice_appears_in_assembled_output() -> None:
 
     updates = output_assembler_node(state)
     assert updates["workflow_status"] == "partial_success"
-    assert "Notice: Session budget was exceeded during generation." in updates["final_response"]
+    assert (
+        "Notice: Session budget was exceeded during generation."
+        in updates["final_response"]
+    )
 
 
 def test_partial_success_possible_when_image_modality_is_blocked_by_cap() -> None:
@@ -40,7 +43,9 @@ def test_partial_success_possible_when_image_modality_is_blocked_by_cap() -> Non
             "research_report": {"body": ""},
         },
         best_drafts={"blog": None, "linkedin": None},
-        quality_scores={"blog": {"composite": 0.8, "validation_status": "passed", "passed": True}},
+        quality_scores={
+            "blog": {"composite": 0.8, "validation_status": "passed", "passed": True}
+        },
         cost_controls={
             "tokens_used_this_session": 0,
             "search_queries_used_this_session": 0,

@@ -221,7 +221,9 @@ def _call_provider(
     text = _extract_text(response)
     input_tokens, output_tokens, total_tokens = _extract_usage(response)
     response_model = getattr(response, "model", None)
-    model_used = str(response_model).strip() if isinstance(response_model, str) else model
+    model_used = (
+        str(response_model).strip() if isinstance(response_model, str) else model
+    )
     return GenerateTextResult(
         text=text,
         model=model_used,
@@ -298,7 +300,9 @@ def generate_text(
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-            except Exception as exc:  # pragma: no cover - deterministic via mocks in tests
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - deterministic via mocks in tests
                 last_error = _normalize_provider_error(exc)
 
     return _degraded_result(

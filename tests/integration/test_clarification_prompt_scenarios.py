@@ -133,6 +133,7 @@ def test_vague_content_prompt_routes_to_clarification_or_safe_fallback() -> None
     else:
         assert result["workflow_status"] != "failed"
 
+
 def test_clarification_path_appends_conversation_history() -> None:
     result = _run_prompt("blog")
 
@@ -142,6 +143,5 @@ def test_clarification_path_appends_conversation_history() -> None:
 
     assert history
     assert any(
-        item.get("role") == "user" and item.get("content") == "blog"
-        for item in history
+        item.get("role") == "user" and item.get("content") == "blog" for item in history
     )

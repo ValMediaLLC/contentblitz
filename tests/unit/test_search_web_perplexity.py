@@ -8,7 +8,9 @@ search_web_module = importlib.import_module("contentblitz.tools.search_web")
 perplexity_module = importlib.import_module("contentblitz.tools.perplexity")
 
 
-def _result(provider: str, degraded: bool, results: list[SearchResult]) -> SearchWebResult:
+def _result(
+    provider: str, degraded: bool, results: list[SearchResult]
+) -> SearchWebResult:
     return SearchWebResult(
         provider=provider,
         query="q",
@@ -36,13 +38,17 @@ def test_serp_success_does_not_call_perplexity(monkeypatch) -> None:
     )
     calls = {"perplexity": 0}
 
-    monkeypatch.setattr(search_web_module, "_search_serp", lambda query, max_results: serp_success)
+    monkeypatch.setattr(
+        search_web_module, "_search_serp", lambda query, max_results: serp_success
+    )
 
     def _perplexity_should_not_run(query: str, max_results: int):
         calls["perplexity"] += 1
         raise AssertionError("Perplexity should not run when SERP is usable.")
 
-    monkeypatch.setattr(search_web_module, "_search_perplexity_placeholder", _perplexity_should_not_run)
+    monkeypatch.setattr(
+        search_web_module, "_search_perplexity_placeholder", _perplexity_should_not_run
+    )
 
     result = search_web_module.search_web("ai workflows", provider="auto")
     assert result.provider == "serp"
@@ -69,13 +75,17 @@ def test_serp_degraded_calls_perplexity(monkeypatch) -> None:
     )
     calls = {"perplexity": 0}
 
-    monkeypatch.setattr(search_web_module, "_search_serp", lambda query, max_results: serp_degraded)
+    monkeypatch.setattr(
+        search_web_module, "_search_serp", lambda query, max_results: serp_degraded
+    )
 
     def _perplexity(query: str, max_results: int):
         calls["perplexity"] += 1
         return perplexity_success
 
-    monkeypatch.setattr(search_web_module, "_search_perplexity_placeholder", _perplexity)
+    monkeypatch.setattr(
+        search_web_module, "_search_perplexity_placeholder", _perplexity
+    )
 
     result = search_web_module.search_web("ai workflows", provider="auto")
     assert calls["perplexity"] == 1
@@ -108,7 +118,9 @@ def test_serp_exception_calls_perplexity(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(search_web_module, "_search_serp", _serp_raises)
-    monkeypatch.setattr(search_web_module, "_search_perplexity_placeholder", _perplexity)
+    monkeypatch.setattr(
+        search_web_module, "_search_perplexity_placeholder", _perplexity
+    )
 
     result = search_web_module.search_web("ai workflows", provider="auto")
     assert calls["perplexity"] == 1

@@ -125,7 +125,12 @@ def test_retry_router_route_function_does_not_increment_counters() -> None:
 def test_retry_router_routes_only_writer_nodes_or_output_assembler() -> None:
     state = create_initial_state(retry_target="linkedin")
     route = route_from_retry_router(state)
-    assert route in {BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, OUTPUT_ASSEMBLER_NODE}
+    assert route in {
+        BLOG_WRITER_NODE,
+        LINKEDIN_WRITER_NODE,
+        IMAGE_AGENT_NODE,
+        OUTPUT_ASSEMBLER_NODE,
+    }
     _assert_route_valid(route)
 
 
@@ -149,8 +154,12 @@ def test_output_assembler_routes_export_or_default_or_error() -> None:
 def test_all_routing_functions_return_non_none_and_authoritative_nodes() -> None:
     checks = [
         route_from_query_handler(create_initial_state()),
-        route_from_research_agent(create_initial_state(requested_outputs=["research", "blog"])),
-        route_from_content_strategist(create_initial_state(requested_outputs=["blog", "linkedin"])),
+        route_from_research_agent(
+            create_initial_state(requested_outputs=["research", "blog"])
+        ),
+        route_from_content_strategist(
+            create_initial_state(requested_outputs=["blog", "linkedin"])
+        ),
         route_from_quality_validator(create_initial_state()),
         route_from_retry_router(create_initial_state(retry_target="image")),
         route_from_output_assembler(create_initial_state()),

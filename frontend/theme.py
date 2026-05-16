@@ -115,4 +115,3 @@ button[kind="primary"]:hover {
 def apply_frontend_theme() -> None:
     """Apply frontend visual styling and hide duplicate default navigation."""
     st.markdown(_FRONTEND_CSS, unsafe_allow_html=True)
-

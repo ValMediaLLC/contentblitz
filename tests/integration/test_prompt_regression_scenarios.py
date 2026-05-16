@@ -75,7 +75,9 @@ def test_blog_and_linkedin_prompt_generates_both_drafts() -> None:
 
 
 def test_image_only_prompt_generates_image_prompt_and_recoverable_output() -> None:
-    result = _run_prompt("create some futuristic images that I can use on clothing designs")
+    result = _run_prompt(
+        "create some futuristic images that I can use on clothing designs"
+    )
 
     assert result["requested_outputs"] == ["image"]
     assert result["research_required"] is False
@@ -144,7 +146,9 @@ def test_ambiguous_topic_prompt_routes_to_clarification_without_crashing() -> No
 def test_garbage_input_prompt_does_not_crash() -> None:
     result = _run_prompt("asdfasdfasdf")
 
-    assert result["clarification_needed"] is True or result["workflow_status"] != "failed"
+    assert (
+        result["clarification_needed"] is True or result["workflow_status"] != "failed"
+    )
     assert _errors_are_nonfatal(result)
 
     if result["clarification_needed"] is True:
@@ -153,7 +157,9 @@ def test_garbage_input_prompt_does_not_crash() -> None:
 
 
 def test_image_concept_prompt_generates_image_prompt_without_text_drafts() -> None:
-    result = _run_prompt("generate an image concept for an AI-powered content dashboard")
+    result = _run_prompt(
+        "generate an image concept for an AI-powered content dashboard"
+    )
 
     assert result["requested_outputs"] == ["image"]
     assert result["research_required"] is False

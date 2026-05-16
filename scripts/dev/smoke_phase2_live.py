@@ -60,11 +60,17 @@ def _print_env_summary() -> None:
 def _print_commands() -> None:
     print("\nManual Commands")
     print("---------------")
-    print("pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing")
+    print(
+        "pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing"
+    )
     print("pytest tests/live -rs")
     print("python scripts/dev/smoke_phase2_live.py --dry-run")
-    print("CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py -s -rs")
-    print("CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_search_web.py -s -rs")
+    print(
+        "CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py -s -rs"
+    )
+    print(
+        "CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_search_web.py -s -rs"
+    )
     print(
         "CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 "
         "pytest tests/live/test_live_generate_image.py -s -rs"
@@ -128,11 +134,12 @@ def main() -> int:
     if os.getenv("CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS") == "1":
         status |= _run_pytest(["tests/live/test_live_generate_image.py"])
     else:
-        print("\nSkipping live image execution: CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS is not enabled.")
+        print(
+            "\nSkipping live image execution: CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS is not enabled."
+        )
 
     return 0 if status == 0 else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

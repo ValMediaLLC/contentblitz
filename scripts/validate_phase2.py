@@ -196,9 +196,15 @@ def _validate_live_skip_behavior(result: CommandResult) -> tuple[bool, str]:
     if failed > 0:
         return False, "Live tests reported failures/errors."
     if skipped <= 0:
-        return False, "Live tests were expected to skip by default but no skips were reported."
+        return (
+            False,
+            "Live tests were expected to skip by default but no skips were reported.",
+        )
     if passed > 0:
-        return False, "Live tests were expected to skip by default but some tests passed."
+        return (
+            False,
+            "Live tests were expected to skip by default but some tests passed.",
+        )
     return True, f"Skipped tests: {skipped}"
 
 
@@ -253,7 +259,9 @@ def main() -> int:
         summary = _pytest_high_level_summary(combined)
         coverage_percent = _extract_coverage_percent(combined)
         if not args.skip_coverage and coverage_percent is not None:
-            _ok(f"Unit/integration suite passed ({summary}; coverage {coverage_percent}%)")
+            _ok(
+                f"Unit/integration suite passed ({summary}; coverage {coverage_percent}%)"
+            )
         else:
             _ok(f"Unit/integration suite passed ({summary})")
     else:

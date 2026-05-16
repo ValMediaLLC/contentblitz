@@ -133,7 +133,9 @@ def test_short_marketing_prompt_routes_to_clarification() -> None:
 def test_garbage_research_like_input_does_not_crash() -> None:
     result = _run_prompt("asdfasdfasdf")
 
-    assert result["clarification_needed"] is True or result["workflow_status"] != "failed"
+    assert (
+        result["clarification_needed"] is True or result["workflow_status"] != "failed"
+    )
     assert _errors_are_nonfatal(result)
 
     if result["clarification_needed"] is True:

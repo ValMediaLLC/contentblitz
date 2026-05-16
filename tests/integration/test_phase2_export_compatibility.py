@@ -44,7 +44,13 @@ def _long_linkedin_post() -> str:
 
 def _text_payload(prompt: str) -> str:
     if "Generate 3-5 search queries as JSON list for this topic" in prompt:
-        return json.dumps(["ai workflow trends", "ai marketing benchmarks", "content ops case studies"])
+        return json.dumps(
+            [
+                "ai workflow trends",
+                "ai marketing benchmarks",
+                "content ops case studies",
+            ]
+        )
     if "Synthesize a concise research brief from these findings." in prompt:
         return "Research synthesis for export compatibility validation."
     if "Create a JSON content brief for 'blog'" in prompt:
@@ -93,20 +99,28 @@ def _make_text_client():
         return SimpleNamespace(
             model=kwargs["model"],
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-            usage=SimpleNamespace(prompt_tokens=5, completion_tokens=5, total_tokens=10),
+            usage=SimpleNamespace(
+                prompt_tokens=5, completion_tokens=5, total_tokens=10
+            ),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _make_image_client():
     def generate(**kwargs):
-        return SimpleNamespace(data=[SimpleNamespace(url="https://img.example/export-check.png")])
+        return SimpleNamespace(
+            data=[SimpleNamespace(url="https://img.example/export-check.png")]
+        )
 
     return SimpleNamespace(images=SimpleNamespace(generate=generate))
 
 
-def _export_state_for_outputs(outputs: list[str], *, research_required: bool = False) -> dict:
+def _export_state_for_outputs(
+    outputs: list[str], *, research_required: bool = False
+) -> dict:
     return create_initial_state(
         user_query="",
         requested_outputs=outputs,
@@ -125,8 +139,16 @@ def _export_state_for_outputs(outputs: list[str], *, research_required: bool = F
 def test_export_still_works_for_phase2_multimodal_output(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: _make_image_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_openai_client",
+        lambda api_key: _make_image_client(),
+    )
     monkeypatch.setattr(
         search_web_module,
         "_http_get_json",
@@ -142,7 +164,9 @@ def test_export_still_works_for_phase2_multimodal_output(monkeypatch) -> None:
         },
     )
 
-    result = build_langgraph().invoke(_export_state_for_outputs(["blog", "linkedin", "image"], research_required=True))
+    result = build_langgraph().invoke(
+        _export_state_for_outputs(["blog", "linkedin", "image"], research_required=True)
+    )
 
     assert result["final_response"].strip()
     assert result["workflow_status"] in {"success", "partial_success"}
@@ -170,7 +194,11 @@ def test_export_still_works_for_research_with_perplexity_fallback(monkeypatch) -
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setenv("PERPLEXITY_API_KEY", "px-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     monkeypatch.setattr(
         search_web_module,
         "_http_get_json",
@@ -213,4 +241,3 @@ def test_export_still_works_for_research_with_perplexity_fallback(monkeypatch) -
     assert research_export["content"].strip()
     assert research_export["filename"].endswith(".md")
     assert "(None)" not in research_export["content"]
-

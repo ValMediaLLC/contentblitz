@@ -57,7 +57,9 @@ def _text_payload_for_prompt(prompt: str) -> str:
     if "Write a LinkedIn post in plain text." in prompt:
         return _long_linkedin_post()
     if "Enhance this image generation prompt for clarity and visual detail." in prompt:
-        return "Create a high-detail operations dashboard visual with cinematic lighting."
+        return (
+            "Create a high-detail operations dashboard visual with cinematic lighting."
+        )
     return "Generic mocked provider response."
 
 
@@ -77,7 +79,9 @@ def _make_text_client(*, total_tokens: int = 12):
             ),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _make_failing_image_client():
@@ -100,11 +104,19 @@ def _preclassified_state(outputs: list[str]) -> dict:
     )
 
 
-def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(monkeypatch) -> None:
+def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     image_client, calls = _make_failing_image_client()
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: image_client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
 
     graph = build_langgraph()
     result = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
@@ -120,7 +132,9 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(monkeypa
     assert len(result.get("image_prompts", [])) >= 1
     assert all(isinstance(item, str) for item in result.get("image_prompts", []))
     assert len(result.get("image_outputs", [])) >= 1
-    assert any(item.get("status") == "failed" for item in result.get("image_outputs", []))
+    assert any(
+        item.get("status") == "failed" for item in result.get("image_outputs", [])
+    )
     assert any(item.get("recoverable") is True for item in result.get("errors", []))
     assert result["cost_controls"]["tokens_used_this_session"] > 0
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
@@ -129,33 +143,61 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(monkeypa
     assert result.get("final_response", "").strip()
 
 
-def test_parallel_fanout_state_is_deterministic_across_repeated_runs(monkeypatch) -> None:
+def test_parallel_fanout_state_is_deterministic_across_repeated_runs(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     image_client, _ = _make_failing_image_client()
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: image_client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
 
     graph = build_langgraph()
     first = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
     second = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
 
     assert first["workflow_status"] == second["workflow_status"] == "partial_success"
-    assert first["content_drafts"]["blog"]["body"] == second["content_drafts"]["blog"]["body"]
-    assert first["content_drafts"]["linkedin"]["body"] == second["content_drafts"]["linkedin"]["body"]
+    assert (
+        first["content_drafts"]["blog"]["body"]
+        == second["content_drafts"]["blog"]["body"]
+    )
+    assert (
+        first["content_drafts"]["linkedin"]["body"]
+        == second["content_drafts"]["linkedin"]["body"]
+    )
     assert first["quality_scores"] == second["quality_scores"]
     assert first["draft_status"] == second["draft_status"]
     assert first["image_prompts"] == second["image_prompts"]
     assert first["image_outputs"] == second["image_outputs"]
     assert first["errors"] == second["errors"]
-    assert first["cost_controls"]["tokens_used_this_session"] == second["cost_controls"]["tokens_used_this_session"]
-    assert first["cost_controls"]["budget_exceeded"] == second["cost_controls"]["budget_exceeded"]
+    assert (
+        first["cost_controls"]["tokens_used_this_session"]
+        == second["cost_controls"]["tokens_used_this_session"]
+    )
+    assert (
+        first["cost_controls"]["budget_exceeded"]
+        == second["cost_controls"]["budget_exceeded"]
+    )
 
 
-def test_emitted_status_warning_and_prompt_lists_remain_string_only(monkeypatch) -> None:
+def test_emitted_status_warning_and_prompt_lists_remain_string_only(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     image_client, _ = _make_failing_image_client()
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: image_client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
 
     graph = build_langgraph()
 
@@ -164,10 +206,14 @@ def test_emitted_status_warning_and_prompt_lists_remain_string_only(monkeypatch)
         requested_outputs=["blog"],
     )
     injection_result = graph.invoke(injection_state)
-    assert all(isinstance(item, str) for item in injection_result.get("status_messages", []))
+    assert all(
+        isinstance(item, str) for item in injection_result.get("status_messages", [])
+    )
     assert all(isinstance(item, str) for item in injection_result.get("warnings", []))
 
     fanout_result = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
     assert all(isinstance(item, str) for item in fanout_result.get("image_prompts", []))
-    assert all(isinstance(item, str) for item in fanout_result.get("status_messages", []))
+    assert all(
+        isinstance(item, str) for item in fanout_result.get("status_messages", [])
+    )
     assert all(isinstance(item, str) for item in fanout_result.get("warnings", []))

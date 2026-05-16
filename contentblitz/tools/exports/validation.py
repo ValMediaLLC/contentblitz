@@ -16,7 +16,7 @@ from contentblitz.quality.citations import (
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",
@@ -46,12 +46,8 @@ _EVENT_HANDLER_ATTR_RE = re.compile(
 _JAVASCRIPT_URL_RE = re.compile(r"(?i)javascript:")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
-_HTML_HREF_RE = re.compile(
-    r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')"""
-)
-_MARKDOWN_SOURCE_ENTRY_RE = re.compile(
-    r"^(?:\d+\.\s*|\[\d+\]\s+|[-*]\s+)(.+)$"
-)
+_HTML_HREF_RE = re.compile(r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_MARKDOWN_SOURCE_ENTRY_RE = re.compile(r"^(?:\d+\.\s*|\[\d+\]\s+|[-*]\s+)(.+)$")
 _MARKDOWN_SECTION_RE = re.compile(r"(?im)^##\s+([^\n]+)\s*$")
 _MIN_TEXT_EXPORT_LENGTH = 60
 _MIN_BINARY_EXPORT_LENGTH = 200
@@ -184,7 +180,9 @@ def validate_markdown_export(
     if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
         errors.append("Credential-like token content is not allowed in exports.")
     if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
-        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+        errors.append(
+            "Raw provider/configuration payload content is not allowed in exports."
+        )
     invalid_urls = _markdown_invalid_urls(text)
     if invalid_urls:
         errors.append("Unsafe or invalid URL content is not allowed in exports.")
@@ -274,7 +272,9 @@ def validate_html_export(
     if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
         errors.append("Credential-like token content is not allowed in exports.")
     if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
-        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+        errors.append(
+            "Raw provider/configuration payload content is not allowed in exports."
+        )
     if _SCRIPT_TAG_RE.search(text):
         errors.append("Script tags are not allowed in exports.")
     if _UNSAFE_HTML_TAG_RE.search(text):
@@ -355,7 +355,9 @@ def validate_pdf_export(
     if any(pattern.search(text) for pattern in _TOKEN_PATTERNS):
         errors.append("Credential-like token content is not allowed in exports.")
     if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
-        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+        errors.append(
+            "Raw provider/configuration payload content is not allowed in exports."
+        )
     if _SCRIPT_TAG_RE.search(text):
         errors.append("Script tags are not allowed in exports.")
     if _UNSAFE_HTML_TAG_RE.search(text):
@@ -457,7 +459,9 @@ def validate_docx_export(
     if any(pattern.search(document_xml) for pattern in _TOKEN_PATTERNS):
         errors.append("Credential-like token content is not allowed in exports.")
     if any(marker in lowered for marker in _RAW_PROVIDER_PAYLOAD_MARKERS):
-        errors.append("Raw provider/configuration payload content is not allowed in exports.")
+        errors.append(
+            "Raw provider/configuration payload content is not allowed in exports."
+        )
     if _SCRIPT_TAG_RE.search(document_xml):
         errors.append("Script tags are not allowed in exports.")
     if _UNSAFE_HTML_TAG_RE.search(document_xml):
@@ -491,10 +495,14 @@ def validate_docx_export(
 def normalize_validation_result(payload: Mapping[str, Any]) -> Dict[str, Any]:
     """Normalize arbitrary validation payload into a strict safe shape."""
     valid = bool(payload.get("valid", False))
-    warnings = [
-        _safe_text(item) for item in payload.get("warnings", []) if _safe_text(item)
-    ] if isinstance(payload.get("warnings", []), list) else []
-    errors = [
-        _safe_text(item) for item in payload.get("errors", []) if _safe_text(item)
-    ] if isinstance(payload.get("errors", []), list) else []
+    warnings = (
+        [_safe_text(item) for item in payload.get("warnings", []) if _safe_text(item)]
+        if isinstance(payload.get("warnings", []), list)
+        else []
+    )
+    errors = (
+        [_safe_text(item) for item in payload.get("errors", []) if _safe_text(item)]
+        if isinstance(payload.get("errors", []), list)
+        else []
+    )
     return {"valid": valid, "warnings": warnings, "errors": errors}

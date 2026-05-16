@@ -22,7 +22,11 @@ def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
     )
 
     images = []
-    if not result.degraded and isinstance(result.image_url, str) and result.image_url.strip():
+    if (
+        not result.degraded
+        and isinstance(result.image_url, str)
+        and result.image_url.strip()
+    ):
         image_item: Dict[str, Any] = {"url": result.image_url}
         if result.revised_prompt:
             image_item["revised_prompt"] = result.revised_prompt

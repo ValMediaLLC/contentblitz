@@ -44,14 +44,23 @@ def _build_prompt(
     retry_feedback: List[str],
     previous_char_count: int = 0,
 ) -> str:
-    objective = str(linkedin_brief.get("objective", "")).strip() or "Create a strong LinkedIn post."
-    audience = str(linkedin_brief.get("audience", "")).strip() or "professional audience"
+    objective = (
+        str(linkedin_brief.get("objective", "")).strip()
+        or "Create a strong LinkedIn post."
+    )
+    audience = (
+        str(linkedin_brief.get("audience", "")).strip() or "professional audience"
+    )
     tone = str(linkedin_brief.get("tone", "")).strip() or "clear, direct, and practical"
-    angle = str(linkedin_brief.get("angle", "")).strip() or "insight-driven and actionable"
+    angle = (
+        str(linkedin_brief.get("angle", "")).strip() or "insight-driven and actionable"
+    )
     structure = linkedin_brief.get("structure", [])
     structure_lines = []
     if isinstance(structure, list):
-        structure_lines = [f"- {str(item).strip()}" for item in structure if str(item).strip()]
+        structure_lines = [
+            f"- {str(item).strip()}" for item in structure if str(item).strip()
+        ]
     feedback_lines = [f"- {item}" for item in retry_feedback if str(item).strip()]
 
     prompt = (
@@ -204,7 +213,9 @@ def _fallback_post(
     cta: str,
     hashtags: List[str],
 ) -> str:
-    objective = str(linkedin_brief.get("objective", "Deliver practical insight")).strip()
+    objective = str(
+        linkedin_brief.get("objective", "Deliver practical insight")
+    ).strip()
     audience = str(linkedin_brief.get("audience", "operators and leaders")).strip()
     angle = str(linkedin_brief.get("angle", "execution-focused perspective")).strip()
     topic = user_query.strip() or "AI content execution"
@@ -260,7 +271,9 @@ def _compose_final_post(
     # Deterministically expand if still too short.
     if len(text) < _MIN_LINKEDIN_CHARS:
         topic = user_query.strip() or "AI workflow execution"
-        objective = str(linkedin_brief.get("objective", "operational consistency")).strip()
+        objective = str(
+            linkedin_brief.get("objective", "operational consistency")
+        ).strip()
         expansion = (
             f" Practical detail: align your team around one weekly priority tied to {topic}. "
             f"Then turn that into a repeatable operating step, and evaluate outcomes against {objective.lower()}."
@@ -300,7 +313,9 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     retry_feedback_state = _safe_dict(state.get("retry_feedback", {}))
     raw_feedback = retry_feedback_state.get("linkedin", [])
-    retry_feedback = [str(item).strip() for item in _safe_list(raw_feedback) if str(item).strip()]
+    retry_feedback = [
+        str(item).strip() for item in _safe_list(raw_feedback) if str(item).strip()
+    ]
     draft_status = _safe_dict(state.get("draft_status", {}))
 
     cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))

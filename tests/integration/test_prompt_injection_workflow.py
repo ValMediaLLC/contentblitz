@@ -78,9 +78,7 @@ def test_mixed_injection_prompt_sanitizes_downstream_draft_and_final_response() 
     assert "system prompt" not in result["sanitized_user_query"].lower()
     assert "api key" not in result["sanitized_user_query"].lower()
 
-    blog_body = (
-        (result.get("content_drafts") or {}).get("blog") or {}
-    ).get("body", "")
+    blog_body = ((result.get("content_drafts") or {}).get("blog") or {}).get("body", "")
     assert isinstance(blog_body, str)
     assert blog_body.strip()
 

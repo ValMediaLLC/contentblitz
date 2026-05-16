@@ -15,11 +15,19 @@ def _base_state(**overrides):
         },
         best_drafts={
             "blog": {"body": "Best blog draft body.", "composite": 0.90, "version": 2},
-            "linkedin": {"body": "Best linkedin draft body.", "composite": 0.91, "version": 2},
+            "linkedin": {
+                "body": "Best linkedin draft body.",
+                "composite": 0.91,
+                "version": 2,
+            },
         },
         quality_scores={
             "blog": {"composite": 0.80, "validation_status": "passed", "passed": True},
-            "linkedin": {"composite": 0.80, "validation_status": "passed", "passed": True},
+            "linkedin": {
+                "composite": 0.80,
+                "validation_status": "passed",
+                "passed": True,
+            },
         },
         sources=[
             {
@@ -211,7 +219,11 @@ def test_final_response_non_empty_on_success_or_partial_success() -> None:
     partial_state = _base_state(
         requested_outputs=["blog"],
         quality_scores={
-            "blog": {"composite": 0.50, "validation_status": "unverified", "passed": False},
+            "blog": {
+                "composite": 0.50,
+                "validation_status": "unverified",
+                "passed": False,
+            },
         },
     )
     partial_updates = output_assembler_module.output_assembler_node(partial_state)

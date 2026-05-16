@@ -12,7 +12,9 @@ generate_text_module = importlib.import_module("contentblitz.tools.generate_text
 generate_image_module = importlib.import_module("contentblitz.tools.generate_image")
 search_web_module = importlib.import_module("contentblitz.tools.search_web")
 perplexity_module = importlib.import_module("contentblitz.tools.perplexity")
-orchestrator_client_module = importlib.import_module("frontend.services.orchestrator_client")
+orchestrator_client_module = importlib.import_module(
+    "frontend.services.orchestrator_client"
+)
 
 
 def block_network(*args, **kwargs):
@@ -131,8 +133,12 @@ def install_mock_text_client(monkeypatch, *, total_tokens: int = 12) -> None:
             ),
         )
 
-    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: client)
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(
+        generate_text_module, "_build_openai_client", lambda api_key: client
+    )
 
 
 def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, int]:
@@ -193,7 +199,9 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
     return counters
 
 
-def install_mock_image_client(monkeypatch, *, fail_all: bool = False) -> dict[str, list[str]]:
+def install_mock_image_client(
+    monkeypatch, *, fail_all: bool = False
+) -> dict[str, list[str]]:
     calls = {"models": []}
 
     def generate(**kwargs):
@@ -202,11 +210,17 @@ def install_mock_image_client(monkeypatch, *, fail_all: bool = False) -> dict[st
         if fail_all:
             raise RuntimeError("forced image provider failure")
         return SimpleNamespace(
-            data=[SimpleNamespace(url="https://img.example/contentblitz-ui-integration.png")]
+            data=[
+                SimpleNamespace(
+                    url="https://img.example/contentblitz-ui-integration.png"
+                )
+            ]
         )
 
     client = SimpleNamespace(images=SimpleNamespace(generate=generate))
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     return calls
 
 

@@ -114,7 +114,9 @@ def render_usage_summary(render_payload: Mapping[str, Any]) -> None:
     sources_returned = _safe_int(usage.get("sources_returned"))
     export_count = _safe_int(usage.get("export_generation_count"))
     budget_state = str(usage.get("budget_state", "normal")).strip().lower() or "normal"
-    cost_level = str(usage.get("estimated_workflow_cost_level", "low")).strip().lower() or "low"
+    cost_level = (
+        str(usage.get("estimated_workflow_cost_level", "low")).strip().lower() or "low"
+    )
 
     st.subheader("Workflow Usage")
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -129,9 +131,7 @@ def render_usage_summary(render_payload: Mapping[str, Any]) -> None:
     extra_col2.metric("Image Failures", str(image_failures))
     extra_col3.metric("Exports Generated", str(export_count))
 
-    st.caption(
-        f"Budget State: {budget_state} | Estimated Cost Level: {cost_level}"
-    )
+    st.caption(f"Budget State: {budget_state} | Estimated Cost Level: {cost_level}")
 
 
 def render_final_response(result: Mapping[str, Any]) -> None:

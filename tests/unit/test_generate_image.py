@@ -28,7 +28,9 @@ class _FakeImages:
 def _install_fake_client(monkeypatch, scripted):
     images = _FakeImages(scripted)
     client = SimpleNamespace(images=images)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     return images
 
 
@@ -36,7 +38,11 @@ def test_dalle3_success_returns_image_url(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     images = _install_fake_client(
         monkeypatch,
-        [_response_with_item({"url": "https://img.example/a.png", "revised_prompt": "revised"})],
+        [
+            _response_with_item(
+                {"url": "https://img.example/a.png", "revised_prompt": "revised"}
+            )
+        ],
     )
 
     result = generate_image_module.generate_image(prompt="A futuristic city skyline.")
@@ -59,7 +65,9 @@ def test_dalle3_failure_falls_back_to_dalle2(monkeypatch) -> None:
         ],
     )
 
-    result = generate_image_module.generate_image(prompt="An abstract geometric poster.")
+    result = generate_image_module.generate_image(
+        prompt="An abstract geometric poster."
+    )
     assert result.degraded is False
     assert result.model == "dall-e-2"
     assert result.image_url == "https://img.example/fallback.png"
@@ -86,7 +94,11 @@ def test_base64_is_never_returned(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     _install_fake_client(
         monkeypatch,
-        [_response_with_item({"b64_json": "AAAABBBBCCCC", "revised_prompt": "revised prompt"})],
+        [
+            _response_with_item(
+                {"b64_json": "AAAABBBBCCCC", "revised_prompt": "revised prompt"}
+            )
+        ],
     )
 
     result = generate_image_module.generate_image(prompt="A minimalist icon sheet.")

@@ -11,7 +11,9 @@ search_web_module = importlib.import_module("contentblitz.tools.search_web")
 
 
 def _make_text_client(create_fn):
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create_fn)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_fn))
+    )
 
 
 def _make_image_client(generate_fn):
@@ -23,7 +25,7 @@ def _assert_secret_safe(error_payload: object, *secrets: str) -> None:
     for secret in secrets:
         assert secret not in error_text
     assert "Traceback" not in error_text
-    assert "File \"" not in error_text
+    assert 'File "' not in error_text
 
 
 def test_generate_text_failure_is_normalized_without_secret_or_stacktrace(monkeypatch):
@@ -31,7 +33,9 @@ def test_generate_text_failure_is_normalized_without_secret_or_stacktrace(monkey
     monkeypatch.setenv("OPENAI_API_KEY", secret)
 
     def create(**kwargs):
-        raise RuntimeError(f"provider exploded with {secret} and internal traceback details")
+        raise RuntimeError(
+            f"provider exploded with {secret} and internal traceback details"
+        )
 
     monkeypatch.setattr(
         generate_text_module,
@@ -103,12 +107,18 @@ def test_degraded_results_remain_structured_across_tools(monkeypatch):
 
     assert text_result.degraded is True
     assert isinstance(text_result.error, dict)
-    assert {"code", "message", "provider", "recoverable"} <= set(text_result.error.keys())
+    assert {"code", "message", "provider", "recoverable"} <= set(
+        text_result.error.keys()
+    )
 
     assert search_result.degraded is True
     assert isinstance(search_result.error, dict)
-    assert {"code", "message", "provider", "recoverable"} <= set(search_result.error.keys())
+    assert {"code", "message", "provider", "recoverable"} <= set(
+        search_result.error.keys()
+    )
 
     assert image_result.degraded is True
     assert isinstance(image_result.error, dict)
-    assert {"code", "message", "provider", "recoverable"} <= set(image_result.error.keys())
+    assert {"code", "message", "provider", "recoverable"} <= set(
+        image_result.error.keys()
+    )

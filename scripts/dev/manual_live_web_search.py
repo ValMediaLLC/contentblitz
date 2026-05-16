@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +17,7 @@ if os.getenv("CONTENTBLITZ_RUN_LIVE_TESTS") != "1":
     sys.exit(0)
 
 from contentblitz.tools.search_web import search_web
+
 
 def main():
     provider = input("Provider [auto/serp/perplexity]: ").strip().lower() or "auto"

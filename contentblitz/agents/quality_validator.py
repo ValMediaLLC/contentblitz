@@ -44,7 +44,9 @@ def _status_for_score(composite: float) -> Tuple[str, bool]:
     return "failed", False
 
 
-def validate_content(content_type: str, draft_body: str, context: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+def validate_content(
+    content_type: str, draft_body: str, context: Mapping[str, Any] | None = None
+) -> Dict[str, Any]:
     """
     Deterministic local scoring stub.
 
@@ -180,7 +182,9 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
         retry_requested = False
         retry_target = ""
 
-    research_requested = bool(state.get("research_required", False)) or "research" in requested_outputs
+    research_requested = (
+        bool(state.get("research_required", False)) or "research" in requested_outputs
+    )
     sources = _safe_list(state.get("sources", []))
     if research_requested or sources:
         citation_validation = validate_citation_sources(
@@ -196,7 +200,10 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "valid_source_count": int(citation_validation.get("valid_source_count", 0)),
         }
         if str(citation_validation.get("status", "")).lower() == "degraded":
-            warning = str(citation_validation.get("warning", "")).strip() or CITATION_VALIDATION_WARNING
+            warning = (
+                str(citation_validation.get("warning", "")).strip()
+                or CITATION_VALIDATION_WARNING
+            )
             if warning and warning not in status_messages:
                 status_messages.append(warning)
                 status_messages_updated = True

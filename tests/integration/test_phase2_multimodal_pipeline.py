@@ -101,7 +101,9 @@ def _make_text_client(*, total_tokens: int = 10):
             ),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _make_image_client(*, fallback_to_dalle2: bool = False):
@@ -112,7 +114,9 @@ def _make_image_client(*, fallback_to_dalle2: bool = False):
         calls["models"].append(model)
         if fallback_to_dalle2 and model == "dall-e-3":
             raise RuntimeError("primary image model failed")
-        return SimpleNamespace(data=[SimpleNamespace(url="https://img.example/phase2-image.png")])
+        return SimpleNamespace(
+            data=[SimpleNamespace(url="https://img.example/phase2-image.png")]
+        )
 
     return SimpleNamespace(images=SimpleNamespace(generate=generate)), calls
 
@@ -136,7 +140,11 @@ def _preclassified_state(
 
 def test_blog_only_with_openai_text_generation(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["blog"]))
@@ -149,7 +157,11 @@ def test_blog_only_with_openai_text_generation(monkeypatch) -> None:
 
 def test_linkedin_only_with_openai_text_generation(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["linkedin"]))
@@ -162,7 +174,11 @@ def test_linkedin_only_with_openai_text_generation(monkeypatch) -> None:
 
 def test_blog_and_linkedin_token_cost_tracking(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client(total_tokens=10))
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(total_tokens=10),
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["blog", "linkedin"]))
@@ -176,9 +192,15 @@ def test_blog_and_linkedin_token_cost_tracking(monkeypatch) -> None:
 
 def test_image_only_dalle3_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     client, calls = _make_image_client(fallback_to_dalle2=False)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["image"], research_required=False))
@@ -194,9 +216,15 @@ def test_image_only_dalle3_success(monkeypatch) -> None:
 
 def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     client, calls = _make_image_client(fallback_to_dalle2=True)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["image"], research_required=False))
@@ -204,14 +232,22 @@ def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
     assert result["workflow_status"] == "success"
     assert result["final_response"].strip()
     assert calls["models"] == ["dall-e-3", "dall-e-2"]
-    assert any(item.get("provider") == "dall-e-2" for item in result.get("image_outputs", []))
+    assert any(
+        item.get("provider") == "dall-e-2" for item in result.get("image_outputs", [])
+    )
 
 
 def test_blog_linkedin_image_all_mocked_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     client, _ = _make_image_client(fallback_to_dalle2=False)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
@@ -228,9 +264,15 @@ def test_blog_linkedin_image_all_mocked_success(monkeypatch) -> None:
 
 def test_image_cap_reached_produces_partial_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
     client, _ = _make_image_client(fallback_to_dalle2=False)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(

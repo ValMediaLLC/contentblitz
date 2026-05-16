@@ -119,9 +119,10 @@ def test_image_export_handles_recoverable_failure_gracefully() -> None:
     image_outputs = result.get("image_outputs") or []
 
     if any(output.get("status") == "failed" for output in image_outputs):
-        assert "failed" in str(image_export["content"]).lower() or "unavailable" in str(
-            image_export["content"]
-        ).lower()
+        assert (
+            "failed" in str(image_export["content"]).lower()
+            or "unavailable" in str(image_export["content"]).lower()
+        )
 
     assert _errors_are_nonfatal(result)
 
@@ -158,10 +159,7 @@ def test_export_node_does_not_mutate_best_drafts() -> None:
     assert exports.get("blog")
     assert exports.get("linkedin")
 
-    assert (
-        best_drafts["blog"]["version"]
-        == result["content_drafts"]["blog"]["version"]
-    )
+    assert best_drafts["blog"]["version"] == result["content_drafts"]["blog"]["version"]
 
     assert (
         best_drafts["linkedin"]["version"]

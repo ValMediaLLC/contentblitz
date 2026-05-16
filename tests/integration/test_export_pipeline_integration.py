@@ -33,7 +33,9 @@ def _render_payload(result: dict, events: list[dict]) -> dict:
     return build_render_payload(state=result, node_statuses=node_statuses)
 
 
-def test_export_pipeline_integrates_markdown_html_pdf_docx(tmp_path, monkeypatch) -> None:
+def test_export_pipeline_integrates_markdown_html_pdf_docx(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
@@ -54,7 +56,12 @@ def test_export_pipeline_integrates_markdown_html_pdf_docx(tmp_path, monkeypatch
     assert result
     metadata = result.get("export_metadata", {})
     assert isinstance(metadata, dict)
-    assert set(metadata.get("formats_requested", [])) >= {"markdown", "html", "pdf", "docx"}
+    assert set(metadata.get("formats_requested", [])) >= {
+        "markdown",
+        "html",
+        "pdf",
+        "docx",
+    }
 
     export_status = metadata.get("export_status", {})
     export_paths = metadata.get("export_paths", {})
@@ -83,11 +90,15 @@ def test_export_pipeline_integrates_markdown_html_pdf_docx(tmp_path, monkeypatch
 
     payload = _render_payload(result, events)
     assert payload["export_status"]["requested"] is True
-    assert set(payload["export_status"]["paths"]).issubset({"markdown", "html", "pdf", "docx"})
+    assert set(payload["export_status"]["paths"]).issubset(
+        {"markdown", "html", "pdf", "docx"}
+    )
     assert "traceback" not in payload["final_response"].lower()
 
 
-def test_export_validation_failure_marks_only_failing_format(tmp_path, monkeypatch) -> None:
+def test_export_validation_failure_marks_only_failing_format(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
@@ -98,7 +109,11 @@ def test_export_validation_failure_marks_only_failing_format(tmp_path, monkeypat
     monkeypatch.setattr(
         export_node_module,
         "validate_markdown_export",
-        lambda *args, **kwargs: {"valid": False, "warnings": [], "errors": ["malformed markdown"]},
+        lambda *args, **kwargs: {
+            "valid": False,
+            "warnings": [],
+            "errors": ["malformed markdown"],
+        },
     )
 
     _, result = collect_stream_result(
@@ -119,6 +134,8 @@ def test_export_validation_failure_marks_only_failing_format(tmp_path, monkeypat
 
     error_log = metadata.get("error_log", [])
     assert isinstance(error_log, list) and error_log
-    flattened = "\n".join(str(item.get("message", "")) for item in error_log if isinstance(item, dict)).lower()
+    flattened = "\n".join(
+        str(item.get("message", "")) for item in error_log if isinstance(item, dict)
+    ).lower()
     assert "traceback" not in flattened
     assert "openai_api_key" not in flattened

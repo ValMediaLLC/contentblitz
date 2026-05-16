@@ -22,7 +22,9 @@ from contentblitz.workflow.routing import (
     route_from_research_agent,
 )
 
-pytestmark = pytest.mark.filterwarnings("ignore:The default value of `allowed_objects` will change")
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:The default value of `allowed_objects` will change"
+)
 
 
 def _executed_nodes(compiled_graph, state) -> list[str]:
@@ -66,12 +68,19 @@ def test_research_only_routes_research_agent_to_output_assembler() -> None:
 def test_clarification_routes_to_end() -> None:
     assert GRAPH_STRUCTURE[CLARIFICATION_NODE] == [END]
     compiled = build_langgraph()
-    executed = _executed_nodes(compiled, create_initial_state(clarification_needed=True))
+    executed = _executed_nodes(
+        compiled, create_initial_state(clarification_needed=True)
+    )
     assert executed == ["query_handler_node", CLARIFICATION_NODE]
 
 
 def test_retry_router_routes_only_to_writers_or_output_assembler(monkeypatch) -> None:
-    allowed = {BLOG_WRITER_NODE, LINKEDIN_WRITER_NODE, IMAGE_AGENT_NODE, OUTPUT_ASSEMBLER_NODE}
+    allowed = {
+        BLOG_WRITER_NODE,
+        LINKEDIN_WRITER_NODE,
+        IMAGE_AGENT_NODE,
+        OUTPUT_ASSEMBLER_NODE,
+    }
     assert set(GRAPH_STRUCTURE[RETRY_ROUTER_NODE]).issubset(allowed)
 
     from contentblitz.agents import quality_validator as quality_validator_module
@@ -79,7 +88,9 @@ def test_retry_router_routes_only_to_writers_or_output_assembler(monkeypatch) ->
     def fake_validate_content(content_type, draft_body, context=None):
         return {"composite": 0.60}
 
-    monkeypatch.setattr(quality_validator_module, "validate_content", fake_validate_content)
+    monkeypatch.setattr(
+        quality_validator_module, "validate_content", fake_validate_content
+    )
 
     state = create_initial_state(requested_outputs=["blog"])
     compiled = build_langgraph()

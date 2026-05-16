@@ -89,9 +89,12 @@ def _safe_error_message(message: str, *, default: str) -> str:
     lowered = text.lower()
     if not text:
         return default
-    if "traceback" in lowered or "stack trace" in lowered or "  file \"" in lowered:
+    if "traceback" in lowered or "stack trace" in lowered or '  file "' in lowered:
         return default
-    if any(token in lowered for token in ("openai_api_key", "serp_api_key", "perplexity_api_key")):
+    if any(
+        token in lowered
+        for token in ("openai_api_key", "serp_api_key", "perplexity_api_key")
+    ):
         return default
     return text
 
@@ -135,7 +138,11 @@ def _is_safe_export_path(path_value: str, format_name: str) -> bool:
         return False
     try:
         candidate = Path(path_text)
-        resolved = candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (Path.cwd() / candidate).resolve()
+        )
         export_dir = resolve_export_dir().resolve()
         return resolved.parent == export_dir
     except Exception:
@@ -413,8 +420,12 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if fmt == "pdf":
             try:
-                content_to_export = pdf_document if pdf_document else build_pdf_document_bytes_from_text(
-                    markdown_document or final_response
+                content_to_export = (
+                    pdf_document
+                    if pdf_document
+                    else build_pdf_document_bytes_from_text(
+                        markdown_document or final_response
+                    )
                 )
                 result = export_content(content_to_export, "pdf")
                 path = _safe_text(_safe_dict(result).get("path", ""))
@@ -486,7 +497,9 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 content_to_export = (
                     docx_document
                     if docx_document
-                    else build_docx_document_bytes_from_text(markdown_document or final_response)
+                    else build_docx_document_bytes_from_text(
+                        markdown_document or final_response
+                    )
                 )
                 result = export_content(content_to_export, "docx")
                 path = _safe_text(_safe_dict(result).get("path", ""))

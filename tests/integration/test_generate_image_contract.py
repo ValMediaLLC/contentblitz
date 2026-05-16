@@ -25,7 +25,9 @@ def _mock_success_client(monkeypatch, *, url: str, revised_prompt: str | None = 
     response = SimpleNamespace(data=[SimpleNamespace(**item)])
     images = _FakeImages(response)
     client = SimpleNamespace(images=images)
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: client)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
+    )
     return images
 
 

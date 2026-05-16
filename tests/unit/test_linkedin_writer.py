@@ -39,7 +39,10 @@ def _long_linkedin_post() -> str:
 def _very_long_linkedin_post() -> str:
     return (
         "If your AI content workflow still feels random, this is the fix.\n\n"
-        + ("Most teams are not blocked by ideas. They are blocked by repeatability. " * 30)
+        + (
+            "Most teams are not blocked by ideas. They are blocked by repeatability. "
+            * 30
+        )
         + "\n\nWhat is one workflow stage you would standardize first? Share below.\n"
         "#AI #MarketingOps #ContentStrategy"
     )
@@ -72,7 +75,9 @@ def test_retry_increments_version(monkeypatch) -> None:
     assert "retry_counts" not in updates
 
 
-def test_normal_linkedin_generation_does_not_increment_retry_counts(monkeypatch) -> None:
+def test_normal_linkedin_generation_does_not_increment_retry_counts(
+    monkeypatch,
+) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
         return {"output": _long_linkedin_post()}
 
@@ -97,7 +102,10 @@ def test_hook_extracted(monkeypatch) -> None:
 
     monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
     updates = linkedin_writer_module.linkedin_writer_node(_base_state())
-    assert updates["content_drafts"]["linkedin"]["hook"] == "Stop treating AI as a writing shortcut."
+    assert (
+        updates["content_drafts"]["linkedin"]["hook"]
+        == "Stop treating AI as a writing shortcut."
+    )
 
 
 def test_cta_extracted(monkeypatch) -> None:
@@ -171,7 +179,7 @@ def test_over_length_post_truncates_cleanly_and_preserves_tail(monkeypatch) -> N
 
     head = body.split(cta, 1)[0].rstrip()
     assert source_post.startswith(head)
-    next_char = source_post[len(head):len(head) + 1]
+    next_char = source_post[len(head) : len(head) + 1]
     if next_char:
         assert next_char.isspace() or next_char in ".!?,;:"
 

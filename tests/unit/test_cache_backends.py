@@ -79,7 +79,9 @@ def test_invalid_backend_name_falls_back_to_in_memory(monkeypatch) -> None:
 
 def test_invalid_sqlite_path_falls_back_to_in_memory(monkeypatch) -> None:
     monkeypatch.setenv("CONTENTBLITZ_CACHE_BACKEND", "sqlite")
-    monkeypatch.setenv("CONTENTBLITZ_CACHE_SQLITE_PATH", "../outside_project/cache.sqlite3")
+    monkeypatch.setenv(
+        "CONTENTBLITZ_CACHE_SQLITE_PATH", "../outside_project/cache.sqlite3"
+    )
     assert cache_module.get_cache_backend_name() == "in_memory"
 
     key = cache_module.build_research_cache_key("invalid sqlite path")

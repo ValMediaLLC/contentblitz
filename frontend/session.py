@@ -89,7 +89,10 @@ def set_execution_status(status: str) -> None:
 
 
 def get_execution_status() -> str:
-    return str(st.session_state.get(KEY_EXECUTION_STATUS, "idle")).strip().lower() or "idle"
+    return (
+        str(st.session_state.get(KEY_EXECUTION_STATUS, "idle")).strip().lower()
+        or "idle"
+    )
 
 
 def set_last_submission(submission: Mapping[str, Any]) -> None:
@@ -309,12 +312,21 @@ def restore_persisted_run(run_id: str) -> tuple[bool, str]:
         return False, "Saved workflow run could not be restored."
 
     set_last_result(restored)
-    workflow_status = str(
-        restored.get("ui_workflow_status", "") or restored.get("workflow_status", "")
-    ).strip().lower()
+    workflow_status = (
+        str(
+            restored.get("ui_workflow_status", "")
+            or restored.get("workflow_status", "")
+        )
+        .strip()
+        .lower()
+    )
     set_execution_status(workflow_status or "completed")
     set_progress_events(
-        [item for item in restored.get("ui_progress_events", []) if isinstance(item, Mapping)]
+        [
+            item
+            for item in restored.get("ui_progress_events", [])
+            if isinstance(item, Mapping)
+        ]
     )
     set_node_statuses(
         {
@@ -324,7 +336,11 @@ def restore_persisted_run(run_id: str) -> tuple[bool, str]:
     )
     set_status_messages(
         [
-            *[item for item in restored.get("status_messages", []) if isinstance(item, str)],
+            *[
+                item
+                for item in restored.get("status_messages", [])
+                if isinstance(item, str)
+            ],
             "Restored saved workflow run.",
         ]
     )

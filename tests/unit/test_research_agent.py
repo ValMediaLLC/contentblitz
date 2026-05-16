@@ -106,7 +106,11 @@ def test_degraded_snippets_trigger_fallback(monkeypatch) -> None:
         if depth == "standard":
             return {
                 "results": [
-                    {"title": "SERP", "url": "https://serp.example", "snippet": "short"},
+                    {
+                        "title": "SERP",
+                        "url": "https://serp.example",
+                        "snippet": "short",
+                    },
                 ]
             }
         return {
@@ -134,13 +138,19 @@ def test_perplexity_source_shape_when_fallback_has_no_results(monkeypatch) -> No
 
     def fake_search_web(query, depth="standard"):
         if depth == "standard":
-            return {"results": [{"title": "SERP", "url": "https://serp.example", "snippet": "tiny"}]}
+            return {
+                "results": [
+                    {"title": "SERP", "url": "https://serp.example", "snippet": "tiny"}
+                ]
+            }
         return {"results": []}
 
     monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
     updates = research_agent_module.research_agent_node(state)
 
-    perplexity_sources = [item for item in updates["sources"] if item.get("provider") == "perplexity"]
+    perplexity_sources = [
+        item for item in updates["sources"] if item.get("provider") == "perplexity"
+    ]
     assert len(perplexity_sources) >= 1
     assert perplexity_sources[0]["url"] is None
     assert perplexity_sources[0]["citation_available"] is False

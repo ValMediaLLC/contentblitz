@@ -11,7 +11,9 @@ class FrontendConfig:
     app_title: str = "ContentBlitz"
     app_icon: str = "CB"
     page_title_suffix: str = "Phase 3 UI Shell"
-    default_query_placeholder: str = "Write a short LinkedIn post about AI content workflows."
+    default_query_placeholder: str = (
+        "Write a short LinkedIn post about AI content workflows."
+    )
     default_outputs: Tuple[str, ...] = ("blog", "linkedin")
     available_outputs: Tuple[str, ...] = ("research", "blog", "linkedin", "image")
     export_formats: Tuple[str, ...] = ("markdown", "html", "pdf", "docx")

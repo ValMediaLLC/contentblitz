@@ -45,4 +45,3 @@ def sanitize_export_formats(values: Iterable[str]) -> List[str]:
         seen.add(normalized)
         cleaned.append(normalized)
     return cleaned
-

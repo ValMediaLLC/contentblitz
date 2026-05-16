@@ -142,7 +142,9 @@ def test_validation_failure_marks_only_invalid_format_failed(monkeypatch) -> Non
     def fake_validate_html(*args, **kwargs):
         return {"valid": True, "warnings": [], "errors": []}
 
-    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_validate_markdown)
+    monkeypatch.setattr(
+        export_node_module, "validate_markdown_export", fake_validate_markdown
+    )
     monkeypatch.setattr(export_node_module, "validate_html_export", fake_validate_html)
 
     state = _base_state(
@@ -194,7 +196,9 @@ def test_validation_failure_adds_safe_status_message(monkeypatch) -> None:
     def fake_validate_markdown(*args, **kwargs):
         return {"valid": False, "warnings": [], "errors": ["invalid content"]}
 
-    monkeypatch.setattr(export_node_module, "validate_markdown_export", fake_validate_markdown)
+    monkeypatch.setattr(
+        export_node_module, "validate_markdown_export", fake_validate_markdown
+    )
     state = _base_state(
         export_requested=True,
         export_metadata={

@@ -9,4 +9,3 @@ __all__ = [
     "CITATION_VALIDATION_WARNING",
     "validate_citation_sources",
 ]
-

@@ -23,7 +23,7 @@ _NONE_NULL_RE = re.compile(r"\b(?:none|null)\b", flags=re.IGNORECASE)
 _STACK_TRACE_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
-    "  file \"",
+    '  file "',
 )
 _RAW_PROVIDER_PAYLOAD_MARKERS = (
     "{'code':",
@@ -103,8 +103,12 @@ def _markdown_to_lines(markdown_text: str) -> List[str]:
     return lines
 
 
-def _build_docx_paragraph_xml(*, text: str, heading_level: int | None, list_kind: str | None) -> str:
-    xml_space = ' xml:space="preserve"' if text[:1].isspace() or text[-1:].isspace() else ""
+def _build_docx_paragraph_xml(
+    *, text: str, heading_level: int | None, list_kind: str | None
+) -> str:
+    xml_space = (
+        ' xml:space="preserve"' if text[:1].isspace() or text[-1:].isspace() else ""
+    )
     escaped_text = escape(text)
 
     ppr_segments: List[str] = []
@@ -113,15 +117,17 @@ def _build_docx_paragraph_xml(*, text: str, heading_level: int | None, list_kind
     if heading_level:
         run_props_segments.append("<w:b/>")
         heading_size = {1: "40", 2: "32", 3: "28"}.get(heading_level, "24")
-        run_props_segments.append(f"<w:sz w:val=\"{heading_size}\"/>")
-        ppr_segments.append("<w:spacing w:before=\"240\" w:after=\"120\"/>")
+        run_props_segments.append(f'<w:sz w:val="{heading_size}"/>')
+        ppr_segments.append('<w:spacing w:before="240" w:after="120"/>')
     elif list_kind:
-        ppr_segments.append("<w:spacing w:after=\"60\"/>")
+        ppr_segments.append('<w:spacing w:after="60"/>')
     else:
-        ppr_segments.append("<w:spacing w:after=\"100\"/>")
+        ppr_segments.append('<w:spacing w:after="100"/>')
 
     ppr = f"<w:pPr>{''.join(ppr_segments)}</w:pPr>" if ppr_segments else ""
-    run_props = f"<w:rPr>{''.join(run_props_segments)}</w:rPr>" if run_props_segments else ""
+    run_props = (
+        f"<w:rPr>{''.join(run_props_segments)}</w:rPr>" if run_props_segments else ""
+    )
     return f"<w:p>{ppr}<w:r>{run_props}<w:t{xml_space}>{escaped_text}</w:t></w:r></w:p>"
 
 
@@ -178,15 +184,15 @@ def _build_document_xml_from_lines(lines: List[str]) -> str:
 
     sect_pr = (
         "<w:sectPr>"
-        "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>"
-        "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\""
-        " w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>"
+        '<w:pgSz w:w="12240" w:h="15840"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"'
+        ' w:header="708" w:footer="708" w:gutter="0"/>'
         "</w:sectPr>"
     )
     body_xml = "".join(body_parts) + sect_pr
     return (
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        f"<w:document xmlns:w=\"{_WORD_MAIN_NS}\">"
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{_WORD_MAIN_NS}">'
         f"<w:body>{body_xml}</w:body>"
         "</w:document>"
     )
@@ -194,23 +200,23 @@ def _build_document_xml_from_lines(lines: List[str]) -> str:
 
 def _docx_content_types_xml() -> str:
     return (
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
-        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
-        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-        "<Override PartName=\"/word/document.xml\" "
-        "ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         "</Types>"
     )
 
 
 def _docx_root_relationships_xml() -> str:
     return (
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-        "<Relationship Id=\"rId1\" "
-        "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" "
-        "Target=\"word/document.xml\"/>"
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/>'
         "</Relationships>"
     )
 

@@ -83,7 +83,9 @@ def test_research_only_output_is_assembled_from_research_data() -> None:
 
 
 def test_image_only_recoverable_failure_is_assembled_gracefully() -> None:
-    result = _run_prompt("create some futuristic images that I can use on clothing designs")
+    result = _run_prompt(
+        "create some futuristic images that I can use on clothing designs"
+    )
 
     assembled = _assembled_outputs(result)
 
@@ -95,9 +97,10 @@ def test_image_only_recoverable_failure_is_assembled_gracefully() -> None:
     image_outputs = result.get("image_outputs") or []
     if any(output.get("status") == "failed" for output in image_outputs):
         assert any(output.get("recoverable") is True for output in image_outputs)
-        assert "failed" in str(assembled.get("image")).lower() or "unavailable" in str(
-            assembled.get("image")
-        ).lower()
+        assert (
+            "failed" in str(assembled.get("image")).lower()
+            or "unavailable" in str(assembled.get("image")).lower()
+        )
 
     assert _errors_are_nonfatal(result)
 

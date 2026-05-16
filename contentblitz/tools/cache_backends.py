@@ -112,7 +112,10 @@ class SQLiteCacheBackend:
                 if row is None:
                     return None
                 value_json, expires_at = row
-                if isinstance(expires_at, (int, float)) and int(expires_at) <= self._now():
+                if (
+                    isinstance(expires_at, (int, float))
+                    and int(expires_at) <= self._now()
+                ):
                     conn.execute("DELETE FROM cache_entries WHERE key = ?", (key,))
                     conn.commit()
                     return None

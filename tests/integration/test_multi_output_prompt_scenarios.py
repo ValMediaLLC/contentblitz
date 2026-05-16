@@ -180,7 +180,9 @@ def test_all_output_prompt_preserves_independent_state_sections() -> None:
     assert _errors_are_nonfatal(result)
 
 
-def test_multi_output_prompt_does_not_increment_retry_counter_on_passed_quality() -> None:
+def test_multi_output_prompt_does_not_increment_retry_counter_on_passed_quality() -> (
+    None
+):
     result = _run_prompt(
         "create a blog article, linkedin post, and image concept about AI marketing automation"
     )

@@ -110,7 +110,9 @@ def _build_serp_url(query: str, *, api_key: str, max_results: int) -> str:
     return f"{_SERP_ENDPOINT}?{parse.urlencode(params)}"
 
 
-def _http_get_json(url: str, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS) -> Dict[str, Any]:
+def _http_get_json(
+    url: str, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
     req = request.Request(
         url=url,
         headers={
@@ -128,7 +130,9 @@ def _http_get_json(url: str, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS) ->
 def _normalize_serp_item(item: Mapping[str, Any]) -> SearchResult:
     title = str(item.get("title", "")).strip() or "Untitled result"
     url = _safe_url(item.get("link") or item.get("url"))
-    snippet = str(item.get("snippet", "")).strip() or str(item.get("description", "")).strip()
+    snippet = (
+        str(item.get("snippet", "")).strip() or str(item.get("description", "")).strip()
+    )
     source = str(item.get("source", "")).strip() or "serp"
     published_at_raw = item.get("date")
     published_at = (
@@ -279,7 +283,9 @@ def _search_auto(query: str, *, max_results: int) -> SearchWebResult:
         return serp_result
 
     try:
-        perplexity_result = _search_perplexity_placeholder(query=query, max_results=max_results)
+        perplexity_result = _search_perplexity_placeholder(
+            query=query, max_results=max_results
+        )
     except Exception:
         perplexity_result = _degraded_result(
             provider=_PERPLEXITY_PROVIDER,
@@ -335,7 +341,9 @@ def search_web(
     if provider_name == _SERP_PROVIDER:
         return _search_serp(safe_query, max_results=bounded_max_results)
     if provider_name == _PERPLEXITY_PROVIDER:
-        return _search_perplexity_placeholder(safe_query, max_results=bounded_max_results)
+        return _search_perplexity_placeholder(
+            safe_query, max_results=bounded_max_results
+        )
     if provider_name == _AUTO_PROVIDER:
         return _search_auto(safe_query, max_results=bounded_max_results)
 

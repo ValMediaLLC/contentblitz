@@ -26,7 +26,11 @@ def _base_state() -> dict:
         "errors": [],
         "quality_scores": {},
         "export_requested": False,
-        "export_metadata": {"formats_requested": [], "export_paths": {}, "error_log": []},
+        "export_metadata": {
+            "formats_requested": [],
+            "export_paths": {},
+            "error_log": [],
+        },
     }
 
 
@@ -51,7 +55,9 @@ def test_partial_linkedin_renders_only_after_linkedin_writer_completion() -> Non
     assert payload["partial_output_mode"] == "linkedin_only"
 
 
-def test_research_report_renders_after_research_or_output_assembler_completion() -> None:
+def test_research_report_renders_after_research_or_output_assembler_completion() -> (
+    None
+):
     state = _base_state()
     statuses = build_initial_node_statuses()
     payload_before = build_render_payload(state=state, node_statuses=statuses)
@@ -89,7 +95,9 @@ def test_image_only_does_not_render_blog_or_linkedin_partials() -> None:
 
 def test_final_response_is_included_when_available() -> None:
     state = _base_state()
-    payload = build_render_payload(state=state, node_statuses=build_initial_node_statuses())
+    payload = build_render_payload(
+        state=state, node_statuses=build_initial_node_statuses()
+    )
     assert payload["final_response"] == "Final assembled response."
 
 
@@ -97,12 +105,18 @@ def test_image_output_rendering_rejects_base64_content() -> None:
     outputs = [
         {"status": "success", "url": "https://img.example/clean.png"},
         {"status": "success", "url": "data:image/png;base64,ABC"},
-        {"status": "success", "url": "https://img.example/another.png", "base64": "ABC"},
+        {
+            "status": "success",
+            "url": "https://img.example/another.png",
+            "base64": "ABC",
+        },
     ]
     sanitized = sanitize_image_outputs_for_display(outputs)
     assert len(sanitized) == 2
     assert all("base64" not in item for item in sanitized)
-    assert all(not str(item.get("url", "")).startswith("data:image/") for item in sanitized)
+    assert all(
+        not str(item.get("url", "")).startswith("data:image/") for item in sanitized
+    )
 
 
 def test_image_output_rendering_sanitizes_text_fields_and_error_payloads() -> None:
@@ -180,7 +194,11 @@ def test_render_payload_does_not_mutate_workflow_state() -> None:
 def test_export_off_marks_export_node_skipped_in_payload_statuses() -> None:
     state = _base_state()
     state["export_requested"] = False
-    state["export_metadata"] = {"formats_requested": [], "export_paths": {}, "error_log": []}
+    state["export_metadata"] = {
+        "formats_requested": [],
+        "export_paths": {},
+        "error_log": [],
+    }
     statuses = build_initial_node_statuses()
     statuses["export_node"] = "completed"
     payload = build_render_payload(state=state, node_statuses=statuses)
@@ -209,7 +227,10 @@ def test_render_payload_sanitizes_unsafe_final_and_partial_content() -> None:
     assert "openai_api_key" not in lowered_final
     assert "data:image/" not in lowered_blog
     assert "<iframe" not in lowered_blog
-    assert any("unsafe content was removed" in warning.lower() for warning in payload["warnings"])
+    assert any(
+        "unsafe content was removed" in warning.lower()
+        for warning in payload["warnings"]
+    )
 
 
 def test_usage_summary_aggregates_safe_counters() -> None:
@@ -223,12 +244,26 @@ def test_usage_summary_aggregates_safe_counters() -> None:
     }
     state["retry_counts"] = {"blog_writer": 1, "linkedin_writer": 1}
     state["sources"] = [
-        {"title": "A", "url": "https://a.example", "snippet": "x", "citation_available": True},
-        {"title": "B", "url": "https://b.example", "snippet": "y", "citation_available": True},
+        {
+            "title": "A",
+            "url": "https://a.example",
+            "snippet": "x",
+            "citation_available": True,
+        },
+        {
+            "title": "B",
+            "url": "https://b.example",
+            "snippet": "y",
+            "citation_available": True,
+        },
     ]
     state["image_outputs"] = [
         {"status": "failed", "provider": "dall-e-3"},
-        {"status": "success", "provider": "dall-e-2", "url": "https://img.example/a.png"},
+        {
+            "status": "success",
+            "provider": "dall-e-2",
+            "url": "https://img.example/a.png",
+        },
     ]
     statuses = build_initial_node_statuses()
     statuses["research_agent_node"] = "degraded"
@@ -276,6 +311,11 @@ def test_usage_summary_marks_budget_exceeded_and_surfaces_warning() -> None:
         "token_budget_per_session": 10000,
         "budget_exceeded": True,
     }
-    payload = build_render_payload(state=state, node_statuses=build_initial_node_statuses())
+    payload = build_render_payload(
+        state=state, node_statuses=build_initial_node_statuses()
+    )
     assert payload["usage_summary"]["budget_state"] == "budget_exceeded"
-    assert any("usage limits were reached" in warning.lower() for warning in payload["warnings"])
+    assert any(
+        "usage limits were reached" in warning.lower()
+        for warning in payload["warnings"]
+    )

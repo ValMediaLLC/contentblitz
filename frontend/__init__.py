@@ -1,2 +1,1 @@
 """ContentBlitz Streamlit frontend package."""
-

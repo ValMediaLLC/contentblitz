@@ -233,7 +233,10 @@ def sanitize_image_outputs_for_display(image_outputs: Any) -> list[dict[str, Any
 
 
 def _node_ready(node_statuses: Mapping[str, str], node_name: str) -> bool:
-    return normalize_progress_status(node_statuses.get(node_name, "pending")) in _TERMINAL_FOR_PARTIAL_RENDER
+    return (
+        normalize_progress_status(node_statuses.get(node_name, "pending"))
+        in _TERMINAL_FOR_PARTIAL_RENDER
+    )
 
 
 def _quality_warnings(quality_scores: Mapping[str, Any]) -> list[str]:
@@ -242,7 +245,9 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> list[str]:
         score = _safe_dict(quality_scores.get(output_type, {}))
         validation_status = _safe_text(score.get("validation_status")).lower()
         if validation_status in {"failed", "retry_needed", "unverified"}:
-            warnings.append(f"{output_type.title()} quality status: {validation_status}.")
+            warnings.append(
+                f"{output_type.title()} quality status: {validation_status}."
+            )
     return warnings
 
 
@@ -275,11 +280,16 @@ def _derive_usage_summary(
     )
     estimated_tokens_in = max(
         0,
-        _safe_int(usage_metrics.get("estimated_tokens_in"), max(0, tokens_used - estimated_tokens_out)),
+        _safe_int(
+            usage_metrics.get("estimated_tokens_in"),
+            max(0, tokens_used - estimated_tokens_out),
+        ),
     )
     estimated_tokens_total = max(0, estimated_tokens_in + estimated_tokens_out)
 
-    text_generation_calls = max(0, _safe_int(usage_metrics.get("text_generation_calls"), 0))
+    text_generation_calls = max(
+        0, _safe_int(usage_metrics.get("text_generation_calls"), 0)
+    )
     if text_generation_calls <= 0:
         blog_version = max(
             0,
@@ -334,9 +344,7 @@ def _derive_usage_summary(
         if _safe_text(status).lower() == "degraded"
     )
     recoverable_error_count = sum(
-        1
-        for item in raw_errors
-        if bool(_safe_dict(item).get("recoverable", False))
+        1 for item in raw_errors if bool(_safe_dict(item).get("recoverable", False))
     )
     degraded_operations = max(
         0,
@@ -395,10 +403,14 @@ def _derive_usage_summary(
             budget_state = "budget_exceeded"
         else:
             limited = False
-            token_budget = max(0, _safe_int(cost_controls.get("token_budget_per_session"), 0))
+            token_budget = max(
+                0, _safe_int(cost_controls.get("token_budget_per_session"), 0)
+            )
             if token_budget > 0 and estimated_tokens_total >= int(token_budget * 0.9):
                 limited = True
-            search_cap = max(0, _safe_int(cost_controls.get("search_query_cap_per_session"), 0))
+            search_cap = max(
+                0, _safe_int(cost_controls.get("search_query_cap_per_session"), 0)
+            )
             if search_cap > 0 and search_queries >= search_cap:
                 limited = True
             image_cap = max(
@@ -407,7 +419,9 @@ def _derive_usage_summary(
             )
             if image_cap > 0 and image_generation_requests >= image_cap:
                 limited = True
-            retry_cap = max(0, _safe_int(cost_controls.get("max_total_retries_per_session"), 0))
+            retry_cap = max(
+                0, _safe_int(cost_controls.get("max_total_retries_per_session"), 0)
+            )
             if retry_cap > 0 and retry_attempts >= retry_cap:
                 limited = True
 
@@ -476,10 +490,14 @@ def build_render_payload(
     research_report, research_changed = sanitize_markdown_output(
         _safe_text(_safe_dict(content_drafts.get("research_report", {})).get("body"))
     )
-    unsafe_content_removed = unsafe_content_removed or blog_changed or linkedin_changed or research_changed
+    unsafe_content_removed = (
+        unsafe_content_removed or blog_changed or linkedin_changed or research_changed
+    )
     research_data = _safe_dict(state_snapshot.get("research_data", {}))
     research_summary, summary_changed = sanitize_markdown_output(
-        _safe_text(research_data.get("synthesized_summary") or research_data.get("summary"))
+        _safe_text(
+            research_data.get("synthesized_summary") or research_data.get("summary")
+        )
     )
     unsafe_content_removed = unsafe_content_removed or summary_changed
 
@@ -504,7 +522,9 @@ def build_render_payload(
             warnings.append(text)
 
     if bool(research_data.get("degraded", False)):
-        warnings.append("Research results are degraded and may require manual verification.")
+        warnings.append(
+            "Research results are degraded and may require manual verification."
+        )
 
     if any(
         _safe_text(_safe_dict(item).get("status")).lower() == "failed"
@@ -547,9 +567,13 @@ def build_render_payload(
             "Research results used fallback mode due to limited provider availability."
         )
     elif budget_state == "limited":
-        warnings.append("Workflow is operating in limited mode. Some outputs may be reduced.")
+        warnings.append(
+            "Workflow is operating in limited mode. Some outputs may be reduced."
+        )
     elif budget_state == "budget_exceeded":
-        warnings.append("Workflow usage limits were reached. Some outputs may be reduced.")
+        warnings.append(
+            "Workflow usage limits were reached. Some outputs may be reduced."
+        )
 
     final_response = _safe_text(state_snapshot.get("final_response"))
     final_response, final_changed = sanitize_markdown_output(final_response)
@@ -559,14 +583,18 @@ def build_render_payload(
             "Export encountered a non-blocking failure; the final response is still available."
         )
 
-    warnings.extend(_quality_warnings(_safe_dict(state_snapshot.get("quality_scores", {}))))
+    warnings.extend(
+        _quality_warnings(_safe_dict(state_snapshot.get("quality_scores", {})))
+    )
     if unsafe_content_removed:
         warnings.append("Unsafe content was removed before rendering.")
 
     partial_outputs = {
         "blog": blog_draft if _node_ready(merged_statuses, "blog_writer_node") else "",
         "linkedin": (
-            linkedin_draft if _node_ready(merged_statuses, "linkedin_writer_node") else ""
+            linkedin_draft
+            if _node_ready(merged_statuses, "linkedin_writer_node")
+            else ""
         ),
         "research": (
             research_report or research_summary
@@ -608,7 +636,9 @@ def build_render_payload(
         "image_outputs": image_outputs,
         "sources": display_sources,
         "errors": normalize_errors_for_display(state_snapshot.get("errors", [])),
-        "warnings": list(dict.fromkeys([item for item in warnings if _safe_text(item)])),
+        "warnings": list(
+            dict.fromkeys([item for item in warnings if _safe_text(item)])
+        ),
         "node_statuses": merged_statuses,
         "usage_summary": usage_summary,
         "export_status": {

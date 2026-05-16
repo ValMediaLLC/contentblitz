@@ -89,7 +89,9 @@ def test_html_document_contains_expected_sections(tmp_path, monkeypatch) -> None
     assert "sources" in lowered
 
 
-def test_html_export_normalizes_image_errors_and_hides_provider_payload(tmp_path, monkeypatch) -> None:
+def test_html_export_normalizes_image_errors_and_hides_provider_payload(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     html_doc = build_html_export_document(_base_state(tmp_path))
     assert "Image generation failed safely." in html_doc
@@ -100,13 +102,15 @@ def test_html_export_normalizes_image_errors_and_hides_provider_payload(tmp_path
     assert "{'code':" not in html_doc
 
 
-def test_html_export_sanitizes_scripts_event_handlers_and_js_urls(tmp_path, monkeypatch) -> None:
+def test_html_export_sanitizes_scripts_event_handlers_and_js_urls(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
         content_drafts={
             "blog": {
-                "body": "<script>alert(1)</script><a href=\"javascript:alert(1)\" onclick=\"alert(1)\">click</a><iframe src=\"https://evil\"></iframe>",
+                "body": '<script>alert(1)</script><a href="javascript:alert(1)" onclick="alert(1)">click</a><iframe src="https://evil"></iframe>',
                 "version": 1,
             },
             "linkedin": {"body": "safe", "version": 1},
@@ -123,7 +127,9 @@ def test_html_export_sanitizes_scripts_event_handlers_and_js_urls(tmp_path, monk
     assert "<iframe" not in lowered
 
 
-def test_html_export_sanitizes_raw_provider_payloads_in_warnings(tmp_path, monkeypatch) -> None:
+def test_html_export_sanitizes_raw_provider_payloads_in_warnings(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
@@ -181,7 +187,9 @@ def test_html_export_failure_is_non_blocking(tmp_path, monkeypatch) -> None:
     assert all("OPENAI_API_KEY" not in str(item) for item in metadata["error_log"])
 
 
-def test_resolve_html_export_path_stays_inside_export_dir(tmp_path, monkeypatch) -> None:
+def test_resolve_html_export_path_stays_inside_export_dir(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     path = resolve_html_export_path("../unsafe/../../attempt")
     assert path.suffix == ".html"

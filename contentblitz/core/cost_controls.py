@@ -34,7 +34,9 @@ def normalize_cost_controls(raw: Mapping[str, Any] | None) -> Dict[str, Any]:
     incoming = dict(raw) if isinstance(raw, Mapping) else {}
     base.update(incoming)
 
-    base["tokens_used_this_session"] = max(0, _safe_int(base.get("tokens_used_this_session", 0), 0))
+    base["tokens_used_this_session"] = max(
+        0, _safe_int(base.get("tokens_used_this_session", 0), 0)
+    )
     base["search_queries_used_this_session"] = max(
         0,
         _safe_int(base.get("search_queries_used_this_session", 0), 0),
@@ -49,26 +51,36 @@ def normalize_cost_controls(raw: Mapping[str, Any] | None) -> Dict[str, Any]:
     )
     base["token_budget_per_session"] = max(
         0,
-        _safe_int(base.get("token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION), DEFAULT_TOKEN_BUDGET_PER_SESSION),
+        _safe_int(
+            base.get("token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION),
+            DEFAULT_TOKEN_BUDGET_PER_SESSION,
+        ),
     )
     base["search_query_cap_per_session"] = max(
         0,
         _safe_int(
-            base.get("search_query_cap_per_session", DEFAULT_SEARCH_QUERY_CAP_PER_SESSION),
+            base.get(
+                "search_query_cap_per_session", DEFAULT_SEARCH_QUERY_CAP_PER_SESSION
+            ),
             DEFAULT_SEARCH_QUERY_CAP_PER_SESSION,
         ),
     )
     base["image_generation_cap_per_session"] = max(
         0,
         _safe_int(
-            base.get("image_generation_cap_per_session", DEFAULT_IMAGE_GENERATION_CAP_PER_SESSION),
+            base.get(
+                "image_generation_cap_per_session",
+                DEFAULT_IMAGE_GENERATION_CAP_PER_SESSION,
+            ),
             DEFAULT_IMAGE_GENERATION_CAP_PER_SESSION,
         ),
     )
     base["max_total_retries_per_session"] = max(
         0,
         _safe_int(
-            base.get("max_total_retries_per_session", DEFAULT_MAX_TOTAL_RETRIES_PER_SESSION),
+            base.get(
+                "max_total_retries_per_session", DEFAULT_MAX_TOTAL_RETRIES_PER_SESSION
+            ),
             DEFAULT_MAX_TOTAL_RETRIES_PER_SESSION,
         ),
     )
@@ -104,7 +116,15 @@ def extract_total_tokens_from_text_response(response: Mapping[str, Any] | None) 
 
 
 def token_budget_exceeded(cost_controls: Mapping[str, Any]) -> bool:
-    budget = max(0, _safe_int(cost_controls.get("token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION), DEFAULT_TOKEN_BUDGET_PER_SESSION))
+    budget = max(
+        0,
+        _safe_int(
+            cost_controls.get(
+                "token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION
+            ),
+            DEFAULT_TOKEN_BUDGET_PER_SESSION,
+        ),
+    )
     used = max(0, _safe_int(cost_controls.get("tokens_used_this_session", 0), 0))
     if budget <= 0:
         return False
@@ -112,7 +132,15 @@ def token_budget_exceeded(cost_controls: Mapping[str, Any]) -> bool:
 
 
 def near_token_budget(cost_controls: Mapping[str, Any]) -> bool:
-    budget = max(0, _safe_int(cost_controls.get("token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION), DEFAULT_TOKEN_BUDGET_PER_SESSION))
+    budget = max(
+        0,
+        _safe_int(
+            cost_controls.get(
+                "token_budget_per_session", DEFAULT_TOKEN_BUDGET_PER_SESSION
+            ),
+            DEFAULT_TOKEN_BUDGET_PER_SESSION,
+        ),
+    )
     used = max(0, _safe_int(cost_controls.get("tokens_used_this_session", 0), 0))
     if budget <= 0:
         return False
@@ -122,14 +150,20 @@ def near_token_budget(cost_controls: Mapping[str, Any]) -> bool:
 
 def preferred_text_model(cost_controls: Mapping[str, Any]) -> str:
     """Choose model based on current token budget position."""
-    return FALLBACK_TEXT_MODEL if near_token_budget(cost_controls) else PRIMARY_TEXT_MODEL
+    return (
+        FALLBACK_TEXT_MODEL if near_token_budget(cost_controls) else PRIMARY_TEXT_MODEL
+    )
 
 
-def apply_text_tokens(cost_controls: Mapping[str, Any], response: Mapping[str, Any] | None) -> Dict[str, Any]:
+def apply_text_tokens(
+    cost_controls: Mapping[str, Any], response: Mapping[str, Any] | None
+) -> Dict[str, Any]:
     """Increment token counters from a text tool response and recompute budget flag."""
     normalized = normalize_cost_controls(cost_controls)
     delta = extract_total_tokens_from_text_response(response)
-    normalized["tokens_used_this_session"] = int(normalized["tokens_used_this_session"]) + delta
+    normalized["tokens_used_this_session"] = (
+        int(normalized["tokens_used_this_session"]) + delta
+    )
     if token_budget_exceeded(normalized):
         normalized["budget_exceeded"] = True
     return normalized

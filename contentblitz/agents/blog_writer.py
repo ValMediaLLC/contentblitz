@@ -28,14 +28,18 @@ def _build_prompt(
     citations: List[Mapping[str, Any]],
     retry_feedback: List[str],
 ) -> str:
-    objective = str(blog_brief.get("objective", "")).strip() or "Create an SEO-focused article."
+    objective = (
+        str(blog_brief.get("objective", "")).strip() or "Create an SEO-focused article."
+    )
     audience = str(blog_brief.get("audience", "")).strip() or "professional audience"
     tone = str(blog_brief.get("tone", "")).strip() or "clear and practical"
     angle = str(blog_brief.get("angle", "")).strip() or "educational narrative"
     outline = blog_brief.get("outline", [])
     outline_lines = []
     if isinstance(outline, list):
-        outline_lines = [f"- {str(item).strip()}" for item in outline if str(item).strip()]
+        outline_lines = [
+            f"- {str(item).strip()}" for item in outline if str(item).strip()
+        ]
     citation_lines = [
         f"- {str(item.get('title', 'Source')).strip()} ({item.get('url')})"
         for item in citations
@@ -53,7 +57,9 @@ def _build_prompt(
     if outline_lines:
         prompt += "Outline:\n" + "\n".join(outline_lines) + "\n"
     if citation_lines:
-        prompt += "Approved citations (use only these):\n" + "\n".join(citation_lines) + "\n"
+        prompt += (
+            "Approved citations (use only these):\n" + "\n".join(citation_lines) + "\n"
+        )
     if feedback_lines:
         prompt += "Retry feedback to address:\n" + "\n".join(feedback_lines) + "\n"
     prompt += "Return only the draft body text."
@@ -61,7 +67,9 @@ def _build_prompt(
 
 
 def _fallback_draft(user_query: str, blog_brief: Mapping[str, Any]) -> str:
-    objective = str(blog_brief.get("objective", "Create an informative article.")).strip()
+    objective = str(
+        blog_brief.get("objective", "Create an informative article.")
+    ).strip()
     angle = str(blog_brief.get("angle", "practical guidance")).strip()
     title = user_query.strip() or "Strategic Content Planning"
     return (
@@ -121,7 +129,11 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     current_version = int(existing_blog.get("version", 0))
     next_version = current_version + 1
 
-    sources = [item for item in _safe_list(state.get("sources", [])) if isinstance(item, Mapping)]
+    sources = [
+        item
+        for item in _safe_list(state.get("sources", []))
+        if isinstance(item, Mapping)
+    ]
     citations = [
         source
         for source in sources
@@ -134,7 +146,9 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     retry_state = _safe_dict(state.get("retry_feedback", {}))
     blog_feedback = retry_state.get("blog", [])
     if isinstance(blog_feedback, list):
-        retry_feedback = [str(item).strip() for item in blog_feedback if str(item).strip()]
+        retry_feedback = [
+            str(item).strip() for item in blog_feedback if str(item).strip()
+        ]
 
     cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
     draft_status = _safe_dict(state.get("draft_status", {}))

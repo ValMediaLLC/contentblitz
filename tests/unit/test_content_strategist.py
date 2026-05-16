@@ -7,10 +7,18 @@ from contentblitz.state import create_initial_state
 def test_blog_request_creates_blog_brief(monkeypatch) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
         assert agent_key == "content_strategist"
-        return {"output": json.dumps({"format": "blog", "angle": "deep dive", "objective": "educate"})}
+        return {
+            "output": json.dumps(
+                {"format": "blog", "angle": "deep dive", "objective": "educate"}
+            )
+        }
 
     monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
-    state = create_initial_state(requested_outputs=["blog"], user_query="B2B SaaS onboarding", intent="content_creation")
+    state = create_initial_state(
+        requested_outputs=["blog"],
+        user_query="B2B SaaS onboarding",
+        intent="content_creation",
+    )
     updates = strategist_module.content_strategist_node(state)
 
     assert updates["content_brief"]["blog"]["format"] == "blog"
@@ -20,10 +28,18 @@ def test_blog_request_creates_blog_brief(monkeypatch) -> None:
 
 def test_linkedin_request_creates_linkedin_brief(monkeypatch) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
-        return {"output": json.dumps({"format": "linkedin", "structure": ["hook", "insight", "cta"]})}
+        return {
+            "output": json.dumps(
+                {"format": "linkedin", "structure": ["hook", "insight", "cta"]}
+            )
+        }
 
     monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
-    state = create_initial_state(requested_outputs=["linkedin"], user_query="remote collaboration", intent="content_creation")
+    state = create_initial_state(
+        requested_outputs=["linkedin"],
+        user_query="remote collaboration",
+        intent="content_creation",
+    )
     updates = strategist_module.content_strategist_node(state)
 
     assert updates["content_brief"]["linkedin"]["format"] == "linkedin"
@@ -33,10 +49,18 @@ def test_linkedin_request_creates_linkedin_brief(monkeypatch) -> None:
 
 def test_image_request_creates_image_brief(monkeypatch) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
-        return {"output": json.dumps({"format": "image", "visual_direction": "neo-futurist"})}
+        return {
+            "output": json.dumps(
+                {"format": "image", "visual_direction": "neo-futurist"}
+            )
+        }
 
     monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
-    state = create_initial_state(requested_outputs=["image"], user_query="fintech dashboard concept", intent="image_generation")
+    state = create_initial_state(
+        requested_outputs=["image"],
+        user_query="fintech dashboard concept",
+        intent="image_generation",
+    )
     updates = strategist_module.content_strategist_node(state)
 
     assert updates["content_brief"]["image"]["format"] == "image"
@@ -52,7 +76,13 @@ def test_research_output_creates_research_report(monkeypatch) -> None:
         requested_outputs=["research", "blog"],
         user_query="AI governance patterns",
         research_data={"synthesized_summary": "Governance models are converging."},
-        sources=[{"title": "Source A", "url": "https://example.com/a", "snippet": "long snippet"}],
+        sources=[
+            {
+                "title": "Source A",
+                "url": "https://example.com/a",
+                "snippet": "long snippet",
+            }
+        ],
     )
     original_blog_draft = dict(state["content_drafts"]["blog"])
     original_linkedin_draft = dict(state["content_drafts"]["linkedin"])
@@ -116,7 +146,9 @@ def test_blog_only_does_not_populate_research_report(monkeypatch) -> None:
         return {"output": json.dumps({"format": "blog", "angle": "educational"})}
 
     monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
-    state = create_initial_state(requested_outputs=["blog"], user_query="future ai workflows")
+    state = create_initial_state(
+        requested_outputs=["blog"], user_query="future ai workflows"
+    )
     updates = strategist_module.content_strategist_node(state)
 
     assert "content_drafts" not in updates
@@ -127,13 +159,17 @@ def test_linkedin_only_does_not_populate_research_report(monkeypatch) -> None:
         return {"output": json.dumps({"format": "linkedin", "angle": "trend memo"})}
 
     monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
-    state = create_initial_state(requested_outputs=["linkedin"], user_query="ai content marketing trends")
+    state = create_initial_state(
+        requested_outputs=["linkedin"], user_query="ai content marketing trends"
+    )
     updates = strategist_module.content_strategist_node(state)
 
     assert "content_drafts" not in updates
 
 
-def test_content_drafts_blog_and_linkedin_not_modified_by_content_strategist(monkeypatch) -> None:
+def test_content_drafts_blog_and_linkedin_not_modified_by_content_strategist(
+    monkeypatch,
+) -> None:
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
         return {"output": json.dumps({"format": "blog", "angle": "insight-led"})}
 

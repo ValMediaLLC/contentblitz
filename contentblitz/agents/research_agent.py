@@ -87,11 +87,15 @@ def _fallback_snippet(query: str, provider: str, title: str) -> str:
     )
 
 
-def _normalize_source(raw: Mapping[str, Any], provider: str, query: str) -> Dict[str, Any]:
+def _normalize_source(
+    raw: Mapping[str, Any], provider: str, query: str
+) -> Dict[str, Any]:
     title = str(raw.get("title", "")).strip() or "Untitled source"
     raw_snippet = str(raw.get("snippet", "")).strip()
     snippet_from_provider = bool(raw_snippet)
-    snippet = raw_snippet or _fallback_snippet(query=query, provider=provider, title=title)
+    snippet = raw_snippet or _fallback_snippet(
+        query=query, provider=provider, title=title
+    )
 
     url_raw = raw.get("url")
     url = str(url_raw).strip() if isinstance(url_raw, str) and url_raw.strip() else None
@@ -133,7 +137,9 @@ def _dedupe_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _has_meaningful_provider_snippet(sources: List[Dict[str, Any]]) -> bool:
     for source in sources:
         snippet_from_provider = source.get("_snippet_from_provider", None)
-        is_provider_text = True if snippet_from_provider is None else bool(snippet_from_provider)
+        is_provider_text = (
+            True if snippet_from_provider is None else bool(snippet_from_provider)
+        )
         if is_provider_text and len(str(source.get("snippet", "")).strip()) >= 20:
             return True
     return False
@@ -145,7 +151,9 @@ def _is_degraded(sources: List[Dict[str, Any]]) -> bool:
     return not _has_meaningful_provider_snippet(sources)
 
 
-def _parse_query_suggestions(response: Mapping[str, Any], fallback_query: str) -> List[str]:
+def _parse_query_suggestions(
+    response: Mapping[str, Any], fallback_query: str
+) -> List[str]:
     raw = response.get("output", "")
     if not isinstance(raw, str) or not raw.strip():
         return _build_search_queries(fallback_query)
@@ -176,7 +184,9 @@ def _synthesize_summary(
         return f"Limited research results were found for '{query}'.", {}
 
     top = sources[:5]
-    bullets = "\n".join([f"- {item.get('title')}: {item.get('snippet')}" for item in top])
+    bullets = "\n".join(
+        [f"- {item.get('title')}: {item.get('snippet')}" for item in top]
+    )
     prompt = (
         "Synthesize a concise research brief from these findings.\n"
         f"Topic: {query}\n"
@@ -192,7 +202,10 @@ def _synthesize_summary(
     summary = str(_safe_dict(llm_response).get("output", "")).strip()
     if summary:
         return summary, llm_response
-    return f"Research findings compiled for '{query}' from {len(sources)} sources.", llm_response
+    return (
+        f"Research findings compiled for '{query}' from {len(sources)} sources.",
+        llm_response,
+    )
 
 
 def _make_degraded_perplexity_source(query: str) -> Dict[str, Any]:
@@ -213,13 +226,17 @@ def _tokenize_query(query: str) -> List[str]:
     return re.findall(r"[a-z0-9]+", query.lower())
 
 
-def _ensure_min_items(items: List[str], query: str, fallback_pool: List[str]) -> List[str]:
+def _ensure_min_items(
+    items: List[str], query: str, fallback_pool: List[str]
+) -> List[str]:
     deduped = list(dict.fromkeys([item.strip() for item in items if item.strip()]))
     idx = 0
     query_seed = " ".join(_tokenize_query(query)[:4]) or "topic"
     while len(deduped) < _MIN_LIST_ITEMS:
         base = fallback_pool[idx % len(fallback_pool)]
-        suffix = f" ({query_seed})" if base not in deduped else f" ({query_seed}-{idx + 1})"
+        suffix = (
+            f" ({query_seed})" if base not in deduped else f" ({query_seed}-{idx + 1})"
+        )
         candidate = base if len(deduped) >= len(fallback_pool) else base + suffix
         if candidate not in deduped:
             deduped.append(candidate)
@@ -237,7 +254,9 @@ def _fallback_summary(query: str, quality: str) -> str:
     return f"Synthesized research summary for '{topic}' based on collected sources."
 
 
-def _build_key_facts(query: str, sources: List[Dict[str, Any]], quality: str) -> List[str]:
+def _build_key_facts(
+    query: str, sources: List[Dict[str, Any]], quality: str
+) -> List[str]:
     facts: List[str] = []
     for source in sources[:5]:
         title = str(source.get("title", "")).strip() or "Source"
@@ -266,6 +285,7 @@ def _build_key_facts(query: str, sources: List[Dict[str, Any]], quality: str) ->
         ]
     return _ensure_min_items(facts, query, fallback_facts)
 
+
 # TODO(content-quality):
 # Filter stopwords from extracted keywords before passing
 # research_data into content strategy agents.
@@ -276,13 +296,21 @@ def _build_keywords(query: str, sources: List[Dict[str, Any]]) -> List[str]:
     words = [token for token in _tokenize_query(query) if len(token) >= 3]
     from_titles: List[str] = []
     for source in sources[:5]:
-        from_titles.extend([token for token in _tokenize_query(str(source.get("title", ""))) if len(token) >= 4])
+        from_titles.extend(
+            [
+                token
+                for token in _tokenize_query(str(source.get("title", "")))
+                if len(token) >= 4
+            ]
+        )
 
     candidates = words + from_titles
     keywords = list(dict.fromkeys(candidates))
     if not keywords:
         keywords = [token.replace(" ", "_") for token in _FALLBACK_KEYWORDS]
-    return _ensure_min_items(keywords, query, [token.replace(" ", "_") for token in _FALLBACK_KEYWORDS])
+    return _ensure_min_items(
+        keywords, query, [token.replace(" ", "_") for token in _FALLBACK_KEYWORDS]
+    )
 
 
 def _build_entities(query: str, keywords: List[str]) -> List[str]:
@@ -293,7 +321,9 @@ def _build_entities(query: str, keywords: List[str]) -> List[str]:
     return entities
 
 
-def _sanitize_sources_for_output(query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sanitize_sources_for_output(
+    query: str, sources: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     sanitized: List[Dict[str, Any]] = []
     for source in sources:
         entry = dict(source)
@@ -356,14 +386,22 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             query=query,
             sources=deepcopy(_safe_list(cached_payload.get("sources"))),
         )
-        cached_quality = str(_safe_dict(cached_payload.get("research_data")).get("quality", "")).strip().lower()
+        cached_quality = (
+            str(_safe_dict(cached_payload.get("research_data")).get("quality", ""))
+            .strip()
+            .lower()
+        )
         if cached_quality not in {"standard", "degraded"}:
             cached_quality = "degraded" if _is_degraded(cached_sources) else "standard"
         cached_summary = str(
-            _safe_dict(cached_payload.get("research_data")).get("synthesized_summary", "")
+            _safe_dict(cached_payload.get("research_data")).get(
+                "synthesized_summary", ""
+            )
         ).strip() or _fallback_summary(query=query, quality=cached_quality)
         cached_keywords = _build_keywords(query=query, sources=cached_sources)
-        cached_key_facts = _build_key_facts(query=query, sources=cached_sources, quality=cached_quality)
+        cached_key_facts = _build_key_facts(
+            query=query, sources=cached_sources, quality=cached_quality
+        )
         cached_entities = _build_entities(query=query, keywords=cached_keywords)
 
         research_data = deepcopy(_safe_dict(cached_payload.get("research_data")))
@@ -375,7 +413,9 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         research_data["keywords"] = cached_keywords
         research_data["entities"] = cached_entities
         research_data["degraded"] = cached_quality == "degraded"
-        research_data["status"] = "degraded" if cached_quality == "degraded" else "complete"
+        research_data["status"] = (
+            "degraded" if cached_quality == "degraded" else "complete"
+        )
         updates = {
             "research_data": research_data,
             "sources": cached_sources,
@@ -389,14 +429,18 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
         return {
-            "research_data": _degraded_research_payload(query, reason="token_budget_exceeded"),
+            "research_data": _degraded_research_payload(
+                query, reason="token_budget_exceeded"
+            ),
             "sources": [],
             "cost_controls": cost_controls,
             "workflow_status": "research_complete",
             "final_response": None,
         }
     if search_cap_reached(cost_controls):
-        degraded_payload = _degraded_research_payload(query, reason="search_cap_reached")
+        degraded_payload = _degraded_research_payload(
+            query, reason="search_cap_reached"
+        )
         degraded_payload["search_cap_reached"] = True
         return {
             "research_data": degraded_payload,
@@ -407,12 +451,13 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     used_queries = int(cost_controls.get("search_queries_used_this_session", 0))
-    query_cap = int(cost_controls.get("search_query_cap_per_session", _DEFAULT_SEARCH_QUERY_CAP))
+    query_cap = int(
+        cost_controls.get("search_query_cap_per_session", _DEFAULT_SEARCH_QUERY_CAP)
+    )
     remaining_calls = max(0, query_cap - used_queries)
 
     query_generation_prompt = (
-        "Generate 3-5 search queries as JSON list for this topic:\n"
-        f"{query}"
+        "Generate 3-5 search queries as JSON list for this topic:\n" f"{query}"
     )
     query_generation = generate_text(
         prompt=query_generation_prompt,
@@ -486,7 +531,9 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         collected_sources.extend(fallback_sources)
 
     deduped_sources = _dedupe_sources(collected_sources)
-    deduped_sources.sort(key=lambda item: float(item.get("credibility_score", 0.0)), reverse=True)
+    deduped_sources.sort(
+        key=lambda item: float(item.get("credibility_score", 0.0)), reverse=True
+    )
     degraded = _is_degraded(deduped_sources) or len(executed_queries) == 0
 
     deduped_sources = _sanitize_sources_for_output(query=query, sources=deduped_sources)

@@ -46,7 +46,9 @@ def _assert_image_attempted(result: dict[str, Any]) -> None:
 
 
 def test_image_only_clothing_design_prompt_attempts_image_generation() -> None:
-    result = _run_prompt("create some futuristic images that I can use on clothing designs")
+    result = _run_prompt(
+        "create some futuristic images that I can use on clothing designs"
+    )
 
     assert result["requested_outputs"] == ["image"]
     assert result["research_required"] is False
@@ -59,7 +61,9 @@ def test_image_only_clothing_design_prompt_attempts_image_generation() -> None:
 
 
 def test_image_concept_dashboard_prompt_attempts_image_generation() -> None:
-    result = _run_prompt("generate an image concept for an AI-powered content dashboard")
+    result = _run_prompt(
+        "generate an image concept for an AI-powered content dashboard"
+    )
 
     assert result["requested_outputs"] == ["image"]
     assert result["research_required"] is False
@@ -93,6 +97,7 @@ def test_blog_and_image_prompt_generates_blog_and_image_outputs() -> None:
     assert result["quality_scores"].get("blog")
     assert not result["quality_scores"].get("linkedin")
 
+
 def test_research_and_image_prompt_populates_image_brief_then_image_prompt() -> None:
     result = _run_prompt(
         "research futuristic fashion design trends and generate image concepts"
@@ -110,6 +115,7 @@ def test_research_and_image_prompt_populates_image_brief_then_image_prompt() -> 
     _assert_image_attempted(result)
 
     assert _errors_are_nonfatal(result)
+
 
 def test_research_and_image_prompt_populates_image_brief_and_image_prompt() -> None:
     result = _run_prompt(
@@ -138,7 +144,9 @@ def test_research_and_image_prompt_populates_image_brief_and_image_prompt() -> N
 
 
 def test_image_generation_failure_is_recoverable_not_fatal() -> None:
-    result = _run_prompt("create some futuristic images that I can use on clothing designs")
+    result = _run_prompt(
+        "create some futuristic images that I can use on clothing designs"
+    )
 
     image_outputs = result.get("image_outputs") or []
 
@@ -151,7 +159,9 @@ def test_image_generation_failure_is_recoverable_not_fatal() -> None:
 
 
 def test_image_outputs_do_not_store_base64_payloads() -> None:
-    result = _run_prompt("generate an image concept for an AI-powered content dashboard")
+    result = _run_prompt(
+        "generate an image concept for an AI-powered content dashboard"
+    )
 
     for output in result.get("image_outputs") or []:
         assert "base64" not in output
@@ -160,7 +170,9 @@ def test_image_outputs_do_not_store_base64_payloads() -> None:
 
 
 def test_image_only_prompt_does_not_create_text_quality_scores() -> None:
-    result = _run_prompt("create some futuristic images that I can use on clothing designs")
+    result = _run_prompt(
+        "create some futuristic images that I can use on clothing designs"
+    )
 
     assert result["requested_outputs"] == ["image"]
     assert result["quality_scores"] == {}
@@ -171,7 +183,9 @@ def test_image_only_prompt_does_not_create_text_quality_scores() -> None:
 
 
 def test_image_prompt_does_not_increment_search_or_retry_counters() -> None:
-    result = _run_prompt("generate an image concept for an AI-powered content dashboard")
+    result = _run_prompt(
+        "generate an image concept for an AI-powered content dashboard"
+    )
 
     cost_controls = result.get("cost_controls") or {}
 

@@ -53,11 +53,14 @@ def _derive_visual_concept(state: Dict[str, Any]) -> str:
             return f"{base}. Visual direction: {visual_direction}."
         return base
 
-    user_query = str(state.get("user_query", "")).strip() or "Strategic marketing concept"
+    user_query = (
+        str(state.get("user_query", "")).strip() or "Strategic marketing concept"
+    )
     research_data = _safe_dict(state.get("research_data", {}))
-    summary = str(research_data.get("synthesized_summary", "")).strip() or str(
-        research_data.get("summary", "")
-    ).strip()
+    summary = (
+        str(research_data.get("synthesized_summary", "")).strip()
+        or str(research_data.get("summary", "")).strip()
+    )
     keywords = [
         str(item).strip()
         for item in _safe_list(research_data.get("keywords", []))
@@ -76,7 +79,9 @@ def _derive_visual_concept(state: Dict[str, Any]) -> str:
     return concept.strip()
 
 
-def _enhance_prompt(concept: str, cost_controls: Mapping[str, Any]) -> tuple[str, Dict[str, Any]]:
+def _enhance_prompt(
+    concept: str, cost_controls: Mapping[str, Any]
+) -> tuple[str, Dict[str, Any]]:
     prompt = (
         "Enhance this image generation prompt for clarity and visual detail. "
         "Return only the improved prompt.\n\n"
@@ -143,6 +148,7 @@ def _append_recoverable_image_error(
         }
     )
     return existing_errors
+
 
 # TODO(fallback-management):
 # Replace recoverable image failure with placeholder/fallback image asset
@@ -266,7 +272,9 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if not sanitized_images:
-        failure_reason = str(image_response.get("error", "")).strip() or "No image assets returned."
+        failure_reason = (
+            str(image_response.get("error", "")).strip() or "No image assets returned."
+        )
         failure_payload = {
             "status": "failed",
             "recoverable": True,

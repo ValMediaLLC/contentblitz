@@ -74,7 +74,9 @@ def test_research_agent_fallback_writes_perplexity_source_metadata_and_updates_c
     assert isinstance(first["snippet"], str) and first["snippet"].strip()
 
 
-def test_research_agent_does_not_cache_degraded_perplexity_only_fallback(monkeypatch) -> None:
+def test_research_agent_does_not_cache_degraded_perplexity_only_fallback(
+    monkeypatch,
+) -> None:
     state = create_initial_state(
         user_query="nascent topic",
         cost_controls={

@@ -101,7 +101,9 @@ def _text_payload_for_prompt(prompt: str) -> str:
     if "Write a LinkedIn post in plain text." in prompt:
         return _long_linkedin_post()
     if "Enhance this image generation prompt for clarity and visual detail." in prompt:
-        return "Create a cinematic, high-detail content operations command center scene."
+        return (
+            "Create a cinematic, high-detail content operations command center scene."
+        )
     return "Generic mocked text response."
 
 
@@ -120,12 +122,16 @@ def _make_text_client(*, total_tokens: int = 8):
             ),
         )
 
-    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
 
 
 def _make_image_client():
     def generate(**kwargs):
-        return SimpleNamespace(data=[SimpleNamespace(url="https://img.example/phase2-pipeline.png")])
+        return SimpleNamespace(
+            data=[SimpleNamespace(url="https://img.example/phase2-pipeline.png")]
+        )
 
     return SimpleNamespace(images=SimpleNamespace(generate=generate))
 
@@ -133,7 +139,11 @@ def _make_image_client():
 def test_research_only_with_serp_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
 
     calls = {"serp": 0, "perplexity": 0}
 
@@ -178,7 +188,11 @@ def test_research_only_with_serp_degraded_perplexity_fallback(monkeypatch) -> No
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setenv("PERPLEXITY_API_KEY", "px-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
 
     calls = {"perplexity": 0}
 
@@ -202,7 +216,9 @@ def test_research_only_with_serp_degraded_perplexity_fallback(monkeypatch) -> No
         return {
             "choices": [
                 {
-                    "message": {"content": "Perplexity fallback provided usable context."},
+                    "message": {
+                        "content": "Perplexity fallback provided usable context."
+                    },
                     "citations": [],
                 }
             ]
@@ -232,8 +248,16 @@ def test_research_only_with_serp_degraded_perplexity_fallback(monkeypatch) -> No
 def test_blog_linkedin_image_with_all_providers_mocked_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", lambda api_key: _make_text_client())
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", lambda api_key: _make_image_client())
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_openai_client",
+        lambda api_key: _make_text_client(),
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_openai_client",
+        lambda api_key: _make_image_client(),
+    )
 
     calls = {"serp": 0}
 
@@ -265,7 +289,9 @@ def test_blog_linkedin_image_with_all_providers_mocked_success(monkeypatch) -> N
     monkeypatch.setattr(
         perplexity_module,
         "_http_post_json",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("Perplexity fallback should not run in this scenario.")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("Perplexity fallback should not run in this scenario.")
+        ),
     )
 
     state = create_initial_state(
@@ -289,8 +315,12 @@ def test_blog_linkedin_image_with_all_providers_mocked_success(monkeypatch) -> N
 
     assert result["cost_controls"]["tokens_used_this_session"] > 0
     assert result["cost_controls"]["search_queries_used_this_session"] > 0
-    assert any(output.get("status") == "success" for output in result.get("image_outputs", []))
-    assert result.get("tool_outputs", {}).get("image_agent", {}).get("status") == "success"
+    assert any(
+        output.get("status") == "success" for output in result.get("image_outputs", [])
+    )
+    assert (
+        result.get("tool_outputs", {}).get("image_agent", {}).get("status") == "success"
+    )
 
     for source in result["sources"]:
         if source.get("citation_available") is False:

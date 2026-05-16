@@ -18,7 +18,9 @@ def test_missing_api_key_fails_safely_on_invocation(monkeypatch) -> None:
 
 def test_malformed_provider_payload_returns_degraded(monkeypatch) -> None:
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-test")
-    monkeypatch.setattr(perplexity_module, "_http_post_json", lambda **_kwargs: {"choices": []})
+    monkeypatch.setattr(
+        perplexity_module, "_http_post_json", lambda **_kwargs: {"choices": []}
+    )
 
     result = perplexity_module.search_perplexity("ai workflows", max_results=3)
 
@@ -32,7 +34,10 @@ def test_empty_answer_returns_degraded(monkeypatch) -> None:
     monkeypatch.setattr(
         perplexity_module,
         "_http_post_json",
-        lambda **_kwargs: {"choices": [{"message": {"content": "   "}}], "citations": []},
+        lambda **_kwargs: {
+            "choices": [{"message": {"content": "   "}}],
+            "citations": [],
+        },
     )
 
     result = perplexity_module.search_perplexity("ai workflows", max_results=3)
@@ -47,7 +52,9 @@ def test_missing_citations_do_not_create_fake_urls(monkeypatch) -> None:
     monkeypatch.setattr(
         perplexity_module,
         "_http_post_json",
-        lambda **_kwargs: {"choices": [{"message": {"content": "Safe fallback answer"}}]},
+        lambda **_kwargs: {
+            "choices": [{"message": {"content": "Safe fallback answer"}}]
+        },
     )
 
     result = perplexity_module.search_perplexity("ai workflows", max_results=3)
@@ -108,7 +115,9 @@ def test_provider_json_decode_error_is_normalized(monkeypatch) -> None:
     assert result.error["code"] == "provider_payload_invalid"
 
 
-def test_provider_exception_is_normalized_without_payload_or_secret_leak(monkeypatch) -> None:
+def test_provider_exception_is_normalized_without_payload_or_secret_leak(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-secret-value")
 
     def _raise_generic(**_kwargs):
@@ -122,4 +131,3 @@ def test_provider_exception_is_normalized_without_payload_or_secret_leak(monkeyp
     assert result.error["code"] == "provider_error"
     assert "OPENAI_API_KEY" not in str(result.error)
     assert "abc123" not in str(result.error)
-

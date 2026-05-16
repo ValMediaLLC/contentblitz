@@ -82,4 +82,3 @@ def test_workflow_status_is_failed_for_fatal_errors() -> None:
     result = error_handler_node(state)
 
     assert result["workflow_status"] == "failed"
-

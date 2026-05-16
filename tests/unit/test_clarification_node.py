@@ -2,9 +2,7 @@ import importlib
 
 from contentblitz.state import create_initial_state
 
-clarification_node_module = importlib.import_module(
-    "contentblitz.agents.clarification"
-)
+clarification_node_module = importlib.import_module("contentblitz.agents.clarification")
 clarification_wrapper_module = importlib.import_module(
     "contentblitz.agents.clarification_node"
 )
@@ -49,7 +47,10 @@ def test_missing_message_triggers_generate_text(monkeypatch) -> None:
     updates = clarification_node_module.clarification_node(state)
 
     assert calls["count"] == 1
-    assert updates["clarification_message"] == "Could you confirm the desired output format?"
+    assert (
+        updates["clarification_message"]
+        == "Could you confirm the desired output format?"
+    )
     assert updates["final_response"] == "Could you confirm the desired output format?"
 
 
@@ -106,4 +107,7 @@ def test_workflow_status_is_awaiting_clarification() -> None:
 
 
 def test_compatibility_wrapper_exports_same_clarification_node() -> None:
-    assert clarification_wrapper_module.clarification_node is clarification_node_module.clarification_node
+    assert (
+        clarification_wrapper_module.clarification_node
+        is clarification_node_module.clarification_node
+    )

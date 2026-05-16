@@ -104,7 +104,12 @@ def test_malformed_llm_response_falls_back_safely(monkeypatch) -> None:
     state = create_initial_state(user_query="Write a blog post on cybersecurity")
     updates = query_handler_module.query_handler_node(state)
 
-    assert updates["intent"] in {"content_creation", "research", "image_generation", "clarification"}
+    assert updates["intent"] in {
+        "content_creation",
+        "research",
+        "image_generation",
+        "clarification",
+    }
     assert isinstance(updates["requested_outputs"], list)
     assert updates["clarification_needed"] is False
     assert updates["routing_decision"] in {
@@ -147,9 +152,13 @@ def test_query_handler_does_not_propagate_stale_retry_flags(monkeypatch) -> None
     assert "retry_target" not in updates
 
 
-def test_explicit_image_only_request_with_non_empty_query_routes_deterministically(monkeypatch) -> None:
+def test_explicit_image_only_request_with_non_empty_query_routes_deterministically(
+    monkeypatch,
+) -> None:
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("LLM classification should not run for explicit image-only UI requests.")
+        raise AssertionError(
+            "LLM classification should not run for explicit image-only UI requests."
+        )
 
     monkeypatch.setattr(query_handler_module, "generate_text", fail_if_called)
 
@@ -166,9 +175,13 @@ def test_explicit_image_only_request_with_non_empty_query_routes_deterministical
     assert updates["routing_decision"] == "image_agent_node"
 
 
-def test_obvious_prompt_injection_routes_to_clarification_with_safe_metadata(monkeypatch) -> None:
+def test_obvious_prompt_injection_routes_to_clarification_with_safe_metadata(
+    monkeypatch,
+) -> None:
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("LLM classification should not run for obvious injection-only prompts.")
+        raise AssertionError(
+            "LLM classification should not run for obvious injection-only prompts."
+        )
 
     monkeypatch.setattr(query_handler_module, "generate_text", fail_if_called)
 
@@ -186,9 +199,13 @@ def test_obvious_prompt_injection_routes_to_clarification_with_safe_metadata(mon
     assert any("neutralized" in msg.lower() for msg in updates["status_messages"])
 
 
-def test_pure_unsafe_prompt_routes_to_clarification_and_strips_sensitive_tokens(monkeypatch) -> None:
+def test_pure_unsafe_prompt_routes_to_clarification_and_strips_sensitive_tokens(
+    monkeypatch,
+) -> None:
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("LLM classification should not run for pure unsafe prompts.")
+        raise AssertionError(
+            "LLM classification should not run for pure unsafe prompts."
+        )
 
     monkeypatch.setattr(query_handler_module, "generate_text", fail_if_called)
 
@@ -206,7 +223,9 @@ def test_pure_unsafe_prompt_routes_to_clarification_and_strips_sensitive_tokens(
     assert "user_query" not in updates
 
 
-def test_mixed_safe_and_unsafe_prompt_is_sanitized_before_classification(monkeypatch) -> None:
+def test_mixed_safe_and_unsafe_prompt_is_sanitized_before_classification(
+    monkeypatch,
+) -> None:
     captured = {"prompt": ""}
 
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
@@ -250,7 +269,9 @@ def test_normal_prompt_does_not_set_injection_metadata(monkeypatch) -> None:
         }
     )
     _mock_llm(monkeypatch, payload)
-    state = create_initial_state(user_query="Write a LinkedIn post about AI workflow ROI")
+    state = create_initial_state(
+        user_query="Write a LinkedIn post about AI workflow ROI"
+    )
     updates = query_handler_module.query_handler_node(state)
 
     assert updates["routing_decision"] == "research_agent_node"

@@ -30,7 +30,11 @@ def test_valid_citations_pass_without_warning() -> None:
 def test_missing_title_or_snippet_is_detected() -> None:
     result = validate_citation_sources(
         [
-            {"title": "", "url": "https://example.com/source-1", "snippet": "Useful snippet"},
+            {
+                "title": "",
+                "url": "https://example.com/source-1",
+                "snippet": "Useful snippet",
+            },
             {"title": "Source 2", "url": "https://example.com/source-2", "snippet": ""},
         ],
         research_requested=True,
@@ -161,4 +165,3 @@ def test_none_null_stacktrace_key_and_base64_leakage_is_rejected() -> None:
     assert result["status"] == "degraded"
     assert result["invalid_count"] >= 4
     assert result["valid_source_count"] == 0
-

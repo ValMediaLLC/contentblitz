@@ -43,7 +43,9 @@ def test_running_completed_and_skipped_statuses_are_preserved() -> None:
     assert running.status == "running"
     assert completed.status == "completed"
     assert skipped.status == "skipped"
-    assert all(item.status in VALID_PROGRESS_STATUSES for item in (running, completed, skipped))
+    assert all(
+        item.status in VALID_PROGRESS_STATUSES for item in (running, completed, skipped)
+    )
 
 
 def test_invalid_status_safely_normalizes() -> None:
@@ -78,8 +80,8 @@ def test_progress_event_ordering_is_deterministic() -> None:
 
     ordered_once = order_progress_events(events)
     ordered_twice = order_progress_events(events)
-    assert [(event.node_name, event.status, event.timestamp) for event in ordered_once] == [
-        (event.node_name, event.status, event.timestamp) for event in ordered_twice
-    ]
+    assert [
+        (event.node_name, event.status, event.timestamp) for event in ordered_once
+    ] == [(event.node_name, event.status, event.timestamp) for event in ordered_twice]
     assert ordered_once[0].node_name == "query_handler_node"
     assert ordered_once[0].status == "running"

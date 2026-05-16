@@ -84,7 +84,7 @@ def main() -> None:
     print_section("CONTENT DRAFTS")
 
     content_drafts = result.get("content_drafts") or {}
-    research_report = (content_drafts.get("research_report") or {})
+    research_report = content_drafts.get("research_report") or {}
     blog_draft = content_drafts.get("blog") or {}
     linkedin_draft = content_drafts.get("linkedin") or {}
 
@@ -131,7 +131,7 @@ def main() -> None:
     print(result.get("final_response"))
 
     print("assembled_outputs:")
-    pprint(result.get("assembled_outputs"))    
+    pprint(result.get("assembled_outputs"))
 
     print_section("CACHE")
 

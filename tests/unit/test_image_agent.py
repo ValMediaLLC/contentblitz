@@ -95,7 +95,12 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
         return {
             "provider_used": "dall-e-3",
             "images": [
-                {"url": "https://example.com/success.png", "id": "img_1", "width": 1024, "height": 1024}
+                {
+                    "url": "https://example.com/success.png",
+                    "id": "img_1",
+                    "width": 1024,
+                    "height": 1024,
+                }
             ],
         }
 
@@ -170,7 +175,9 @@ def test_image_counter_increments_only_on_success(monkeypatch) -> None:
         return {"images": [{"url": "https://example.com/a.png"}]}
 
     monkeypatch.setattr(image_agent_module, "generate_text", fake_generate_text)
-    monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image_success)
+    monkeypatch.setattr(
+        image_agent_module, "generate_image", fake_generate_image_success
+    )
     success_state = _base_state(
         cost_controls={
             "tokens_used_this_session": 0,
@@ -186,7 +193,9 @@ def test_image_counter_increments_only_on_success(monkeypatch) -> None:
     def fake_generate_image_failure(prompt, style="default"):
         return {"images": [], "error": "temp unavailable"}
 
-    monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image_failure)
+    monkeypatch.setattr(
+        image_agent_module, "generate_image", fake_generate_image_failure
+    )
     failure_state = _base_state(
         cost_controls={
             "tokens_used_this_session": 0,

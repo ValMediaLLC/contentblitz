@@ -17,7 +17,11 @@ def _build_response(
     total_tokens: int | None = 20,
 ):
     usage = None
-    if prompt_tokens is not None and completion_tokens is not None and total_tokens is not None:
+    if (
+        prompt_tokens is not None
+        and completion_tokens is not None
+        and total_tokens is not None
+    ):
         usage = SimpleNamespace(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -194,7 +198,9 @@ def test_prompt_injection_guard_rejects_unsafe_prompt(monkeypatch) -> None:
 
     def _fake_build_openai_client(api_key: str):
         client_built["value"] = True
-        raise AssertionError("Provider client should not be created for blocked prompts.")
+        raise AssertionError(
+            "Provider client should not be created for blocked prompts."
+        )
 
     monkeypatch.setattr(
         generate_text_module,
@@ -221,7 +227,9 @@ def test_missing_api_key_fails_safely_without_building_client(monkeypatch) -> No
         client_built["value"] = True
         raise AssertionError("Client should not be built when API key is missing.")
 
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", _fake_client_builder)
+    monkeypatch.setattr(
+        generate_text_module, "_build_openai_client", _fake_client_builder
+    )
 
     result = generate_text_module.generate_text(
         prompt="Generate text",
@@ -242,7 +250,9 @@ def test_malformed_provider_response_is_handled_safely(monkeypatch) -> None:
         [
             SimpleNamespace(
                 model="gpt-4o",
-                choices=[SimpleNamespace(message=SimpleNamespace(content=[{"type": "text"}]))],
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=[{"type": "text"}]))
+                ],
                 usage=SimpleNamespace(),
             )
         ],
@@ -260,7 +270,9 @@ def test_malformed_provider_response_is_handled_safely(monkeypatch) -> None:
     assert result.total_tokens == 0
 
 
-def test_provider_authentication_failure_is_normalized_without_secret_leak(monkeypatch) -> None:
+def test_provider_authentication_failure_is_normalized_without_secret_leak(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-live-secret-value")
     auth_exc = generate_text_module.AuthenticationError.__new__(
         generate_text_module.AuthenticationError

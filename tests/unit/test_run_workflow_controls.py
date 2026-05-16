@@ -76,7 +76,9 @@ class _DummyStreamlit:
         return list(self.multiselect_values)
 
 
-def test_export_formats_control_remains_interactive_when_export_is_enabled(monkeypatch) -> None:
+def test_export_formats_control_remains_interactive_when_export_is_enabled(
+    monkeypatch,
+) -> None:
     dummy = _DummyStreamlit(
         checkbox_values={
             "Enable Export": True,

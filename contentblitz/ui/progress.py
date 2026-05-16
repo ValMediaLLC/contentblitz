@@ -59,10 +59,7 @@ def _sanitize_metadata_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, Mapping):
-        return {
-            str(key): _sanitize_metadata_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _sanitize_metadata_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_sanitize_metadata_value(item) for item in value]
     return str(value)
@@ -72,8 +69,7 @@ def _sanitize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
     return {
-        str(key): _sanitize_metadata_value(value)
-        for key, value in metadata.items()
+        str(key): _sanitize_metadata_value(value) for key, value in metadata.items()
     }
 
 
@@ -116,7 +112,9 @@ def create_progress_event(
         status,
         invalid_fallback=invalid_status_fallback,
     )
-    safe_message = str(message).strip() or _default_message(validated_node, normalized_status)
+    safe_message = str(message).strip() or _default_message(
+        validated_node, normalized_status
+    )
     return UIProgressEvent(
         node_name=validated_node,
         status=normalized_status,
@@ -174,9 +172,11 @@ def _coerce_event(event: UIProgressEvent | Mapping[str, Any]) -> UIProgressEvent
         status=str(event.get("status", "degraded")),
         message=str(event.get("message", "")),
         timestamp=str(event.get("timestamp", "")).strip() or None,
-        safe_metadata=event.get("safe_metadata")
-        if isinstance(event.get("safe_metadata"), Mapping)
-        else None,
+        safe_metadata=(
+            event.get("safe_metadata")
+            if isinstance(event.get("safe_metadata"), Mapping)
+            else None
+        ),
     )
 
 
@@ -203,4 +203,3 @@ def order_progress_events(
             ),
         )
     ]
-

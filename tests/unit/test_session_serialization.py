@@ -42,7 +42,11 @@ def _sample_state() -> dict:
                     "recoverable": True,
                 },
             },
-            {"status": "failed", "url": "data:image/png;base64,AAAA", "b64_json": "AAAA"},
+            {
+                "status": "failed",
+                "url": "data:image/png;base64,AAAA",
+                "b64_json": "AAAA",
+            },
         ],
         "sources": [
             {
@@ -57,7 +61,11 @@ def _sample_state() -> dict:
             }
         ],
         "quality_scores": {
-            "blog": {"validation_status": "retry_needed", "composite": 0.71, "internal": "x"}
+            "blog": {
+                "validation_status": "retry_needed",
+                "composite": 0.71,
+                "internal": "x",
+            }
         },
         "cost_controls": {
             "tokens_used_this_session": 4200,
@@ -69,7 +77,9 @@ def _sample_state() -> dict:
         "export_metadata": {
             "formats_requested": ["markdown", "pdf"],
             "export_paths": {"markdown": "exports/run.md", "pdf": "exports/run.pdf"},
-            "error_log": [{"message": "Traceback (most recent call last):\nsecret data"}],
+            "error_log": [
+                {"message": "Traceback (most recent call last):\nsecret data"}
+            ],
         },
         "errors": [
             {
@@ -124,7 +134,9 @@ def test_serialization_persists_safe_fields_only() -> None:
     assert "b64_json" not in blob
 
     failed_outputs = [
-        output for output in serialized["image_outputs"] if output.get("status") == "failed"
+        output
+        for output in serialized["image_outputs"]
+        if output.get("status") == "failed"
     ]
     assert failed_outputs
     first_failed = failed_outputs[0]
@@ -143,7 +155,10 @@ def test_serialization_persists_safe_fields_only() -> None:
     assert "configuration_error" not in error_blob
     assert "provider': 'openai'" not in error_blob
     assert "recoverable': False" not in error_blob
-    assert all("base64" not in json.dumps(output).lower() for output in serialized["image_outputs"])
+    assert all(
+        "base64" not in json.dumps(output).lower()
+        for output in serialized["image_outputs"]
+    )
 
     event = serialized["progress_events"][0]
     assert event["safe_metadata"] == {"x": 1}
@@ -168,7 +183,9 @@ def test_deserialization_handles_missing_export_files_safely(tmp_path: Path) -> 
     )
 
     restored = deserialize_workflow_run(serialized)
-    assert restored["export_metadata"]["export_paths"] == {"markdown": str(existing_export)}
+    assert restored["export_metadata"]["export_paths"] == {
+        "markdown": str(existing_export)
+    }
     assert any("missing locally" in warning.lower() for warning in restored["warnings"])
 
 
@@ -257,7 +274,9 @@ def test_prompt_injection_metadata_is_serialized_safely() -> None:
         "bad-signal!",
         "__proto__",
     ]
-    state["sanitized_user_query"] = "Write a blog about AI workflows. OPENAI_API_KEY=sk-danger"
+    state["sanitized_user_query"] = (
+        "Write a blog about AI workflows. OPENAI_API_KEY=sk-danger"
+    )
 
     serialized = serialize_workflow_run(
         result_state=state,
@@ -297,7 +316,9 @@ def test_prompt_injection_metadata_defaults_when_absent() -> None:
     assert restored["sanitized_user_query"] == ""
 
 
-def test_cost_controls_are_serialized_safely_and_restore_without_provider_details() -> None:
+def test_cost_controls_are_serialized_safely_and_restore_without_provider_details() -> (
+    None
+):
     state = _sample_state()
     state["cost_controls"] = {
         "tokens_used_this_session": 8400,
@@ -338,16 +359,16 @@ def test_cost_controls_are_serialized_safely_and_restore_without_provider_detail
     assert restored["cost_controls"] == controls
 
 
-def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> None:
+def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> (
+    None
+):
     for export_enabled in (True, False):
         state = _sample_state()
         state["final_response"] = (
-            "Safe intro <script>alert(1)</script> "
-            "[bad](javascript:alert(1)) tail"
+            "Safe intro <script>alert(1)</script> " "[bad](javascript:alert(1)) tail"
         )
         state["content_drafts"]["blog"]["body"] = (
-            "Draft body <script>alert(1)</script> "
-            "[bad](javascript:alert(1)) end"
+            "Draft body <script>alert(1)</script> " "[bad](javascript:alert(1)) end"
         )
         state["export_requested"] = export_enabled
         state["export_metadata"] = {

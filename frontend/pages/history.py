@@ -45,24 +45,39 @@ def render() -> None:
     if not summaries:
         st.info("No saved workflow runs were found yet.")
     else:
-        run_ids = [str(item.get("run_id", "")).strip() for item in summaries if str(item.get("run_id", "")).strip()]
+        run_ids = [
+            str(item.get("run_id", "")).strip()
+            for item in summaries
+            if str(item.get("run_id", "")).strip()
+        ]
         selected_run_id = st.selectbox(
             "Saved Runs",
             options=run_ids,
             format_func=lambda rid: _summary_label(
-                next((item for item in summaries if str(item.get("run_id", "")).strip() == rid), {})
+                next(
+                    (
+                        item
+                        for item in summaries
+                        if str(item.get("run_id", "")).strip() == rid
+                    ),
+                    {},
+                )
             ),
         )
 
         col1, col2 = st.columns([1, 2])
-        if col1.button("Restore Selected Run", type="primary", disabled=not bool(selected_run_id)):
+        if col1.button(
+            "Restore Selected Run", type="primary", disabled=not bool(selected_run_id)
+        ):
             restored, message = restore_persisted_run(selected_run_id)
             if restored:
                 st.success(message)
             else:
                 st.warning(message)
 
-        selected_record = load_persisted_run(selected_run_id) if selected_run_id else None
+        selected_record = (
+            load_persisted_run(selected_run_id) if selected_run_id else None
+        )
         if isinstance(selected_record, dict):
             col2.caption(
                 f"Run ID: `{selected_record.get('run_id', '')}` | Session ID: `{selected_record.get('session_id', '')}`"
@@ -84,8 +99,12 @@ def render() -> None:
             render_degraded_and_error_state(render_payload)
             render_usage_summary(render_payload)
             render_partial_outputs(render_payload)
-            render_result_header({"ui_workflow_status": render_payload.get("workflow_status", "")})
-            render_final_response({"final_response": render_payload.get("final_response", "")})
+            render_result_header(
+                {"ui_workflow_status": render_payload.get("workflow_status", "")}
+            )
+            render_final_response(
+                {"final_response": render_payload.get("final_response", "")}
+            )
             render_sources({"sources": render_payload.get("sources", [])})
             render_export_status(render_payload)
 

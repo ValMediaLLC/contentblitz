@@ -49,7 +49,9 @@ def _resolve_path(path_value: str) -> Path:
     return path
 
 
-def test_session_restore_keeps_outputs_without_provider_rerun(tmp_path, monkeypatch) -> None:
+def test_session_restore_keeps_outputs_without_provider_rerun(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -109,9 +111,15 @@ def test_session_restore_keeps_outputs_without_provider_rerun(tmp_path, monkeypa
 
     export_paths = {
         fmt: _resolve_path(path_value)
-        for fmt, path_value in dict(result.get("export_metadata", {}).get("export_paths", {})).items()
+        for fmt, path_value in dict(
+            result.get("export_metadata", {}).get("export_paths", {})
+        ).items()
     }
-    export_mtimes = {fmt: path.stat().st_mtime_ns for fmt, path in export_paths.items() if path.exists()}
+    export_mtimes = {
+        fmt: path.stat().st_mtime_ns
+        for fmt, path in export_paths.items()
+        if path.exists()
+    }
     serp_calls_before = search_counters["serp"]
     image_calls_before = len(image_calls["models"])
 
@@ -127,7 +135,9 @@ def test_session_restore_keeps_outputs_without_provider_rerun(tmp_path, monkeypa
     assert restored_result.get("run_id") == run_id
     assert restored_result.get("final_response", "").strip()
     assert restored_result.get("ui_workflow_status") == workflow_status
-    assert restored_result.get("export_metadata", {}).get("export_paths") == result.get("export_metadata", {}).get("export_paths")
+    assert restored_result.get("export_metadata", {}).get("export_paths") == result.get(
+        "export_metadata", {}
+    ).get("export_paths")
     assert session_module.get_execution_status() == workflow_status
 
     for fmt, path in export_paths.items():
@@ -181,7 +191,11 @@ def test_prompt_injection_session_restore_remains_safe(tmp_path, monkeypatch) ->
             str(restored_result.get("final_response", "")),
             str(restored_result.get("sanitized_user_query", "")),
             " ".join(
-                str((restored_result.get("content_drafts", {}) or {}).get(key, {}).get("body", ""))
+                str(
+                    (restored_result.get("content_drafts", {}) or {})
+                    .get(key, {})
+                    .get("body", "")
+                )
                 for key in ("blog", "linkedin", "research_report")
             ),
         ]

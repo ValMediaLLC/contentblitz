@@ -364,10 +364,24 @@ def test_error_reducer_dedupes_same_error_and_preserves_unique_entries() -> None
 
 
 def test_export_error_log_reducer_keeps_structured_entries() -> None:
-    left = [{"format": "markdown", "code": "markdown_validation_error", "message": "Missing title"}]
+    left = [
+        {
+            "format": "markdown",
+            "code": "markdown_validation_error",
+            "message": "Missing title",
+        }
+    ]
     right = [
-        {"format": "markdown", "code": "markdown_validation_error", "message": "Missing title"},
-        {"format": "html", "code": "html_export_failed", "message": "HTML export failed safely."},
+        {
+            "format": "markdown",
+            "code": "markdown_validation_error",
+            "message": "Missing title",
+        },
+        {
+            "format": "html",
+            "code": "html_export_failed",
+            "message": "HTML export failed safely.",
+        },
     ]
 
     merged = merge_export_error_log(left, right)
@@ -389,7 +403,9 @@ def test_export_metadata_reducer_preserves_completed_format_results() -> None:
         "export_paths": {"html": "exports/content_a.html"},
         "export_status": {"html": "completed", "markdown": "failed"},
         "status_messages": ["HTML export succeeded.", "Markdown export succeeded."],
-        "error_log": [{"format": "html", "code": "html_warning", "message": "Minor warning"}],
+        "error_log": [
+            {"format": "html", "code": "html_warning", "message": "Minor warning"}
+        ],
     }
 
     merged = merge_export_metadata(left, right)
@@ -409,12 +425,22 @@ def test_export_metadata_reducer_preserves_completed_format_results() -> None:
 
 def test_sources_reducer_dedupes_by_url_then_title_source_and_preserves_order() -> None:
     left = [
-        {"title": "A", "url": "https://example.com/a", "source": "serp", "snippet": "left"},
+        {
+            "title": "A",
+            "url": "https://example.com/a",
+            "source": "serp",
+            "snippet": "left",
+        },
         {"title": "B", "source": "perplexity", "snippet": "fallback"},
         "not-a-dict",
     ]
     right = [
-        {"title": "A newer", "url": "https://example.com/a", "source": "serp", "snippet": "right"},
+        {
+            "title": "A newer",
+            "url": "https://example.com/a",
+            "source": "serp",
+            "snippet": "right",
+        },
         {"title": "B", "source": "perplexity", "snippet": "dup by title+source"},
         {"title": "C", "url": "https://example.com/c", "source": "serp"},
         {"title": "", "url": "", "source": "", "snippet": ""},
@@ -440,14 +466,42 @@ def test_image_prompts_reducer_dedupes_and_ignores_empty_or_null_tokens() -> Non
 
 def test_image_outputs_reducer_preserves_success_and_recoverable_failure() -> None:
     left = [
-        {"id": "img-1", "status": "success", "provider": "dall-e-3", "url": "https://img.example/1.png"},
-        {"status": "failed", "provider": "dall-e-3", "prompt": "concept one", "error": "recoverable"},
+        {
+            "id": "img-1",
+            "status": "success",
+            "provider": "dall-e-3",
+            "url": "https://img.example/1.png",
+        },
+        {
+            "status": "failed",
+            "provider": "dall-e-3",
+            "prompt": "concept one",
+            "error": "recoverable",
+        },
     ]
     right = [
-        {"id": "img-1", "status": "success", "provider": "dall-e-2", "url": "https://img.example/1.png"},
-        {"status": "failed", "provider": "dall-e-3", "prompt": "concept one", "error": "recoverable"},
-        {"status": "success", "provider": "dall-e-2", "url": "data:image/png;base64,ABC"},
-        {"status": "success", "provider": "dall-e-2", "url": "https://img.example/2.png"},
+        {
+            "id": "img-1",
+            "status": "success",
+            "provider": "dall-e-2",
+            "url": "https://img.example/1.png",
+        },
+        {
+            "status": "failed",
+            "provider": "dall-e-3",
+            "prompt": "concept one",
+            "error": "recoverable",
+        },
+        {
+            "status": "success",
+            "provider": "dall-e-2",
+            "url": "data:image/png;base64,ABC",
+        },
+        {
+            "status": "success",
+            "provider": "dall-e-2",
+            "url": "https://img.example/2.png",
+        },
     ]
 
     merged = merge_image_outputs(left, right)
@@ -457,7 +511,10 @@ def test_image_outputs_reducer_preserves_success_and_recoverable_failure() -> No
     assert merged[1]["status"] == "failed"
     assert merged[2]["url"] == "https://img.example/2.png"
     assert all("base64" not in str(item).lower() for item in merged)
-    assert all(not str(item.get("url", "")).lower().startswith("data:image/") for item in merged)
+    assert all(
+        not str(item.get("url", "")).lower().startswith("data:image/")
+        for item in merged
+    )
 
 
 def test_quality_scores_merge_keeps_unrelated_scores_and_skips_none() -> None:

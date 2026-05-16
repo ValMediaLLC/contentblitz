@@ -217,10 +217,14 @@ def render() -> None:
                                 raw_events = event.get("events")
                                 if isinstance(raw_events, list):
                                     progress_events = [
-                                        item for item in raw_events if isinstance(item, dict)
+                                        item
+                                        for item in raw_events
+                                        if isinstance(item, dict)
                                     ]
                                     set_progress_events(progress_events)
-                                    node_statuses = derive_node_statuses(progress_events)
+                                    node_statuses = derive_node_statuses(
+                                        progress_events
+                                    )
                                     set_node_statuses(node_statuses)
                 normalized_node_statuses = apply_optional_node_skips(
                     state=final_result,
@@ -265,14 +269,14 @@ def render() -> None:
                 add_history_entry(
                     user_query=safe_query,
                     requested_outputs=requested_outputs,
-                    workflow_status=str(final_result.get("workflow_status", "")).strip(),
+                    workflow_status=str(
+                        final_result.get("workflow_status", "")
+                    ).strip(),
                 )
             except Exception:
                 set_execution_status("failed")
                 set_last_error("Workflow execution failed. Check logs for details.")
-                set_status_messages(
-                    ["Workflow execution failed before completion."]
-                )
+                set_status_messages(["Workflow execution failed before completion."])
 
     last_error = get_last_error()
     if last_error:
@@ -302,13 +306,17 @@ def render() -> None:
         )
         result_for_indicators = dict(result)
         result_for_indicators["ui_workflow_status"] = indicator_workflow_status
-    render_execution_indicators(execution_status=execution_status, result=result_for_indicators)
+    render_execution_indicators(
+        execution_status=execution_status, result=result_for_indicators
+    )
     progress_events = get_progress_events()
     node_statuses = get_node_statuses()
     if not node_statuses and progress_events:
         node_statuses = derive_node_statuses(progress_events)
     if isinstance(result, dict):
-        node_statuses = apply_optional_node_skips(state=result, node_statuses=node_statuses)
+        node_statuses = apply_optional_node_skips(
+            state=result, node_statuses=node_statuses
+        )
     render_node_execution_statuses(node_statuses)
     render_progress_events(progress_events)
     render_status_messages(get_status_messages())
@@ -331,7 +339,9 @@ def render() -> None:
     render_degraded_and_error_state(render_payload)
     render_usage_summary(render_payload)
     render_partial_outputs(render_payload)
-    render_result_header({"ui_workflow_status": render_payload.get("workflow_status", "")})
+    render_result_header(
+        {"ui_workflow_status": render_payload.get("workflow_status", "")}
+    )
     render_final_response({"final_response": render_payload.get("final_response", "")})
     render_sources({"sources": render_payload.get("sources", [])})
     render_export_status(render_payload)

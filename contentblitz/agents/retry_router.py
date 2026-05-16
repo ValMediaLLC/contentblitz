@@ -63,7 +63,9 @@ def retry_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if not retry_types:
         return {}
 
-    if bool(cost_controls.get("budget_exceeded", False)) or retry_cap_reached(cost_controls):
+    if bool(cost_controls.get("budget_exceeded", False)) or retry_cap_reached(
+        cost_controls
+    ):
         return {
             "retry_requested": False,
             "retry_target": "",
@@ -73,7 +75,9 @@ def retry_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     total_retries_used = int(cost_controls.get("total_retries_used_this_session", 0))
-    max_total_retries = int(cost_controls.get("max_total_retries_per_session", _DEFAULT_MAX_TOTAL_RETRIES))
+    max_total_retries = int(
+        cost_controls.get("max_total_retries_per_session", _DEFAULT_MAX_TOTAL_RETRIES)
+    )
     remaining_session_retries = max(0, max_total_retries - total_retries_used)
 
     dispatch_types: List[str] = []

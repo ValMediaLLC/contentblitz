@@ -33,7 +33,7 @@ def _contains_stack_trace(text: str) -> bool:
     lowered = text.lower()
     if any(marker in lowered for marker in _TRACEBACK_MARKERS):
         return True
-    if "  file \"" in lowered and " line " in lowered:
+    if '  file "' in lowered and " line " in lowered:
         return True
     return False
 

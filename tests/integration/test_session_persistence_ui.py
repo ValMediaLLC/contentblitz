@@ -76,7 +76,10 @@ def test_saves_lists_and_restores_partial_success_run(tmp_path, monkeypatch) -> 
                 "safe_metadata": {},
             }
         ],
-        node_statuses={"query_handler_node": "completed", "blog_writer_node": "completed"},
+        node_statuses={
+            "query_handler_node": "completed",
+            "blog_writer_node": "completed",
+        },
         status_messages=["Workflow completed with recoverable warnings."],
     )
     assert run_id
@@ -101,7 +104,9 @@ def test_saves_lists_and_restores_partial_success_run(tmp_path, monkeypatch) -> 
     assert payload["usage_summary"]["estimated_tokens_out"] == 4200
 
 
-def test_restores_awaiting_clarification_without_reexecution(tmp_path, monkeypatch) -> None:
+def test_restores_awaiting_clarification_without_reexecution(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_SESSION_DIR", str(tmp_path / "sessions"))
     _install_dummy_streamlit(monkeypatch)
     session_module.initialize_session_state()
@@ -110,7 +115,9 @@ def test_restores_awaiting_clarification_without_reexecution(tmp_path, monkeypat
         workflow_status="awaiting_clarification",
         user_query="help",
     )
-    result["final_response"] = "Could you clarify your goal, target audience, and desired output format?"
+    result["final_response"] = (
+        "Could you clarify your goal, target audience, and desired output format?"
+    )
 
     run_id = session_module.save_persisted_run(
         result=result,
@@ -137,7 +144,9 @@ def test_restores_awaiting_clarification_without_reexecution(tmp_path, monkeypat
     )
 
 
-def test_restore_uses_top_level_status_not_progress_metadata(tmp_path, monkeypatch) -> None:
+def test_restore_uses_top_level_status_not_progress_metadata(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CONTENTBLITZ_SESSION_DIR", str(tmp_path / "sessions"))
     _install_dummy_streamlit(monkeypatch)
     session_module.initialize_session_state()
