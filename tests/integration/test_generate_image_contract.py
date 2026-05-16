@@ -51,6 +51,9 @@ def test_generate_image_contract_shape(monkeypatch) -> None:
     assert result.model == "dall-e-3"
     assert result.prompt == "A clean futuristic dashboard concept."
     assert result.image_url == "https://img.example/contract.png"
+    assert result.local_path is None
+    assert result.image_id is None
+    assert result.renderable is True
     assert result.revised_prompt == "contract revised"
     assert result.degraded is False
     assert result.error is None
@@ -93,11 +96,15 @@ def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
 
     def _fake_builder(api_key: str):
         client_built["value"] = True
-        raise AssertionError("Image client should not be built when live calls are disabled.")
+        raise AssertionError(
+            "Image client should not be built when live calls are disabled."
+        )
 
     monkeypatch.setattr(generate_image_module, "_build_openai_client", _fake_builder)
 
-    result = generate_image_module.generate_image(prompt="Disabled-live-call contract case.")
+    result = generate_image_module.generate_image(
+        prompt="Disabled-live-call contract case."
+    )
     assert result.degraded is True
     assert result.error is not None
     assert result.error["code"] == "live_calls_disabled"
@@ -105,9 +112,11 @@ def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
 
 def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    _mock_success_client(
-        monkeypatch,
-        url="asset_123abc",
+    response = SimpleNamespace(data=[SimpleNamespace(id="asset_123abc")])
+    images = _FakeImages(response)
+    client = SimpleNamespace(images=images)
+    monkeypatch.setattr(
+        generate_image_module, "_build_openai_client", lambda api_key: client
     )
 
     legacy = legacy_image_module.generate_image(
@@ -118,4 +127,5 @@ def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None
     assert isinstance(legacy["images"], list)
     assert len(legacy["images"]) == 1
     assert legacy["images"][0]["id"] == "asset_123abc"
+    assert legacy["images"][0]["renderable"] is False
     assert "url" not in legacy["images"][0]

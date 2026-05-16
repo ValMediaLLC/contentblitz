@@ -90,8 +90,12 @@ def test_both_models_fail_returns_degraded_result(monkeypatch) -> None:
     assert result.error["models_attempted"] == ["dall-e-3", "dall-e-2"]
 
 
-def test_base64_is_never_returned(monkeypatch) -> None:
+def test_base64_is_never_returned(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv(
+        "CONTENTBLITZ_EXPORT_DIR",
+        str(tmp_path / "exports"),
+    )
     _install_fake_client(
         monkeypatch,
         [
@@ -103,8 +107,10 @@ def test_base64_is_never_returned(monkeypatch) -> None:
 
     result = generate_image_module.generate_image(prompt="A minimalist icon sheet.")
     assert result.degraded is False
-    assert isinstance(result.image_url, str)
-    assert result.image_url.startswith("asset_")
+    assert result.image_url is None
+    assert isinstance(result.local_path, str)
+    assert result.local_path.endswith(".png")
+    assert result.renderable is True
     assert "b64" not in str(result)
 
 
@@ -154,8 +160,11 @@ def test_prompt_safety_guard_is_applied(monkeypatch) -> None:
     assert client_built["value"] is False
 
 
-def test_model_not_found_falls_back_to_modern_image_model(monkeypatch) -> None:
+def test_model_not_found_falls_back_to_modern_image_model(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
 
     class _ModelMissingError(Exception):
         def __str__(self) -> str:
@@ -185,7 +194,23 @@ def test_model_not_found_falls_back_to_modern_image_model(monkeypatch) -> None:
     result = generate_image_module.generate_image(prompt="A cyberpunk fashion concept.")
     assert result.degraded is False
     assert result.model == "gpt-image-1"
-    assert isinstance(result.image_url, str)
-    assert result.image_url.startswith("asset_")
+    assert isinstance(result.local_path, str)
+    assert result.local_path.endswith(".png")
+    assert result.image_url is None
     called_models = [call["model"] for call in images.calls]
     assert called_models == ["dall-e-3", "dall-e-2", "gpt-image-1"]
+
+
+def test_id_only_payload_is_non_renderable(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _install_fake_client(
+        monkeypatch,
+        [_response_with_item({"id": "img_asset_only_123"})],
+    )
+
+    result = generate_image_module.generate_image(prompt="Asset-id only response case.")
+    assert result.degraded is False
+    assert result.renderable is False
+    assert result.image_url is None
+    assert result.local_path is None
+    assert result.image_id == "img_asset_only_123"

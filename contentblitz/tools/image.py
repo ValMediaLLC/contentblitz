@@ -28,20 +28,23 @@ def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
     )
 
     images = []
-    if (
-        not result.degraded
-        and isinstance(result.image_url, str)
-        and result.image_url.strip()
-    ):
-        cleaned_ref = result.image_url.strip()
-        image_item: Dict[str, Any]
-        if _is_http_url(cleaned_ref):
-            image_item = {"url": cleaned_ref}
-        else:
-            image_item = {"id": cleaned_ref}
+    if not result.degraded:
+        image_item: Dict[str, Any] = {}
+        if isinstance(result.image_url, str) and result.image_url.strip():
+            cleaned_ref = result.image_url.strip()
+            if _is_http_url(cleaned_ref):
+                image_item["url"] = cleaned_ref
+        if isinstance(result.local_path, str) and result.local_path.strip():
+            image_item["local_path"] = result.local_path.strip()
+        if isinstance(result.image_id, str) and result.image_id.strip():
+            image_item["id"] = result.image_id.strip()
+        image_item["renderable"] = bool(
+            image_item.get("url") or image_item.get("local_path")
+        )
         if result.revised_prompt:
             image_item["revised_prompt"] = result.revised_prompt
-        images.append(image_item)
+        if image_item:
+            images.append(image_item)
 
     return {
         "prompt": prompt,

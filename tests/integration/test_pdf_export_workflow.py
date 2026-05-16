@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import binascii
+import struct
+import zlib
 from pathlib import Path
 
 from contentblitz.agents.export_node import export_node
@@ -11,9 +14,32 @@ from contentblitz.persistence.serialization import (
 from contentblitz.state import create_initial_state
 
 
+def _write_test_png(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width = 1
+    height = 1
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00\x00\x00\xff")  # blue pixel
+
+    def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+        crc = binascii.crc32(chunk_type + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
+
+    payload = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", idat)
+        + _chunk(b"IEND", b"")
+    )
+    path.write_bytes(payload)
+
+
 def _workflow_state(*, export_requested: bool, formats_requested: list[str]) -> dict:
     return create_initial_state(
-        user_query="create a blog article, linkedin post, and image concept about AI marketing automation",
+        user_query=(
+            "create a blog article, linkedin post, and image concept "
+            "about AI marketing automation"
+        ),
         requested_outputs=["blog", "linkedin", "research", "image"],
         routing_decision="content_strategist_node",
         research_data={
@@ -119,6 +145,57 @@ def test_pdf_export_skipped_behavior_when_not_requested(tmp_path, monkeypatch) -
     metadata = export_updates["export_metadata"]
     assert metadata["export_paths"] == {}
     assert metadata["export_status"] == {}
+
+
+def test_image_only_pdf_export_uses_local_path_and_status_not_failed(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    local_image = tmp_path / "exports" / "images" / "lookbook.png"
+    _write_test_png(local_image)
+    state = create_initial_state(
+        user_query="Create futuristic fashion image concepts.",
+        requested_outputs=["image"],
+        routing_decision="image_agent_node",
+        content_drafts={
+            "blog": {"body": "", "version": 0},
+            "linkedin": {"body": "", "version": 0},
+            "research_report": {"body": ""},
+        },
+        image_prompts=["Create a neon fashion lookbook image."],
+        image_outputs=[
+            {
+                "status": "success",
+                "provider": "gpt-image-1",
+                "local_path": str(local_image),
+                "renderable": True,
+            }
+        ],
+        sources=[],
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["pdf"],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+            "export_status": {},
+        },
+    )
+    assembled = output_assembler_node(state)
+    merged = {**state, **assembled}
+    assert merged["workflow_status"] != "failed"
+
+    export_updates = export_node(merged)
+    metadata = export_updates["export_metadata"]
+    assert metadata["export_status"]["pdf"] == "completed"
+    pdf_path = metadata["export_paths"]["pdf"]
+    file_path = Path(pdf_path)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    text = file_path.read_bytes().decode("latin-1", errors="ignore").lower()
+    assert "image outputs" in text
+    assert "lookbook.png" in text
+    assert "/subtype /image" in text
 
 
 def test_persisted_session_restores_pdf_export_metadata_safely(

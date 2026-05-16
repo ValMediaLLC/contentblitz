@@ -119,6 +119,25 @@ def test_image_output_rendering_rejects_base64_content() -> None:
     )
 
 
+def test_image_output_rendering_allows_existing_local_paths(tmp_path) -> None:
+    image_file = tmp_path / "local_image.png"
+    image_file.write_bytes(b"PNGDATA")
+
+    outputs = [
+        {
+            "status": "success",
+            "provider": "gpt-image-1",
+            "local_path": str(image_file),
+            "renderable": True,
+        }
+    ]
+    sanitized = sanitize_image_outputs_for_display(outputs)
+    assert len(sanitized) == 1
+    assert "local_path" in sanitized[0]
+    assert sanitized[0]["local_path"].endswith("local_image.png")
+    assert sanitized[0]["renderable"] is True
+
+
 def test_image_output_rendering_sanitizes_text_fields_and_error_payloads() -> None:
     outputs = [
         {
@@ -136,7 +155,10 @@ def test_image_output_rendering_sanitizes_text_fields_and_error_payloads() -> No
             "status": "failed",
             "provider": "dall-e-3",
             "error": {
-                "message": "{'code': 'configuration_error', 'provider': 'openai', 'recoverable': False}",
+                "message": (
+                    "{'code': 'configuration_error', 'provider': 'openai', "
+                    "'recoverable': False}"
+                ),
                 "recoverable": True,
             },
         },

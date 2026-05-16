@@ -140,6 +140,27 @@ def test_image_failure_warning_included() -> None:
     assert "recoverable failure" in updates["final_response"].lower()
 
 
+def test_image_only_with_renderable_local_path_is_success() -> None:
+    state = _base_state(
+        requested_outputs=["image"],
+        image_prompts=["Create a clean fashion campaign visual."],
+        image_outputs=[
+            {
+                "status": "success",
+                "provider": "gpt-image-1",
+                "local_path": "exports/images/campaign.png",
+                "renderable": True,
+            }
+        ],
+        sources=[],
+    )
+    updates = output_assembler_module.output_assembler_node(state)
+
+    assert updates["workflow_status"] == "success"
+    assert "## Image Assets" in updates["final_response"]
+    assert "exports/images/campaign.png" in updates["final_response"]
+
+
 def test_source_dedupe_preserves_order_and_highest_credibility() -> None:
     state = _base_state(
         requested_outputs=["blog"],
