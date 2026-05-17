@@ -1,0 +1,102 @@
+{
+  "run_id": "f53a3e831ad04124b4424b26da7f5090",
+  "session_id": "session_regression_fixture",
+  "created_at": "2026-05-16T12:00:00+00:00",
+  "updated_at": "2026-05-16T12:01:00+00:00",
+  "user_query": "Write a blog post about LLM observability.",
+  "requested_outputs": [
+    "blog"
+  ],
+  "workflow_status": "success",
+  "ui_workflow_status": "success",
+  "routing_decision": "content_strategist_node",
+  "final_response": "## Blog Draft\n```markdown\n# Harnessing the Power of LangSmith for LLM Observability\n\nLangSmith helps teams observe, debug, and improve production LLM workflows.\n\n## Why Observability Matters\n\nProduction behavior differs from local tests, so observability is critical.\n```\n\n## Sources\n1. [LangChain Production Monitoring](https://www.langchain.com/blog/production-monitoring)",
+  "content_drafts": {
+    "blog": {
+      "body": "```markdown\n# Harnessing the Power of LangSmith for LLM Observability\n\nLangSmith helps teams observe, debug, and improve production LLM workflows.\n\n## Why Observability Matters\n\nProduction behavior differs from local tests, so observability is critical.\n```",
+      "version": 1
+    },
+    "linkedin": {
+      "body": "",
+      "version": 0
+    },
+    "research_report": {
+      "body": ""
+    }
+  },
+  "partial_outputs": {
+    "blog": "",
+    "linkedin": "",
+    "research": ""
+  },
+  "partial_output_mode": "none",
+  "image_prompts": [],
+  "image_outputs": [],
+  "sources": [
+    {
+      "title": "LangChain Production Monitoring",
+      "url": "https://www.langchain.com/blog/production-monitoring",
+      "snippet": "Production monitoring guidance for agent applications.",
+      "source": "langchain",
+      "published_at": null,
+      "citation_available": true,
+      "credibility_score": 0.9
+    }
+  ],
+  "quality_scores": {},
+  "cost_controls": {
+    "budget_exceeded": false
+  },
+  "export_metadata": {
+    "formats_requested": [],
+    "export_paths": {},
+    "export_status": {},
+    "export_error_count": 0,
+    "status_messages": []
+  },
+  "warnings": [],
+  "errors": [],
+  "progress_events": [
+    {
+      "node_name": "blog_writer_node",
+      "status": "completed",
+      "timestamp": "2026-05-16T12:00:15+00:00",
+      "message": "blog_writer_node completed.",
+      "safe_metadata": {}
+    },
+    {
+      "node_name": "output_assembler_node",
+      "status": "completed",
+      "timestamp": "2026-05-16T12:00:20+00:00",
+      "message": "output_assembler_node completed.",
+      "safe_metadata": {}
+    }
+  ],
+  "status_messages": [
+    "Workflow completed successfully."
+  ],
+  "ui_selected_options": {
+    "requested_outputs": [
+      "blog"
+    ],
+    "export_requested": false,
+    "export_formats": []
+  },
+  "ui_node_statuses": {
+    "query_handler_node": "completed",
+    "clarification_node": "skipped",
+    "research_agent_node": "skipped",
+    "content_strategist_node": "completed",
+    "blog_writer_node": "completed",
+    "linkedin_writer_node": "skipped",
+    "image_agent_node": "skipped",
+    "quality_validator_node": "completed",
+    "retry_router_node": "skipped",
+    "output_assembler_node": "completed",
+    "export_node": "skipped",
+    "error_handler_node": "skipped"
+  },
+  "prompt_injection_detected": false,
+  "prompt_injection_signals": [],
+  "sanitized_user_query": "Write a blog post about LLM observability."
+}

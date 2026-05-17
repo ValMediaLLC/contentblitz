@@ -638,21 +638,34 @@ def build_render_payload(
     if unsafe_content_removed:
         warnings.append("Unsafe content was removed before rendering.")
 
+    persisted_ui_statuses = _safe_dict(state_snapshot.get("ui_node_statuses", {}))
+
+    def _historical_node_ready(node_name: str) -> bool:
+        raw_status = _safe_text(persisted_ui_statuses.get(node_name))
+        if not raw_status:
+            return False
+        status = normalize_progress_status(raw_status, invalid_fallback="failed")
+        return status in _TERMINAL_FOR_PARTIAL_RENDER
+
+    blog_ready_for_display = _node_ready(
+        merged_statuses, "blog_writer_node"
+    ) or _historical_node_ready("blog_writer_node")
+    linkedin_ready_for_display = _node_ready(
+        merged_statuses, "linkedin_writer_node"
+    ) or _historical_node_ready("linkedin_writer_node")
+    research_ready_for_display = (
+        _node_ready(merged_statuses, "research_agent_node")
+        or _node_ready(merged_statuses, "output_assembler_node")
+        or _historical_node_ready("research_agent_node")
+        or _historical_node_ready("output_assembler_node")
+    )
+
     partial_outputs = {
-        "blog": blog_draft if _node_ready(merged_statuses, "blog_writer_node") else "",
-        "linkedin": (
-            linkedin_draft
-            if _node_ready(merged_statuses, "linkedin_writer_node")
-            else ""
-        ),
-        "research": (
-            research_report or research_summary
-            if (
-                _node_ready(merged_statuses, "research_agent_node")
-                or _node_ready(merged_statuses, "output_assembler_node")
-            )
-            else ""
-        ),
+        "blog": blog_draft if blog_ready_for_display else "",
+        "linkedin": linkedin_draft if linkedin_ready_for_display else "",
+        "research": (research_report or research_summary)
+        if research_ready_for_display
+        else "",
     }
     partial_sections: list[dict[str, str]] = []
     partial_labels = {

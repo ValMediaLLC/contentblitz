@@ -14,17 +14,8 @@ from contentblitz.ui.status import (
     workflow_requires_clarification,
 )
 from frontend.components.result_view import (
+    render_collapsible_output_sections,
     render_degraded_and_error_state,
-    render_execution_indicators,
-    render_usage_summary,
-    render_final_response,
-    render_export_status,
-    render_node_execution_statuses,
-    render_partial_outputs,
-    render_progress_events,
-    render_result_header,
-    render_status_messages,
-    render_sources,
 )
 from frontend.config import FRONTEND_CONFIG
 from frontend.services.orchestrator_client import stream_workflow_progress
@@ -44,12 +35,12 @@ from frontend.session import (
     get_persistence_messages,
     get_progress_events,
     get_status_messages,
+    save_persisted_run,
     set_execution_status,
     set_last_error,
     set_last_result,
     set_last_submission,
     set_node_statuses,
-    save_persisted_run,
     set_progress_events,
     set_status_messages,
 )
@@ -102,7 +93,10 @@ def _build_controls() -> WorkflowControls:
     include_research = col2.checkbox(
         "Research Output",
         value=False,
-        help="Requests research output. Orchestrator remains authoritative for final routing.",
+        help=(
+            "Requests research output. Orchestrator remains authoritative for "
+            "final routing."
+        ),
     )
     include_image = col2.checkbox("Image Output", value=False)
 
@@ -138,7 +132,8 @@ def _build_controls() -> WorkflowControls:
 def render() -> None:
     st.header("Run Workflow")
     st.caption(
-        "UI options are submitted as workflow preferences through the orchestration service layer. "
+        "UI options are submitted as workflow preferences through the "
+        "orchestration service layer. "
         "The orchestrator owns final routing/classification behavior."
     )
 
@@ -192,7 +187,6 @@ def render() -> None:
                 node_statuses = derive_node_statuses(progress_events)
                 set_node_statuses(node_statuses)
                 set_status_messages(["Workflow started."])
-                live_progress_container = st.empty()
                 with st.spinner("Executing workflow..."):
                     final_result: dict[str, object] = {}
                     for event in stream_workflow_progress(
@@ -208,8 +202,6 @@ def render() -> None:
                                 set_progress_events(progress_events)
                                 node_statuses = derive_node_statuses(progress_events)
                                 set_node_statuses(node_statuses)
-                                with live_progress_container.container():
-                                    render_node_execution_statuses(node_statuses)
                         elif event.get("type") == "final":
                             result_payload = event.get("result")
                             if isinstance(result_payload, dict):
@@ -306,9 +298,6 @@ def render() -> None:
         )
         result_for_indicators = dict(result)
         result_for_indicators["ui_workflow_status"] = indicator_workflow_status
-    render_execution_indicators(
-        execution_status=execution_status, result=result_for_indicators
-    )
     progress_events = get_progress_events()
     node_statuses = get_node_statuses()
     if not node_statuses and progress_events:
@@ -317,15 +306,6 @@ def render() -> None:
         node_statuses = apply_optional_node_skips(
             state=result, node_statuses=node_statuses
         )
-    render_node_execution_statuses(node_statuses)
-    render_progress_events(progress_events)
-    render_status_messages(get_status_messages())
-
-    with st.expander("Last Submitted Options", expanded=False):
-        st.json(get_last_submission())
-        if isinstance(result, dict):
-            st.caption("Orchestrator Returned Outputs")
-            st.json(result.get("requested_outputs", []))
 
     result = get_last_result()
     if not result:
@@ -337,11 +317,15 @@ def render() -> None:
         node_statuses=node_statuses,
     )
     render_degraded_and_error_state(render_payload)
-    render_usage_summary(render_payload)
-    render_partial_outputs(render_payload)
-    render_result_header(
-        {"ui_workflow_status": render_payload.get("workflow_status", "")}
+    render_collapsible_output_sections(
+        render_payload=render_payload,
+        status_messages=get_status_messages(),
+        execution_status=execution_status,
+        indicator_result=result_for_indicators
+        if isinstance(result_for_indicators, dict)
+        else {},
+        node_statuses=node_statuses,
+        progress_events=progress_events,
+        raw_state=result,
+        raw_submission=get_last_submission(),
     )
-    render_final_response({"final_response": render_payload.get("final_response", "")})
-    render_sources({"sources": render_payload.get("sources", [])})
-    render_export_status(render_payload)

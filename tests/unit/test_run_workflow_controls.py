@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from frontend.pages import run_workflow as run_workflow_page
+from frontend.services.submission_options import WorkflowControls
 
 
 @dataclass
@@ -181,3 +182,207 @@ def test_validation_accepts_export_enabled_with_formats() -> None:
         export_formats=["markdown"],
     )
     assert error == ""
+
+
+@dataclass
+class _DummyContextManager:
+    def __enter__(self) -> "_DummyContextManager":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+
+@dataclass
+class _DummyRenderStreamlit:
+    session_state: Dict[str, Any] = field(default_factory=dict)
+
+    def header(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def caption(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def container(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
+        return _DummyContextManager()
+
+    def text_area(self, *_args: Any, **_kwargs: Any) -> str:
+        return "Create a workflow result."
+
+    def button(self, *_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+    def spinner(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
+        return _DummyContextManager()
+
+    def error(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def warning(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def info(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def expander(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
+        return _DummyContextManager()
+
+    def json(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def test_node_execution_status_section_is_rendered_once_per_run(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit()
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+
+    monkeypatch.setattr(
+        run_workflow_page,
+        "_build_controls",
+        lambda: WorkflowControls(
+            include_blog=True,
+            include_linkedin=False,
+            include_research=False,
+            include_image=False,
+            export_enabled=False,
+            export_formats=[],
+        ),
+    )
+
+    progress_event = {
+        "node_name": "query_handler_node",
+        "status": "completed",
+        "message": "query_handler_node completed.",
+        "timestamp": "2026-05-16T12:00:00+00:00",
+    }
+    final_result = {
+        "workflow_status": "success",
+        "final_response": "## Blog Draft\nFinal assembled blog.",
+        "content_drafts": {"blog": {"body": "Final assembled blog."}},
+        "research_data": {"degraded": False},
+        "image_prompts": [],
+        "image_outputs": [],
+        "sources": [],
+        "warnings": [],
+        "errors": [],
+        "quality_scores": {},
+        "export_requested": False,
+        "export_metadata": {
+            "formats_requested": [],
+            "export_paths": {},
+            "error_log": [],
+        },
+        "cost_controls": {"budget_exceeded": False},
+        "requested_outputs": ["blog"],
+    }
+
+    def _fake_stream_workflow_progress(**_kwargs: Any):
+        yield {"type": "progress", "event": dict(progress_event)}
+        yield {
+            "type": "final",
+            "result": dict(final_result),
+            "events": [dict(progress_event)],
+        }
+
+    monkeypatch.setattr(
+        run_workflow_page,
+        "stream_workflow_progress",
+        _fake_stream_workflow_progress,
+    )
+
+    store: Dict[str, Any] = {
+        "execution_status": "idle",
+        "last_error": "",
+        "last_result": None,
+        "progress_events": [],
+        "node_statuses": {},
+        "status_messages": [],
+        "last_submission": {},
+        "persistence_messages": [],
+    }
+
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_last_submission",
+        lambda value: store.update({"last_submission": value}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_execution_status",
+        lambda value: store.update({"execution_status": value}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_last_error",
+        lambda value: store.update({"last_error": value}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_progress_events",
+        lambda value: store.update({"progress_events": list(value)}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_node_statuses",
+        lambda value: store.update({"node_statuses": dict(value)}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_status_messages",
+        lambda value: store.update({"status_messages": list(value)}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "set_last_result",
+        lambda value: store.update({"last_result": dict(value)}),
+    )
+    monkeypatch.setattr(run_workflow_page, "save_persisted_run", lambda **_kwargs: "")
+    monkeypatch.setattr(run_workflow_page, "add_history_entry", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_error", lambda: store["last_error"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "get_persistence_messages",
+        lambda: list(store["persistence_messages"]),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "clear_persistence_messages",
+        lambda: store.update({"persistence_messages": []}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_result", lambda: store["last_result"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_execution_status", lambda: store["execution_status"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_progress_events", lambda: list(store["progress_events"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_node_statuses", lambda: dict(store["node_statuses"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_status_messages", lambda: list(store["status_messages"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_submission", lambda: dict(store["last_submission"])
+    )
+
+    section_render_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_collapsible_output_sections",
+        lambda **kwargs: section_render_calls.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "render_degraded_and_error_state", lambda _payload: None
+    )
+
+    run_workflow_page.render()
+
+    assert len(section_render_calls) == 1
+    assert (
+        section_render_calls[0]["node_statuses"].get("query_handler_node")
+        == "completed"
+    )
