@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 import streamlit as st
 
+from contentblitz.tools.exports.filenames import resolve_export_dir
 from contentblitz.ui.error_display import redact_sensitive_text
 from contentblitz.workflow.routing import AUTHORITATIVE_NODES
 
@@ -15,6 +18,63 @@ _DEBUG_TRACEBACK_MARKERS = (
     "traceback (most recent call last):",
     "stack trace",
 )
+_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$")
+_EXPORT_MIME_TYPES = {
+    "markdown": "text/markdown",
+    "html": "text/html",
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_EXPORT_SUFFIXES = {
+    "markdown": ".md",
+    "html": ".html",
+    "pdf": ".pdf",
+    "docx": ".docx",
+}
+_IMAGE_MIME_TYPES = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+_STATUS_GREEN = {"complete", "completed", "success", "succeeded"}
+_STATUS_ORANGE = {
+    "idle",
+    "limited",
+    "partial_success",
+    "pending",
+    "running",
+    "skipped",
+    "waiting",
+}
+_STATUS_RED = {
+    "blocked",
+    "budget_exceeded",
+    "canceled",
+    "cancelled",
+    "degraded",
+    "error",
+    "errored",
+    "failed",
+    "failure",
+    "negative",
+}
+_ROUTING_PILL_CLASS = "cbx-status-blue"
+_STATUS_LABELS = {
+    "budget_exceeded": "budget exceeded",
+    "partial_success": "partial success",
+    "success": "completed",
+    "succeeded": "completed",
+}
+_BLOG_HEADINGS = {"blog", "blog draft", "blog post", "blog output"}
+_LINKEDIN_HEADINGS = {
+    "linkedin",
+    "linkedin draft",
+    "linkedin output",
+    "linkedin post",
+}
+_IMAGE_HEADINGS = {"image assets", "image outputs", "images"}
 
 
 def _safe_text(value: Any) -> str:
@@ -32,12 +92,54 @@ def _truncate_display_value(value: Any, *, max_length: int) -> str:
     return f"{text[: max_length - 3].rstrip()}..."
 
 
+def _normalized_status_key(status: Any) -> str:
+    return _safe_text(status).lower().replace(" ", "_").replace("-", "_")
+
+
+def _status_label(status: str) -> str:
+    normalized = _normalized_status_key(status)
+    if not normalized:
+        return "pending"
+    return _STATUS_LABELS.get(normalized, normalized.replace("_", " "))
+
+
+def _status_tone_class(status: Any) -> str:
+    normalized = _normalized_status_key(status)
+    if normalized in _STATUS_GREEN:
+        return "cbx-status-green"
+    if normalized in _STATUS_ORANGE:
+        return "cbx-status-orange"
+    if normalized in _STATUS_RED:
+        return "cbx-status-red"
+    return "cbx-status-orange"
+
+
+def _status_pill_html(status: Any) -> str:
+    label = _status_label(_safe_text(status))
+    return (
+        f'<span class="cbx-status-pill {_status_tone_class(status)}">'
+        f"{html.escape(label)}</span>"
+    )
+
+
+def _routing_pill_html(value: Any) -> str:
+    label = _safe_text(value) or "n/a"
+    return (
+        f'<span class="cbx-status-pill {_ROUTING_PILL_CLASS}">'
+        f"{html.escape(label)}</span>"
+    )
+
+
 def _render_compact_cards(
     items: list[tuple[str, Any]],
     *,
     max_value_length: int = 28,
+    status_labels: set[str] | None = None,
+    blue_labels: set[str] | None = None,
 ) -> None:
     cards: list[str] = []
+    status_label_set = {item.lower() for item in status_labels or set()}
+    blue_label_set = {item.lower() for item in blue_labels or set()}
     for raw_label, raw_value in items:
         safe_label = _safe_text(raw_label)
         if not safe_label:
@@ -47,12 +149,23 @@ def _render_compact_cards(
             full_value,
             max_length=max_value_length,
         )
+        is_status_value = safe_label.lower() in status_label_set
+        title_value = _status_label(full_value) if is_status_value else full_value
+        if is_status_value:
+            value_html = _status_pill_html(full_value)
+        elif safe_label.lower() in blue_label_set:
+            value_html = _routing_pill_html(display_value)
+        else:
+            value_html = (
+                f'<div class="cbx-metric-value">'
+                f"{html.escape(display_value)}</div>"
+            )
         cards.append(
             (
                 '<div class="cbx-metric-card" '
-                f'title="{html.escape(full_value, quote=True)}">'
+                f'title="{html.escape(title_value, quote=True)}">'
                 f'<div class="cbx-metric-label">{html.escape(safe_label)}</div>'
-                f'<div class="cbx-metric-value">{html.escape(display_value)}</div>'
+                f"{value_html}"
                 "</div>"
             )
         )
@@ -116,9 +229,58 @@ def _contains_base64_like(value: Any) -> bool:
     return lowered.startswith("data:image/") or "base64" in lowered
 
 
+def _single_line_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", _safe_text(value)).strip()
+
+
+def _normalize_heading_text(raw_heading: str) -> str:
+    normalized = _safe_text(raw_heading).strip().strip("#").strip().lower()
+    while normalized.endswith(":"):
+        normalized = normalized[:-1].rstrip()
+    return normalized
+
+
+def _strip_sources_sections_for_display(markdown_text: str) -> str:
+    text = _safe_text(markdown_text)
+    if not text:
+        return ""
+    lines = text.splitlines()
+    in_fenced_block = False
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if line.startswith("```"):
+            in_fenced_block = not in_fenced_block
+            continue
+        if in_fenced_block:
+            continue
+        match = _MARKDOWN_HEADING_RE.match(raw_line)
+        if not match:
+            continue
+        heading_text = _normalize_heading_text(match.group(2))
+        if heading_text == "sources":
+            return "\n".join(lines[:index]).rstrip()
+    return text
+
+
+def _dedupe_leading_repeated_paragraph(markdown_text: str) -> str:
+    text = _safe_text(markdown_text)
+    if not text:
+        return ""
+    paragraphs = re.split(r"\n{2,}", text)
+    if len(paragraphs) < 2:
+        return text
+    first = paragraphs[0].strip()
+    second = paragraphs[1].strip()
+    if not first or first != second:
+        return text
+    return "\n\n".join([first, *paragraphs[2:]]).strip()
+
+
 def _render_section(title: str, body: str) -> None:
     safe_title = _safe_text(title)
-    safe_body = _strip_wrapping_markdown_fence(body)
+    safe_body = _strip_sources_sections_for_display(
+        _strip_wrapping_markdown_fence(body)
+    )
     if not safe_title or not safe_body:
         return
     st.markdown(f"#### {safe_title}")
@@ -135,6 +297,23 @@ class _RenderedOutputSections:
     additional: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _canonical_heading_key(heading: str) -> str:
+    normalized = _normalize_heading_text(heading)
+    if normalized in _BLOG_HEADINGS:
+        return "blog"
+    if normalized in _LINKEDIN_HEADINGS:
+        return "linkedin"
+    if normalized.startswith("research"):
+        return "research"
+    if normalized in _IMAGE_HEADINGS:
+        return "image_assets"
+    if normalized == "sources":
+        return "sources"
+    if normalized == "quality warnings":
+        return "quality_warnings"
+    return "other"
+
+
 def _extract_markdown_sections(markdown_text: str) -> tuple[str, list[tuple[str, str]]]:
     lines = markdown_text.splitlines()
     headings: list[tuple[int, str]] = []
@@ -147,12 +326,11 @@ def _extract_markdown_sections(markdown_text: str) -> tuple[str, list[tuple[str,
             continue
         if in_fenced_block:
             continue
-        heading = ""
-        if line.startswith("## "):
-            heading = line[3:].strip()
-        elif line.startswith("# "):
-            heading = line[2:].strip()
-        if heading:
+        match = _MARKDOWN_HEADING_RE.match(raw_line)
+        if not match:
+            continue
+        heading = match.group(2).strip()
+        if _canonical_heading_key(heading) != "other":
             headings.append((index, heading))
 
     if not headings:
@@ -168,23 +346,6 @@ def _extract_markdown_sections(markdown_text: str) -> tuple[str, list[tuple[str,
         if body:
             sections.append((heading, body))
     return preface, sections
-
-
-def _canonical_heading_key(heading: str) -> str:
-    normalized = _safe_text(heading).lower()
-    if normalized == "blog draft":
-        return "blog"
-    if normalized == "linkedin draft":
-        return "linkedin"
-    if normalized.startswith("research"):
-        return "research"
-    if normalized == "image assets":
-        return "image_assets"
-    if normalized == "sources":
-        return "sources"
-    if normalized == "quality warnings":
-        return "quality_warnings"
-    return "other"
 
 
 def _section_key_from_partial_label(label: str) -> str:
@@ -210,7 +371,7 @@ def _build_rendered_output_sections(
             if key == "blog" and not rendered.blog:
                 rendered.blog = body
             elif key == "linkedin" and not rendered.linkedin:
-                rendered.linkedin = body
+                rendered.linkedin = _dedupe_leading_repeated_paragraph(body)
             elif key == "research" and not rendered.research:
                 rendered.research = body
             elif key == "image_assets" and not rendered.image_assets:
@@ -233,7 +394,7 @@ def _build_rendered_output_sections(
             if key == "blog" and not rendered.blog:
                 rendered.blog = content
             elif key == "linkedin" and not rendered.linkedin:
-                rendered.linkedin = content
+                rendered.linkedin = _dedupe_leading_repeated_paragraph(content)
             elif key == "research" and not rendered.research:
                 rendered.research = content
 
@@ -247,7 +408,15 @@ def render_result_header(result: Mapping[str, Any]) -> None:
         or "unknown"
     )
     st.subheader("Workflow Result")
-    st.write(f"Status: `{workflow_status}`")
+    st.markdown(
+        (
+            '<div class="cbx-status-line">'
+            '<span class="cbx-status-line-label">Status</span>'
+            f"{_status_pill_html(workflow_status)}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_execution_indicators(
@@ -271,28 +440,29 @@ def render_execution_indicators(
             ("Routing", routing_decision or "n/a"),
         ],
         max_value_length=32,
+        status_labels={"Execution", "Workflow Status"},
+        blue_labels={"Routing"},
     )
-
-
-def _status_label(status: str) -> str:
-    normalized = str(status).strip().lower()
-    labels = {
-        "pending": "pending",
-        "running": "running",
-        "success": "completed",
-        "completed": "completed",
-        "skipped": "skipped",
-        "degraded": "degraded",
-        "failed": "failed",
-    }
-    return labels.get(normalized, "degraded")
 
 
 def render_node_execution_statuses(node_statuses: Mapping[str, Any]) -> None:
     st.subheader("Node Execution Status")
+    rows: list[str] = []
     for node_name in AUTHORITATIVE_NODES:
-        status = _status_label(str(node_statuses.get(node_name, "pending")))
-        st.markdown(f"- `{node_name}`: **{status}**")
+        status = _safe_text(node_statuses.get(node_name, "pending")) or "pending"
+        rows.append(
+            (
+                '<li class="cbx-node-status-row">'
+                f'<span class="cbx-node-name">{html.escape(node_name)}</span>'
+                f"{_status_pill_html(status)}"
+                "</li>"
+            )
+        )
+    if rows:
+        st.markdown(
+            '<ul class="cbx-node-status-list">' + "".join(rows) + "</ul>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_progress_events(events: list[Mapping[str, Any]]) -> None:
@@ -413,19 +583,7 @@ def render_sources(result: Mapping[str, Any]) -> None:
     if not isinstance(sources, list) or not sources:
         return
     st.markdown("#### Sources")
-    for index, source in enumerate(sources, start=1):
-        if not isinstance(source, Mapping):
-            continue
-        title = _safe_text(source.get("title", "")) or f"Source {index}"
-        url = source.get("url")
-        snippet = _safe_text(source.get("snippet", ""))
-        citation_available = bool(source.get("citation_available", False))
-        if citation_available and isinstance(url, str) and url.strip():
-            st.markdown(f"{index}. [{title}]({url.strip()})")
-        else:
-            st.markdown(f"{index}. {title}")
-        if snippet:
-            st.markdown(f"{snippet}")
+    _render_sources_list(sources)
 
 
 def render_partial_outputs(render_payload: Mapping[str, Any]) -> None:
@@ -472,7 +630,6 @@ def _render_image_outputs(image_outputs: list[Mapping[str, Any]]) -> None:
             st.warning("A non-renderable image payload was hidden for safety.")
             continue
         status = _status_label(str(item.get("status", "completed")))
-        provider = _safe_text(item.get("provider", "")) or "unknown"
         if status == "failed":
             error_payload = item.get("error")
             if isinstance(error_payload, Mapping):
@@ -484,23 +641,23 @@ def _render_image_outputs(image_outputs: list[Mapping[str, Any]]) -> None:
             continue
         if isinstance(url, str) and url.strip():
             display_url = url.strip()
-            st.markdown(f"- `{status}` | `{provider}` | {display_url}")
-            st.image(display_url, caption=f"{provider} ({status})")
+            st.image(display_url, caption=f"Generated image ({status})")
         elif isinstance(local_path, str) and local_path.strip():
             display_local_path = local_path.strip()
-            st.markdown(f"- `{status}` | `{provider}` | {display_local_path}")
-            st.image(
-                display_local_path,
-                caption=f"{provider} ({status})",
-            )
+            resolved_path = _resolve_downloadable_image_path(display_local_path)
+            if resolved_path is None:
+                st.warning("Generated image file is not available for download.")
+                continue
+            st.image(str(resolved_path), caption=f"Generated image ({status})")
+            _render_image_download(resolved_path)
         else:
             identifier = _safe_text(item.get("id", "")) or "unavailable"
             renderable = bool(item.get("renderable", False))
             if renderable:
-                st.markdown(f"- `{status}` | `{provider}` | {identifier}")
+                st.markdown(f"- `{status}` | {identifier}")
             else:
                 st.markdown(
-                    f"- `{status}` | `{provider}` | {identifier} "
+                    f"- `{status}` | {identifier} "
                     "(non-renderable asset reference)"
                 )
 
@@ -508,32 +665,22 @@ def _render_image_outputs(image_outputs: list[Mapping[str, Any]]) -> None:
 def _render_sources_list(sources: list[Mapping[str, Any]]) -> None:
     if not sources:
         return
+    source_lines: list[str] = []
     for index, source in enumerate(sources, start=1):
         if not isinstance(source, Mapping):
             continue
         title = _safe_text(source.get("title", "")) or f"Source {index}"
         url = _safe_text(source.get("url", ""))
-        snippet = _safe_text(source.get("snippet", ""))
-        provider = _safe_text(source.get("source", ""))
-        published_at = _safe_text(source.get("published_at", ""))
-        metadata_items = [item for item in [provider, published_at] if item]
-        metadata_line = " | ".join(metadata_items)
+        snippet = _single_line_text(source.get("snippet", ""))
         if url:
             heading = f"{index}. [{title}]({url})"
         else:
             heading = f"{index}. {title}"
-        st.markdown(
-            '<div class="cbx-source-card">'
-            f"<div>{heading}</div>"
-            + (
-                f'<div class="cbx-source-meta">{metadata_line}</div>'
-                if metadata_line
-                else ""
-            )
-            + (f'<div class="cbx-source-snippet">{snippet}</div>' if snippet else "")
-            + "</div>",
-            unsafe_allow_html=True,
-        )
+        if snippet:
+            heading = f"{heading} - {snippet}"
+        source_lines.append(heading)
+    if source_lines:
+        st.markdown("\n".join(source_lines))
 
 
 def _render_debug_panel(
@@ -554,20 +701,109 @@ def _render_debug_panel(
                 status = _status_label(_safe_text(event.get("status", "pending")))
                 message = _safe_text(event.get("message", ""))
                 details = " | ".join(
-                    [item for item in [timestamp, node_name, status, message] if item]
+                    [
+                        item
+                        for item in [timestamp, node_name, status, message]
+                        if item
+                    ]
                 )
                 if details:
                     st.caption(details)
 
-        st.markdown("#### Internal Payloads")
         if raw_submission is not None:
-            st.caption("Last Submitted Options")
-            st.json(_sanitize_debug_value(raw_submission))
+            st.markdown("#### Last Submitted Options")
+            st.json(_sanitize_debug_value(raw_submission), expanded=True)
         if raw_state is not None:
-            st.caption("Raw Workflow State")
-            st.json(_sanitize_debug_value(raw_state))
-        st.caption("Render Payload")
-        st.json(_sanitize_debug_value(render_payload))
+            st.markdown("#### Raw Workflow State")
+            st.json(_sanitize_debug_value(raw_state), expanded=False)
+        st.markdown("#### Render Payload")
+        st.json(_sanitize_debug_value(render_payload), expanded=False)
+
+
+def _resolve_downloadable_export_path(raw_path: Any, format_name: str) -> Path | None:
+    path_text = _safe_text(raw_path)
+    fmt = _safe_text(format_name).lower()
+    expected_suffix = _EXPORT_SUFFIXES.get(fmt)
+    if not path_text or not expected_suffix:
+        return None
+    try:
+        candidate = Path(path_text)
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (Path.cwd() / candidate).resolve()
+        )
+        export_dir = resolve_export_dir().resolve()
+    except OSError:
+        return None
+    if resolved.parent != export_dir:
+        return None
+    if resolved.suffix.lower() != expected_suffix:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+def _resolve_downloadable_image_path(raw_path: Any) -> Path | None:
+    path_text = _safe_text(raw_path)
+    if not path_text:
+        return None
+    try:
+        candidate = Path(path_text)
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (Path.cwd() / candidate).resolve()
+        )
+        image_dir = (resolve_export_dir() / "images").resolve()
+    except OSError:
+        return None
+    if resolved.suffix.lower() not in _IMAGE_MIME_TYPES:
+        return None
+    try:
+        resolved.relative_to(image_dir)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+def _render_export_download(format_name: str, raw_path: Any) -> None:
+    safe_fmt = _safe_text(format_name).lower() or "unknown"
+    display_fmt = safe_fmt.upper() if safe_fmt in {"pdf", "html"} else safe_fmt.title()
+    resolved_path = _resolve_downloadable_export_path(raw_path, safe_fmt)
+    if resolved_path is None:
+        st.warning(f"{display_fmt} export file is not available for download.")
+        return
+    try:
+        data = resolved_path.read_bytes()
+    except OSError:
+        st.warning(f"{display_fmt} export file is not available for download.")
+        return
+    st.download_button(
+        label=f"Download {display_fmt}",
+        data=data,
+        file_name=resolved_path.name,
+        mime=_EXPORT_MIME_TYPES.get(safe_fmt, "application/octet-stream"),
+    )
+
+
+def _render_image_download(resolved_path: Path) -> None:
+    try:
+        data = resolved_path.read_bytes()
+    except OSError:
+        st.warning("Generated image file is not available for download.")
+        return
+    st.download_button(
+        label="Download Image",
+        data=data,
+        file_name=resolved_path.name,
+        mime=_IMAGE_MIME_TYPES.get(
+            resolved_path.suffix.lower(), "application/octet-stream"
+        ),
+    )
 
 
 def render_collapsible_output_sections(
@@ -617,14 +853,22 @@ def render_collapsible_output_sections(
 
     if has_blog:
         with st.expander("Blog", expanded=True):
-            st.markdown(_strip_wrapping_markdown_fence(rendered.blog))
+            blog_body = _strip_sources_sections_for_display(
+                _strip_wrapping_markdown_fence(rendered.blog)
+            )
+            if blog_body:
+                st.markdown(blog_body)
 
     if has_linkedin:
         with st.expander("LinkedIn", expanded=False):
-            st.markdown(_strip_wrapping_markdown_fence(rendered.linkedin))
+            linkedin_body = _strip_sources_sections_for_display(
+                _strip_wrapping_markdown_fence(rendered.linkedin)
+            )
+            if linkedin_body:
+                st.markdown(linkedin_body)
 
     if has_images:
-        with st.expander("Images", expanded=True):
+        with st.expander("Images", expanded=False):
             if isinstance(image_prompts, list) and image_prompts:
                 prompt_lines = [
                     f"- {_safe_text(item)}"
@@ -641,7 +885,11 @@ def render_collapsible_output_sections(
     if has_research:
         with st.expander("Research", expanded=False):
             if rendered.research:
-                st.markdown(_strip_wrapping_markdown_fence(rendered.research))
+                research_body = _strip_sources_sections_for_display(
+                    _strip_wrapping_markdown_fence(rendered.research)
+                )
+                if research_body:
+                    st.markdown(research_body)
             for heading, body in rendered.additional:
                 _render_section(heading, body)
 
@@ -699,9 +947,7 @@ def render_export_status(render_payload: Mapping[str, Any]) -> None:
     if isinstance(export_paths, Mapping) and export_paths:
         st.success("Export artifacts were generated.")
         for fmt_name, raw_path in dict(export_paths).items():
-            safe_fmt = _safe_text(fmt_name) or "unknown"
-            safe_path = _safe_text(raw_path) or "unavailable"
-            st.markdown(f"- `{safe_fmt}`: {safe_path}")
+            _render_export_download(_safe_text(fmt_name), raw_path)
 
     export_errors = export_status.get("errors", [])
     if isinstance(export_errors, list) and export_errors:

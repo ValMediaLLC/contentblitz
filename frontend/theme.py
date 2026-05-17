@@ -17,6 +17,18 @@ _FRONTEND_CSS = """
   --cbx-subtext: #475569;
   --cbx-accent: #0d9488;
   --cbx-accent-deep: #0369a1;
+  --cbx-status-green-text: #166534;
+  --cbx-status-green-bg: #dcfce7;
+  --cbx-status-green-border: #86efac;
+  --cbx-status-orange-text: #9a3412;
+  --cbx-status-orange-bg: #ffedd5;
+  --cbx-status-orange-border: #fdba74;
+  --cbx-status-red-text: #991b1b;
+  --cbx-status-red-bg: #fee2e2;
+  --cbx-status-red-border: #fca5a5;
+  --cbx-status-blue-text: #075985;
+  --cbx-status-blue-bg: #e0f2fe;
+  --cbx-status-blue-border: #7dd3fc;
 }
 
 html, body, [class*="css"] {
@@ -144,25 +156,78 @@ button[kind="primary"]:hover {
   text-overflow: ellipsis;
 }
 
-.cbx-source-card {
-  background: var(--cbx-surface);
-  border: 1px solid var(--cbx-border);
-  border-radius: 0.78rem;
-  padding: 0.62rem 0.75rem;
-  margin: 0.5rem 0;
+.cbx-status-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: none;
 }
 
-.cbx-source-meta {
-  color: var(--cbx-subtext);
-  font-size: 0.78rem;
-  margin-top: 0.22rem;
+.cbx-status-green {
+  color: var(--cbx-status-green-text);
+  background: var(--cbx-status-green-bg);
+  border-color: var(--cbx-status-green-border);
 }
 
-.cbx-source-snippet {
+.cbx-status-orange {
+  color: var(--cbx-status-orange-text);
+  background: var(--cbx-status-orange-bg);
+  border-color: var(--cbx-status-orange-border);
+}
+
+.cbx-status-red {
+  color: var(--cbx-status-red-text);
+  background: var(--cbx-status-red-bg);
+  border-color: var(--cbx-status-red-border);
+}
+
+.cbx-status-blue {
+  color: var(--cbx-status-blue-text);
+  background: var(--cbx-status-blue-bg);
+  border-color: var(--cbx-status-blue-border);
+}
+
+.cbx-status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.2rem 0 0.55rem;
+}
+
+.cbx-status-line-label {
   color: var(--cbx-text);
-  font-size: 0.88rem;
-  margin-top: 0.3rem;
-  line-height: 1.35;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.cbx-node-status-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.35rem 0 0.95rem;
+}
+
+.cbx-node-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.1rem 0;
+  color: var(--cbx-text);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.cbx-node-name {
+  color: var(--cbx-text);
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-weight: 500;
 }
 </style>
 """
