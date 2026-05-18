@@ -54,3 +54,39 @@ Use `contentblitz.core.observability`:
 - `observability_summary()` for a secret-safe dictionary payload
 
 These helpers are read-only and do not mutate workflow state.
+
+## Execution Integration
+
+LangGraph execution is traced via wrappers in `contentblitz.workflow.graph`:
+
+- workflow-level spans around `invoke`, `stream`, `ainvoke`, and `astream`
+- node-level spans around each authoritative node function
+
+Tracing wraps execution only. It does not replace orchestration logic or routing.
+
+## Safe Metadata Contract
+
+Trace metadata is restricted to safe fields:
+
+- `session_id` (if present)
+- `workflow_status`
+- `requested_outputs`
+- `routing_decision`
+- `node_name`
+- `node_status`
+- retry count summary
+- cost counter summary
+- export formats requested
+- boolean flags such as:
+  - `research_required`
+  - `clarification_needed`
+  - `export_requested`
+  - degraded/recoverable/export-failure status flags
+
+The observability layer intentionally excludes:
+
+- API keys and environment secrets
+- raw prompts and raw provider responses
+- raw provider payload objects
+- stack traces
+- base64 image payloads

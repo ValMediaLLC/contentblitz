@@ -78,6 +78,7 @@ Current behavior:
 - tracing is disabled unless `LANGSMITH_TRACING` is explicitly truthy
 - if tracing is requested but `LANGSMITH_API_KEY` is missing, tracing degrades to disabled
 - app startup, unit tests, and integration tests continue without LangSmith credentials
+- tracing is best-effort; tracer setup/runtime failures degrade to no-op and never fail workflow execution
 
 ## Export Validation Can Mark Individual Formats Failed
 
