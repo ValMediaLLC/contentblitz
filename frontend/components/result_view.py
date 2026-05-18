@@ -1,5 +1,10 @@
 """Presentation helpers for workflow results."""
 
+# TODO(refactor)
+# file has grown to large and needs to be split up. 
+# Consider breaking out execution indicators, markdown rendering, 
+# and cost control handling into separate modules.
+
 from __future__ import annotations
 
 import html

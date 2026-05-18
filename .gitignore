@@ -44,7 +44,6 @@ dist/
 .tmp/
 .contentblitz_sessions/
 .contentblitz_sessions*/
-.contentblitz_sessions_phase3_test/
 
 # Generated exports/artifacts
 exports/

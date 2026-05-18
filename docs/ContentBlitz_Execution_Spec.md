@@ -520,7 +520,22 @@ Deliverable:
 
 ---
 
-## PHASE 4+: TRUST + SAFETY SYSTEMS
+# PHASE 4 OBJECTIVE
+
+Add production-safe observability to ContentBlitz using LangSmith tracing while preserving all existing architecture guarantees:
+
+- deterministic LangGraph routing
+- explicit state ownership
+- stateless tools
+- mockable providers
+- no live external calls during normal tests
+- no secrets in code, state, logs, docs, tests, or traces
+- no frontend provider coupling
+- no raw stack traces exposed to users
+
+Phase 4 must be additive only. Do NOT rewrite graph architecture, agent responsibilities, provider tools, or UI orchestration behavior.
+
+## PHASE 5+: TRUST + SAFETY SYSTEMS
 
 Goal: Improve trustworthiness, observability, governance, and advanced safety
 
@@ -530,7 +545,6 @@ Implement:
 - AI safety/moderation layer
 - multi-stage validation/review pipelines
 - AI judge/review systems
-- persistent audit + observability tooling
 - optional human review workflows
 - advanced trust scoring and citation analysis
 
