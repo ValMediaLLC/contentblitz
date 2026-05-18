@@ -156,9 +156,58 @@ button[kind="primary"]:hover {
   text-overflow: ellipsis;
 }
 
+.cbx-summary-value {
+  color: var(--cbx-text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 0.16rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cbx-summary-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.cbx-summary-dot-idle {
+  background: #94a3b8;
+}
+
+.cbx-summary-dot-running {
+  background: #f59e0b;
+  animation: cbxSummaryPulse 1s ease-in-out infinite;
+}
+
+.cbx-summary-dot-completed {
+  background: #0d9488;
+}
+
+.cbx-summary-dot-failed {
+  background: #dc2626;
+}
+
+.cbx-summary-dot-blue {
+  background: #0284c7;
+}
+
+@keyframes cbxSummaryPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.82); }
+}
+
 .cbx-status-pill {
   display: inline-flex;
   align-items: center;
+  gap: 0.3rem;
   width: fit-content;
   border: 1px solid currentColor;
   border-radius: 999px;
@@ -168,6 +217,18 @@ button[kind="primary"]:hover {
   font-weight: 700;
   line-height: 1.3;
   text-transform: none;
+}
+
+.cbx-status-pill-dot {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.9;
+}
+
+.cbx-status-pill-text {
+  line-height: 1.2;
 }
 
 .cbx-status-green {
@@ -210,24 +271,142 @@ button[kind="primary"]:hover {
 .cbx-node-status-list {
   list-style: none;
   padding-left: 0;
-  margin: 0.35rem 0 0.95rem;
+  margin: 0.35rem 0 0.55rem;
 }
 
 .cbx-node-status-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 14rem) minmax(0, 1fr) auto 3.6rem;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  padding: 0.1rem 0;
+  gap: 0.65rem;
+  padding: 0.36rem 0.45rem;
+  border-radius: 0.5rem;
   color: var(--cbx-text);
   font-size: 0.86rem;
   line-height: 1.45;
+}
+
+.cbx-node-row-running {
+  background: rgba(255, 237, 213, 0.72);
+}
+
+.cbx-node-status-icon {
+  color: var(--cbx-subtext);
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.cbx-node-row-running .cbx-node-status-icon {
+  color: #b45309;
+}
+
+.cbx-node-icon-completed {
+  color: #0d9488;
+}
+
+.cbx-node-icon-degraded {
+  color: #f97316;
+}
+
+.cbx-node-icon-failed {
+  color: #dc2626;
 }
 
 .cbx-node-name {
   color: var(--cbx-text);
   font-family: "DM Sans", "Segoe UI", sans-serif;
   font-weight: 500;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cbx-node-progress-track {
+  width: 100%;
+  height: 0.34rem;
+  border-radius: 999px;
+  background: var(--cbx-surface-soft);
+  border: 1px solid var(--cbx-border);
+  overflow: hidden;
+  margin-top: 0;
+}
+
+.cbx-node-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 220ms ease;
+}
+
+.cbx-node-status-badge {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.cbx-node-elapsed {
+  color: var(--cbx-subtext);
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cbx-node-elapsed-running {
+  color: #b45309;
+}
+
+.cbx-node-timer {
+  color: var(--cbx-subtext);
+  display: flex;
+  justify-content: flex-end;
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 0.35rem;
+}
+
+.cbx-node-status-green {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+}
+
+.cbx-node-status-warning {
+  background: linear-gradient(90deg, #fb923c, #f97316);
+}
+
+.cbx-node-status-red {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.cbx-node-status-neutral {
+  background: linear-gradient(90deg, #94a3b8, #64748b);
+}
+
+.cbx-node-status-running {
+  background: linear-gradient(90deg, #f59e0b, #f97316, #f59e0b);
+}
+
+.cbx-node-progress-running {
+  background-size: 240% 100%;
+  animation:
+    cbxNodeProgressGrow var(--cbx-node-duration, 1.4s) ease-in-out infinite,
+    cbxNodeProgressShift 0.95s linear infinite;
+}
+
+@keyframes cbxNodeProgressShift {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 100% 0%; }
+}
+
+@keyframes cbxNodeProgressGrow {
+  0% { width: 18%; }
+  80% { width: 92%; }
+  100% { width: 92%; }
 }
 </style>
 """

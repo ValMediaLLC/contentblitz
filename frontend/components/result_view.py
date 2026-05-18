@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,7 +13,7 @@ import streamlit as st
 
 from contentblitz.tools.exports.filenames import resolve_export_dir
 from contentblitz.ui.error_display import redact_sensitive_text
-from contentblitz.workflow.routing import AUTHORITATIVE_NODES
+from contentblitz.ui.progress import normalize_progress_status, validate_node_name
 
 _DEBUG_TRACEBACK_MARKERS = (
     "traceback (most recent call last):",
@@ -75,6 +76,16 @@ _LINKEDIN_HEADINGS = {
     "linkedin post",
 }
 _IMAGE_HEADINGS = {"image assets", "image outputs", "images"}
+_RUNNING_EVENT_STATUSES = {"running"}
+_VISIBLE_NODE_EVENT_STATUSES = {"running", "completed", "degraded", "failed"}
+_SHORT_NODE_SECONDS = 0.8
+_MEDIUM_NODE_SECONDS = 1.8
+_LONG_NODE_SECONDS = 3.2
+_WRITER_IMAGE_NODE_NAMES = {
+    "blog_writer_node",
+    "linkedin_writer_node",
+    "image_agent_node",
+}
 
 
 def _safe_text(value: Any) -> str:
@@ -118,7 +129,9 @@ def _status_pill_html(status: Any) -> str:
     label = _status_label(_safe_text(status))
     return (
         f'<span class="cbx-status-pill {_status_tone_class(status)}">'
-        f"{html.escape(label)}</span>"
+        '<span class="cbx-status-pill-dot" aria-hidden="true"></span>'
+        f'<span class="cbx-status-pill-text">{html.escape(label)}</span>'
+        "</span>"
     )
 
 
@@ -126,7 +139,46 @@ def _routing_pill_html(value: Any) -> str:
     label = _safe_text(value) or "n/a"
     return (
         f'<span class="cbx-status-pill {_ROUTING_PILL_CLASS}">'
-        f"{html.escape(label)}</span>"
+        '<span class="cbx-status-pill-dot" aria-hidden="true"></span>'
+        f'<span class="cbx-status-pill-text">{html.escape(label)}</span>'
+        "</span>"
+    )
+
+
+def _summary_dot_class(state: Any, *, blue: bool = False) -> str:
+    if blue:
+        return "cbx-summary-dot-blue"
+    normalized = _normalized_status_key(state)
+    if normalized == "running":
+        return "cbx-summary-dot-running"
+    if normalized in {"completed", "complete", "success", "succeeded"}:
+        return "cbx-summary-dot-completed"
+    if normalized in {"failed", "error", "degraded"}:
+        return "cbx-summary-dot-failed"
+    return "cbx-summary-dot-idle"
+
+
+def _summary_card_html(
+    label: str,
+    value: Any,
+    *,
+    state: Any = "",
+    blue: bool = False,
+    max_value_length: int = 32,
+) -> str:
+    safe_label = _safe_text(label)
+    full_value = _safe_text(value) or "n/a"
+    display_value = _truncate_display_value(full_value, max_length=max_value_length)
+    dot_class = _summary_dot_class(state or full_value, blue=blue)
+    return (
+        '<div class="cbx-metric-card" '
+        f'title="{html.escape(full_value, quote=True)}">'
+        f'<div class="cbx-metric-label">{html.escape(safe_label)}</div>'
+        '<div class="cbx-summary-value">'
+        f'<span class="cbx-summary-dot {dot_class}" aria-hidden="true"></span>'
+        f'<span>{html.escape(display_value)}</span>'
+        "</div>"
+        "</div>"
     )
 
 
@@ -423,46 +475,338 @@ def render_execution_indicators(
     *,
     execution_status: str,
     result: Mapping[str, Any] | None,
+    progress_events: list[Mapping[str, Any]] | None = None,
 ) -> None:
     workflow_status = ""
-    routing_decision = ""
     if isinstance(result, Mapping):
         workflow_status = (
             str(result.get("ui_workflow_status", "")).strip()
             or str(result.get("workflow_status", "")).strip()
         )
-        routing_decision = str(result.get("routing_decision", "")).strip()
 
-    _render_compact_cards(
-        [
-            ("Execution", execution_status or "idle"),
-            ("Workflow Status", workflow_status or "n/a"),
-            ("Routing", routing_decision or "n/a"),
-        ],
-        max_value_length=32,
-        status_labels={"Execution", "Workflow Status"},
-        blue_labels={"Routing"},
+    rows = _build_node_execution_rows(list(progress_events or []))
+    active_node = _active_node_label(rows)
+    active_state = _pipeline_summary_state(rows, execution_status)
+    cards = [
+        _summary_card_html("Execution", execution_status or "idle"),
+        _summary_card_html("Workflow Status", workflow_status or "n/a"),
+        _summary_card_html(
+            "Active Node",
+            active_node,
+            state=active_state,
+            max_value_length=38,
+        ),
+    ]
+    st.markdown(
+        '<div class="cbx-metric-grid">' + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
     )
 
 
-def render_node_execution_statuses(node_statuses: Mapping[str, Any]) -> None:
+@dataclass(frozen=True)
+class _NodeExecutionRow:
+    node_name: str
+    status: str
+    progress_percent: int
+    elapsed_label: str
+    duration_seconds: float
+
+
+def _parse_event_timestamp(value: Any) -> datetime | None:
+    raw = _safe_text(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _format_elapsed_seconds(seconds: float) -> str:
+    safe_seconds = max(0.0, float(seconds))
+    return f"{safe_seconds:.1f}s"
+
+
+def _node_duration_seconds(node_name: str) -> float:
+    if node_name == "research_agent_node":
+        return _LONG_NODE_SECONDS
+    if node_name in _WRITER_IMAGE_NODE_NAMES:
+        return _MEDIUM_NODE_SECONDS
+    if node_name in {"output_assembler_node", "export_node"}:
+        return _SHORT_NODE_SECONDS
+    return 1.2
+
+
+def _node_status_icon(status: str) -> str:
+    normalized = _normalized_status_key(status)
+    if normalized == "running":
+        return "◎"
+    if normalized in {"completed", "degraded"}:
+        return "✓"
+    if normalized == "failed":
+        return "!"
+    return "·"
+
+
+def _node_elapsed_label(
+    *,
+    first_seen_at: datetime | None,
+    last_seen_at: datetime | None,
+    status: str,
+    now: datetime | None = None,
+) -> str:
+    if first_seen_at is None:
+        return ""
+    end_time = last_seen_at
+    if _normalized_status_key(status) == "running":
+        end_time = now or first_seen_at
+    if end_time is None:
+        return ""
+    return _format_elapsed_seconds((end_time - first_seen_at).total_seconds())
+
+
+def _pipeline_elapsed_label(rows: list[_NodeExecutionRow]) -> str:
+    elapsed_values: list[float] = []
+    for row in rows:
+        label = row.elapsed_label.removesuffix("s")
+        try:
+            elapsed_values.append(float(label))
+        except ValueError:
+            continue
+    if not elapsed_values:
+        return "0.0s"
+    return _format_elapsed_seconds(max(elapsed_values))
+
+
+def _pipeline_elapsed_label_from_events(
+    progress_events: list[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> str:
+    meaningful_times: list[datetime] = []
+    for event in progress_events:
+        if not isinstance(event, Mapping):
+            continue
+        status = _normalized_status_key(
+            normalize_progress_status(_safe_text(event.get("status", "pending")))
+        )
+        if status not in _VISIBLE_NODE_EVENT_STATUSES:
+            continue
+        timestamp = _parse_event_timestamp(event.get("timestamp", ""))
+        if timestamp is not None:
+            meaningful_times.append(timestamp)
+    if not meaningful_times:
+        return "0.0s"
+    start_time = min(meaningful_times)
+    rows = _build_node_execution_rows(progress_events)
+    has_running = any(
+        _normalized_status_key(row.status) == "running" for row in rows
+    )
+    if has_running and now is not None:
+        end_time = now
+    else:
+        end_time = max(meaningful_times)
+    return _format_elapsed_seconds((end_time - start_time).total_seconds())
+
+
+def _active_node_label(rows: list[_NodeExecutionRow]) -> str:
+    running_rows = [
+        row for row in rows if _normalized_status_key(row.status) == "running"
+    ]
+    if running_rows:
+        return running_rows[-1].node_name
+    if rows:
+        return rows[-1].node_name
+    return "idle"
+
+
+def _pipeline_summary_state(
+    rows: list[_NodeExecutionRow],
+    execution_status: Any,
+) -> str:
+    if any(_normalized_status_key(row.status) == "running" for row in rows):
+        return "running"
+    normalized_execution = _normalized_status_key(execution_status)
+    if normalized_execution in {"completed", "complete", "success", "succeeded"}:
+        return "completed"
+    if rows and all(
+        _normalized_status_key(row.status) in {"completed", "degraded", "failed"}
+        for row in rows
+    ):
+        return "completed"
+    return "idle"
+
+
+def _node_progress_percent(status: str) -> int:
+    normalized = _normalized_status_key(status)
+    if normalized in {"completed", "failed", "degraded"}:
+        return 100
+    if normalized in _RUNNING_EVENT_STATUSES:
+        return 55
+    return 0
+
+
+def _node_status_class(status: str) -> str:
+    normalized = _normalized_status_key(status)
+    if normalized == "completed":
+        return "cbx-node-status-green"
+    if normalized == "degraded":
+        return "cbx-node-status-warning"
+    if normalized == "failed":
+        return "cbx-node-status-red"
+    if normalized == "skipped":
+        return "cbx-node-status-neutral"
+    if normalized in _RUNNING_EVENT_STATUSES:
+        return "cbx-node-status-running"
+    return "cbx-node-status-neutral"
+
+
+def _build_node_execution_rows(
+    progress_events: list[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> list[_NodeExecutionRow]:
+    if not progress_events:
+        return []
+
+    records: dict[str, dict[str, Any]] = {}
+
+    for event_index, event in enumerate(progress_events):
+        if not isinstance(event, Mapping):
+            continue
+        try:
+            node_name = validate_node_name(_safe_text(event.get("node_name", "")))
+        except ValueError:
+            continue
+        status = _normalized_status_key(
+            normalize_progress_status(_safe_text(event.get("status", "pending")))
+        )
+        if not node_name or not status:
+            continue
+
+        if status == "skipped":
+            records.pop(node_name, None)
+            continue
+        if status not in _VISIBLE_NODE_EVENT_STATUSES:
+            continue
+
+        event_time = _parse_event_timestamp(event.get("timestamp", ""))
+        if node_name not in records:
+            records[node_name] = {
+                "first_seen": event_index,
+                "first_seen_at": event_time,
+                "last_seen_at": event_time,
+                "status": status,
+            }
+        else:
+            records[node_name]["status"] = status
+            if event_time is not None:
+                records[node_name]["last_seen_at"] = event_time
+
+    if not records:
+        return []
+
+    rows = sorted(
+        records.items(),
+        key=lambda item: (
+            item[1]["first_seen"],
+        ),
+    )
+    return [
+        _NodeExecutionRow(
+            node_name=node_name,
+            status=_safe_text(record.get("status", "pending")) or "pending",
+            progress_percent=_node_progress_percent(
+                _safe_text(record.get("status", "pending"))
+            ),
+            elapsed_label=_node_elapsed_label(
+                first_seen_at=record.get("first_seen_at")
+                if isinstance(record.get("first_seen_at"), datetime)
+                else None,
+                last_seen_at=record.get("last_seen_at")
+                if isinstance(record.get("last_seen_at"), datetime)
+                else None,
+                status=_safe_text(record.get("status", "pending")),
+                now=now,
+            ),
+            duration_seconds=_node_duration_seconds(node_name),
+        )
+        for node_name, record in rows
+    ]
+
+
+def render_node_execution_statuses(
+    progress_events: list[Mapping[str, Any]],
+    *,
+    live_timers: bool = False,
+    empty_message: str = "No node execution events available yet.",
+) -> None:
     st.subheader("Node Execution Status")
-    rows: list[str] = []
-    for node_name in AUTHORITATIVE_NODES:
-        status = _safe_text(node_statuses.get(node_name, "pending")) or "pending"
-        rows.append(
+    now = datetime.now(UTC) if live_timers else None
+    rows = _build_node_execution_rows(progress_events, now=now)
+    if not rows:
+        st.caption(empty_message)
+        if live_timers:
+            st.markdown(
+                (
+                    '<div class="cbx-node-status-panel cbx-node-status-empty">'
+                    '<div class="cbx-node-timer">Elapsed 0.0s</div>'
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+        return
+
+    rendered_rows: list[str] = []
+    for row in rows:
+        status_class = _node_status_class(row.status)
+        progress_style = (
+            f"--cbx-node-duration:{row.duration_seconds:.1f}s;"
+            f"width:{row.progress_percent}%;"
+        )
+        progress_modifier = " cbx-node-progress-running" if _normalized_status_key(
+            row.status
+        ) in _RUNNING_EVENT_STATUSES else ""
+        row_modifier = " cbx-node-row-running" if progress_modifier else ""
+        icon_class = f"cbx-node-icon-{_normalized_status_key(row.status)}"
+        elapsed_modifier = " cbx-node-elapsed-running" if progress_modifier else ""
+        rendered_rows.append(
             (
-                '<li class="cbx-node-status-row">'
-                f'<span class="cbx-node-name">{html.escape(node_name)}</span>'
-                f"{_status_pill_html(status)}"
+                f'<li class="cbx-node-status-row{row_modifier}">'
+                f'<div class="cbx-node-status-icon {icon_class}">'
+                f"{_node_status_icon(row.status)}"
+                "</div>"
+                f'<div class="cbx-node-name">{html.escape(row.node_name)}</div>'
+                '<div class="cbx-node-progress-track">'
+                f'<div class="cbx-node-progress-fill '
+                f'{status_class}{progress_modifier}" '
+                f'style="{progress_style}"></div>'
+                "</div>"
+                '<div class="cbx-node-status-badge">'
+                f"{_status_pill_html(row.status)}"
+                "</div>"
+                f'<div class="cbx-node-elapsed{elapsed_modifier}">'
+                f"{html.escape(row.elapsed_label)}</div>"
                 "</li>"
             )
         )
-    if rows:
-        st.markdown(
-            '<ul class="cbx-node-status-list">' + "".join(rows) + "</ul>",
-            unsafe_allow_html=True,
-        )
+
+    st.markdown(
+        (
+            '<div class="cbx-node-status-panel">'
+            '<ul class="cbx-node-status-list">'
+            + "".join(rendered_rows)
+            + "</ul>"
+            '<div class="cbx-node-timer">'
+            f"Elapsed {_pipeline_elapsed_label_from_events(progress_events, now=now)}"
+            "</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_progress_events(events: list[Mapping[str, Any]]) -> None:
@@ -841,8 +1185,9 @@ def render_collapsible_output_sections(
         render_execution_indicators(
             execution_status=execution_status,
             result=indicator_result,
+            progress_events=progress_events,
         )
-        render_node_execution_statuses(node_statuses)
+        render_node_execution_statuses(progress_events)
         render_status_messages(status_messages)
         render_usage_summary(render_payload)
         render_result_header(
