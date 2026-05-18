@@ -69,6 +69,16 @@ Implications:
 - live smoke checks are useful for manual operational validation
 - release safety is enforced primarily through unit/integration contract suites
 
+## LangSmith Tracing Is Optional and Credential-Gated
+
+Phase 4 observability support is additive and opt-in.
+
+Current behavior:
+
+- tracing is disabled unless `LANGSMITH_TRACING` is explicitly truthy
+- if tracing is requested but `LANGSMITH_API_KEY` is missing, tracing degrades to disabled
+- app startup, unit tests, and integration tests continue without LangSmith credentials
+
 ## Export Validation Can Mark Individual Formats Failed
 
 Export validation is format-specific and non-blocking per format.

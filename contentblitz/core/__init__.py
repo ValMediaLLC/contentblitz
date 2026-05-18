@@ -16,6 +16,12 @@ from contentblitz.core.cost_controls import (
     search_cap_reached,
     token_budget_exceeded,
 )
+from contentblitz.core.observability import (
+    ObservabilityConfig,
+    build_observability_config,
+    is_tracing_enabled,
+    observability_summary,
+)
 from contentblitz.core.router import (
     increment_retry_count,
     retry_remaining,
@@ -40,4 +46,8 @@ __all__ = [
     "search_cap_reached",
     "image_cap_reached",
     "retry_cap_reached",
+    "ObservabilityConfig",
+    "build_observability_config",
+    "is_tracing_enabled",
+    "observability_summary",
 ]
