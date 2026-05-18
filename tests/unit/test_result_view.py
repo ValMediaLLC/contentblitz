@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, List, Mapping
 
@@ -454,7 +455,7 @@ def test_result_render_helpers_do_not_mutate_payload(monkeypatch) -> None:
     assert payload == before
 
 
-def test_execution_indicators_render_compact_cards_with_truncated_routing(
+def test_execution_indicators_render_expected_summary_cards(
     monkeypatch,
 ) -> None:
     dummy_st = _DummyStreamlit()
@@ -473,12 +474,10 @@ def test_execution_indicators_render_compact_cards_with_truncated_routing(
     assert any("cbx-metric-grid" in call for call in dummy_st.markdown_calls)
     assert any("Execution" in call for call in dummy_st.markdown_calls)
     assert any("Workflow Status" in call for call in dummy_st.markdown_calls)
-    assert any("Routing" in call for call in dummy_st.markdown_calls)
-    assert any("cbx-status-blue" in call for call in dummy_st.markdown_calls)
-    assert any(
-        "research_agent_node_to_conten..." in call
-        for call in dummy_st.markdown_calls
-    )
+    assert any("Active Node" in call for call in dummy_st.markdown_calls)
+    assert not any("Routing" in call for call in dummy_st.markdown_calls)
+    assert not any("cbx-summary-dot-blue" in call for call in dummy_st.markdown_calls)
+    assert any("cbx-summary-dot-idle" in call for call in dummy_st.markdown_calls)
 
 
 def test_status_color_mapping_for_workflow_and_node_statuses(monkeypatch) -> None:
@@ -492,14 +491,33 @@ def test_status_color_mapping_for_workflow_and_node_statuses(monkeypatch) -> Non
     result_view_module.render_result_header({"workflow_status": "partial_success"})
     result_view_module.render_result_header({"workflow_status": "limited"})
     result_view_module.render_node_execution_statuses(
-        {
-            "query_handler_node": "completed",
-            "clarification_node": "pending",
-            "research_agent_node": "skipped",
-            "content_strategist_node": "failed",
-            "blog_writer_node": "degraded",
-            "linkedin_writer_node": "error",
-        }
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "clarification_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:01+00:00",
+            },
+            {
+                "node_name": "research_agent_node",
+                "status": "skipped",
+                "timestamp": "2026-05-17T12:00:02+00:00",
+            },
+            {
+                "node_name": "content_strategist_node",
+                "status": "failed",
+                "timestamp": "2026-05-17T12:00:03+00:00",
+            },
+            {
+                "node_name": "blog_writer_node",
+                "status": "degraded",
+                "timestamp": "2026-05-17T12:00:04+00:00",
+            },
+        ]
     )
 
     rendered = "\n".join(dummy_st.markdown_calls)
@@ -510,7 +528,386 @@ def test_status_color_mapping_for_workflow_and_node_statuses(monkeypatch) -> Non
     assert "partial success" in rendered
     assert "partial_success" not in rendered
     assert "cbx-node-status-list" in rendered
-    assert "cbx-node-name" in rendered
+    assert "cbx-node-progress-track" in rendered
+    assert "cbx-node-progress-fill" in rendered
+    assert "cbx-node-progress-running" in rendered
+
+
+def test_static_uninvoked_nodes_are_not_rendered(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_node_execution_statuses(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "query_handler_node" in rendered
+    assert "clarification_node" not in rendered
+    assert "research_agent_node" not in rendered
+
+
+def test_seeded_pending_events_do_not_render_uninvoked_nodes(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_node_execution_statuses(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "pending",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "research_agent_node",
+                "status": "pending",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+        ]
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "query_handler_node" not in rendered
+    assert "research_agent_node" not in rendered
+
+
+def test_running_node_renders_immediately_with_in_progress_style(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_node_execution_statuses(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "query_handler_node" in rendered
+    assert "◎" in rendered
+    assert "cbx-node-status-running" in rendered
+    assert "cbx-node-progress-running" in rendered
+
+
+def test_execution_indicators_show_active_running_node(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_execution_indicators(
+        execution_status="running",
+        result={
+            "ui_workflow_status": "running",
+            "routing_decision": "research_agent_node",
+        },
+        progress_events=[
+            {
+                "node_name": "research_agent_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ],
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "Active Node" in rendered
+    assert "research_agent_node" in rendered
+    assert "cbx-summary-dot-running" in rendered
+    assert "Routing" not in rendered
+    assert "cbx-summary-dot-blue" not in rendered
+
+
+def test_execution_indicators_support_completed_dot_state(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_execution_indicators(
+        execution_status="completed",
+        result={
+            "ui_workflow_status": "success",
+            "routing_decision": "output_assembler_node",
+        },
+        progress_events=[
+            {
+                "node_name": "output_assembler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ],
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "cbx-summary-dot-completed" in rendered
+    assert "output_assembler_node" in rendered
+
+
+def test_node_execution_rows_follow_first_invoked_order_and_latest_status() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "research_agent_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:02+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:01+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:03+00:00",
+            },
+            {
+                "node_name": "research_agent_node",
+                "status": "degraded",
+                "timestamp": "2026-05-17T12:00:04+00:00",
+            },
+        ]
+    )
+
+    assert [row.node_name for row in rows] == [
+        "research_agent_node",
+        "query_handler_node",
+    ]
+    assert [row.status for row in rows] == ["degraded", "completed"]
+
+
+def test_node_duration_weights_match_expected_relative_costs() -> None:
+    assert result_view_module._node_duration_seconds(
+        "research_agent_node"
+    ) > result_view_module._node_duration_seconds("blog_writer_node")
+    assert result_view_module._node_duration_seconds(
+        "blog_writer_node"
+    ) > result_view_module._node_duration_seconds("output_assembler_node")
+    assert (
+        result_view_module._node_duration_seconds("export_node")
+        == result_view_module._node_duration_seconds("output_assembler_node")
+    )
+
+
+def test_pipeline_elapsed_helper_uses_meaningful_event_timestamps() -> None:
+    elapsed = result_view_module._pipeline_elapsed_label_from_events(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "pending",
+                "timestamp": "2026-05-17T11:59:00+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:02+00:00",
+            },
+        ]
+    )
+
+    assert elapsed == "2.0s"
+
+
+def test_pipeline_elapsed_helper_uses_active_now_for_running_events() -> None:
+    elapsed = result_view_module._pipeline_elapsed_label_from_events(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ],
+        now=datetime(2026, 5, 17, 12, 0, 5, tzinfo=UTC),
+    )
+
+    assert elapsed == "5.0s"
+
+
+def test_running_node_elapsed_starts_at_zero_without_live_now() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    assert rows[0].elapsed_label == "0.0s"
+
+
+def test_completed_node_elapsed_uses_start_and_end_timestamps() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:02+00:00",
+            },
+        ]
+    )
+
+    assert rows[0].elapsed_label == "2.0s"
+
+
+def test_completed_node_elapsed_falls_back_to_weighted_duration_when_zero() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    assert rows[0].elapsed_label == "1.2s"
+
+
+def test_completed_node_elapsed_does_not_shift_with_later_node_events() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "research_agent_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:05+00:00",
+            },
+        ]
+    )
+
+    by_node = {row.node_name: row.elapsed_label for row in rows}
+    assert by_node["query_handler_node"] == "1.2s"
+    assert by_node["research_agent_node"] == "3.2s"
+
+
+def test_skipped_nodes_are_hidden_from_node_execution_status(
+    monkeypatch,
+) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_node_execution_statuses(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "export_node",
+                "status": "skipped",
+                "timestamp": "2026-05-17T12:00:01+00:00",
+            },
+        ]
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "query_handler_node" in rendered
+    assert "export_node" not in rendered
+    assert "image_agent_node" not in rendered
+
+
+def test_node_execution_rows_keep_first_meaningful_event_order() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "clarification_node",
+                "status": "pending",
+                "timestamp": "2026-05-17T11:59:58+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "blog_writer_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:01+00:00",
+            },
+            {
+                "node_name": "linkedin_writer_node",
+                "status": "running",
+                "timestamp": "2026-05-17T12:00:01+00:00",
+            },
+            {
+                "node_name": "blog_writer_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:02+00:00",
+            },
+            {
+                "node_name": "linkedin_writer_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:03+00:00",
+            },
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:04+00:00",
+            },
+        ]
+    )
+
+    assert [row.node_name for row in rows] == [
+        "query_handler_node",
+        "blog_writer_node",
+        "linkedin_writer_node",
+    ]
+    assert "clarification_node" not in [row.node_name for row in rows]
+
+
+def test_completed_node_row_uses_horizontal_layout_and_right_status_badge(
+    monkeypatch,
+) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_node_execution_statuses(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    rendered = "\n".join(dummy_st.markdown_calls)
+    assert "cbx-node-status-row" in rendered
+    assert "cbx-node-progress-track" in rendered
+    assert "cbx-node-status-badge" in rendered
+    assert "✓" in rendered
+    assert "Elapsed 0.0s" in rendered
+    assert "1.2s" in rendered
+    assert "width:100%;" in rendered
+    assert (
+        rendered.find("cbx-node-name")
+        < rendered.find("cbx-node-progress-track")
+        < rendered.find("cbx-node-status-badge")
+    )
+    assert "Parallel Group" not in rendered
 
 
 def test_usage_summary_renders_compact_cards(monkeypatch) -> None:

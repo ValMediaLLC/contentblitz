@@ -194,25 +194,56 @@ class _DummyContextManager:
 
 
 @dataclass
+class _DummyPlaceholder:
+    parent: "_DummyRenderStreamlit"
+
+    def container(self) -> _DummyContextManager:
+        return _DummyContextManager()
+
+    def empty(self) -> None:
+        self.parent.placeholder_empty_calls += 1
+
+
+@dataclass
 class _DummyRenderStreamlit:
     session_state: Dict[str, Any] = field(default_factory=dict)
+    button_result: bool = True
+    info_calls: List[str] = field(default_factory=list)
+    caption_calls: List[str] = field(default_factory=list)
+    spinner_calls: List[str] = field(default_factory=list)
+    placeholder_empty_calls: int = 0
 
     def header(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
-    def caption(self, *_args: Any, **_kwargs: Any) -> None:
+    def subheader(self, *_args: Any, **_kwargs: Any) -> None:
         return None
+
+    def markdown(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def caption(self, value: str, *_args: Any, **_kwargs: Any) -> None:
+        self.caption_calls.append(str(value))
 
     def container(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
         return _DummyContextManager()
+
+    def empty(self) -> _DummyPlaceholder:
+        return _DummyPlaceholder(parent=self)
 
     def text_area(self, *_args: Any, **_kwargs: Any) -> str:
         return "Create a workflow result."
 
     def button(self, *_args: Any, **_kwargs: Any) -> bool:
-        return True
+        return self.button_result
 
-    def spinner(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
+    def spinner(
+        self,
+        text: str = "",
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> _DummyContextManager:
+        self.spinner_calls.append(str(text))
         return _DummyContextManager()
 
     def error(self, *_args: Any, **_kwargs: Any) -> None:
@@ -221,8 +252,8 @@ class _DummyRenderStreamlit:
     def warning(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
-    def info(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
+    def info(self, value: str, *_args: Any, **_kwargs: Any) -> None:
+        self.info_calls.append(str(value))
 
     def expander(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
         return _DummyContextManager()
@@ -378,6 +409,17 @@ def test_node_execution_status_section_is_rendered_once_per_run(monkeypatch) -> 
     monkeypatch.setattr(
         run_workflow_page, "render_degraded_and_error_state", lambda _payload: None
     )
+    live_state_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(
+        run_workflow_page,
+        "_render_active_execution_state",
+        lambda **kwargs: live_state_calls.append(
+            {
+                "execution_status": kwargs["execution_status"],
+                "progress_events": list(kwargs["progress_events"]),
+            }
+        ),
+    )
 
     run_workflow_page.render()
 
@@ -386,3 +428,186 @@ def test_node_execution_status_section_is_rendered_once_per_run(monkeypatch) -> 
         section_render_calls[0]["node_statuses"].get("query_handler_node")
         == "completed"
     )
+    assert live_state_calls
+    assert live_state_calls[0]["execution_status"] == "running"
+    assert live_state_calls[0]["progress_events"] == []
+    assert any(
+        call["progress_events"] and call["progress_events"][0]["node_name"]
+        == "query_handler_node"
+        for call in live_state_calls
+    )
+    assert dummy_st.spinner_calls == []
+    assert run_workflow_page._EMPTY_RESULT_PROMPT not in dummy_st.info_calls
+
+
+def test_active_submitted_run_shows_live_status_not_idle_prompt(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "_build_controls",
+        lambda: WorkflowControls(
+            include_blog=True,
+            include_linkedin=False,
+            include_research=False,
+            include_image=False,
+            export_enabled=False,
+            export_formats=[],
+        ),
+    )
+
+    store: Dict[str, Any] = {
+        "execution_status": "running",
+        "last_error": "",
+        "last_result": None,
+        "progress_events": [],
+        "node_statuses": {},
+        "status_messages": ["Workflow started."],
+        "last_submission": {"requested_outputs": ["blog"]},
+        "persistence_messages": [],
+    }
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_error", lambda: store["last_error"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "get_persistence_messages",
+        lambda: list(store["persistence_messages"]),
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "clear_persistence_messages",
+        lambda: store.update({"persistence_messages": []}),
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_result", lambda: store["last_result"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_execution_status", lambda: store["execution_status"]
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_progress_events", lambda: list(store["progress_events"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_node_statuses", lambda: dict(store["node_statuses"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_status_messages", lambda: list(store["status_messages"])
+    )
+    monkeypatch.setattr(
+        run_workflow_page, "get_last_submission", lambda: dict(store["last_submission"])
+    )
+
+    live_state_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(
+        run_workflow_page,
+        "_render_active_execution_state",
+        lambda **kwargs: live_state_calls.append(
+            {
+                "execution_status": kwargs["execution_status"],
+                "progress_events": list(kwargs["progress_events"]),
+                "status_messages": list(kwargs["status_messages"]),
+            }
+        ),
+    )
+
+    run_workflow_page.render()
+
+    assert len(live_state_calls) == 1
+    assert live_state_calls[0]["execution_status"] == "running"
+    assert live_state_calls[0]["progress_events"] == []
+    assert live_state_calls[0]["status_messages"] == ["Workflow started."]
+    assert run_workflow_page._EMPTY_RESULT_PROMPT not in dummy_st.info_calls
+
+
+def test_active_execution_waiting_message_is_scoped_to_node_status(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_execution_indicators",
+        lambda **_kwargs: None,
+    )
+    node_status_kwargs: Dict[str, Any] = {}
+
+    def _fake_render_node_statuses(*_args: Any, **kwargs: Any) -> None:
+        node_status_kwargs.update(kwargs)
+        dummy_st.caption(str(kwargs["empty_message"]))
+
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_node_execution_statuses",
+        _fake_render_node_statuses,
+    )
+
+    run_workflow_page._render_active_execution_state(
+        container=None,
+        execution_status="running",
+        progress_events=[],
+        status_messages=[],
+    )
+
+    assert run_workflow_page._WAITING_FOR_EVENT_MESSAGE in dummy_st.caption_calls
+    assert node_status_kwargs["live_timers"] is True
+    assert run_workflow_page._EMPTY_RESULT_PROMPT not in dummy_st.info_calls
+
+
+def test_active_execution_hides_workflow_started_message_only(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_execution_indicators",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_node_execution_statuses",
+        lambda *_args, **_kwargs: None,
+    )
+
+    run_workflow_page._render_active_execution_state(
+        container=None,
+        execution_status="running",
+        progress_events=[],
+        status_messages=[
+            "Workflow started.",
+            "Workflow started at 12:00 UTC.",
+            "Workflow completed with recoverable warnings.",
+        ],
+    )
+
+    assert "Workflow started." not in dummy_st.info_calls
+    assert "Workflow started at 12:00 UTC." not in dummy_st.info_calls
+    assert "Workflow completed with recoverable warnings." in dummy_st.info_calls
+
+
+def test_active_execution_clears_placeholder_between_refreshes(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_execution_indicators",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_node_execution_statuses",
+        lambda *_args, **_kwargs: None,
+    )
+
+    placeholder = dummy_st.empty()
+    run_workflow_page._render_active_execution_state(
+        container=placeholder,
+        execution_status="running",
+        progress_events=[],
+        status_messages=["Workflow started."],
+    )
+    run_workflow_page._render_active_execution_state(
+        container=placeholder,
+        execution_status="running",
+        progress_events=[],
+        status_messages=["Workflow started."],
+    )
+
+    assert dummy_st.placeholder_empty_calls >= 2

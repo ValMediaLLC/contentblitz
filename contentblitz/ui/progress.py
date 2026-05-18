@@ -41,7 +41,7 @@ class UIProgressEvent:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _safe_timestamp(value: Any) -> str:

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from copy import deepcopy
+from dataclasses import asdict
 from typing import Any, Dict, Iterable, Iterator, List, Mapping
 
 from contentblitz.state import create_initial_state
 from contentblitz.ui.progress import (
     UIProgressEvent,
-    build_pending_progress_events,
     create_progress_event,
     order_progress_events,
 )
@@ -186,17 +185,33 @@ def stream_workflow_progress(
     )
     graph = _get_graph()
 
-    progress_events: List[UIProgressEvent] = build_pending_progress_events()
+    progress_events: List[UIProgressEvent] = []
     latest_state: Dict[str, Any] = deepcopy(initial_state)
 
     for stream_item in graph.stream(
         deepcopy(initial_state),
-        stream_mode=["updates", "values"],
+        stream_mode=["tasks", "updates", "values"],
     ):
         if not isinstance(stream_item, tuple) or len(stream_item) != 2:
             continue
 
         stream_kind, payload = stream_item
+        if stream_kind == "tasks":
+            if not isinstance(payload, dict):
+                continue
+            node_name = str(payload.get("name", "")).strip()
+            is_task_start = "input" in payload and "triggers" in payload
+            if node_name not in AUTHORITATIVE_NODE_SET or not is_task_start:
+                continue
+            running_event = create_progress_event(
+                node_name=node_name,
+                status="running",
+                message=_message_for_status(node_name, "running"),
+            )
+            progress_events.append(running_event)
+            yield {"type": "progress", "event": asdict(running_event)}
+            continue
+
         if stream_kind == "values":
             if isinstance(payload, dict):
                 latest_state = deepcopy(payload)
@@ -210,14 +225,6 @@ def stream_workflow_progress(
             if str(node_name).strip() not in AUTHORITATIVE_NODE_SET:
                 continue
             updates = _safe_dict(raw_updates)
-            running_event = create_progress_event(
-                node_name=node_name,
-                status="running",
-                message=_message_for_status(node_name, "running"),
-            )
-            progress_events.append(running_event)
-            yield {"type": "progress", "event": asdict(running_event)}
-
             status = _status_from_node_update(node_name, updates)
             completed_event = create_progress_event(
                 node_name=node_name,

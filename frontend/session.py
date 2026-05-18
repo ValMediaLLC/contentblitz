@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
 import streamlit as st
+
 from contentblitz.persistence.serialization import (
     deserialize_workflow_run,
     serialize_workflow_run,
@@ -183,12 +184,16 @@ def get_node_statuses() -> Dict[str, str]:
 
 def set_status_messages(messages: List[str]) -> None:
     cleaned_messages: list[str] = []
+    seen_messages: set[str] = set()
     for item in messages:
         if item is None:
             continue
         cleaned = str(item).strip()
         if not cleaned or cleaned.lower() in {"none", "null"}:
             continue
+        if cleaned in seen_messages:
+            continue
+        seen_messages.add(cleaned)
         cleaned_messages.append(cleaned)
     st.session_state[KEY_STATUS_MESSAGES] = cleaned_messages
 
@@ -198,12 +203,16 @@ def get_status_messages() -> List[str]:
     if not isinstance(value, list):
         return []
     cleaned_messages: list[str] = []
+    seen_messages: set[str] = set()
     for item in value:
         if item is None:
             continue
         cleaned = str(item).strip()
         if not cleaned or cleaned.lower() in {"none", "null"}:
             continue
+        if cleaned in seen_messages:
+            continue
+        seen_messages.add(cleaned)
         cleaned_messages.append(cleaned)
     return cleaned_messages
 
