@@ -173,7 +173,8 @@ def test_safe_trace_metadata_excludes_secrets_and_raw_payloads() -> None:
     assert "api_key" not in payload
     assert "sk-secret" not in payload
     assert "user_query" not in payload
-    assert "final_response" not in payload
+    assert "final_response_summary" in metadata
+    assert "final_response" not in metadata
     assert "base64" not in payload
     assert "tool_outputs" not in payload
 

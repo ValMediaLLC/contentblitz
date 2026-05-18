@@ -12,9 +12,18 @@ from typing import Any, Dict, Mapping, Optional
 from contentblitz.config import CACHE_METADATA_DEFAULTS
 from contentblitz.core.cache_keys import (
     build_research_cache_key as _build_research_cache_key,
+)
+from contentblitz.core.cache_keys import (
     normalize_query as _normalize_query,
 )
-from contentblitz.tools.cache_backends import InMemoryCacheBackend, SQLiteCacheBackend
+from contentblitz.core.observability import (
+    safe_tool_metadata,
+    start_tool_span,
+)
+from contentblitz.tools.cache_backends import (
+    InMemoryCacheBackend,
+    SQLiteCacheBackend,
+)
 
 _DEFAULT_SQLITE_PATH = ".tmp/contentblitz_cache.sqlite3"
 _IN_MEMORY_BACKEND = InMemoryCacheBackend(now_fn=lambda: _now_epoch_seconds())
@@ -84,6 +93,37 @@ def _default_ttl_seconds() -> int:
         return default_ttl
 
 
+def _finish_cache_span(
+    *,
+    span: Any,
+    started_at: float,
+    span_name: str,
+    success: bool | None = None,
+    cache_hit: bool | None = None,
+    error: BaseException | None = None,
+) -> None:
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    metadata: Dict[str, Any] = {
+        "tool_name": span_name,
+        "duration_ms": duration_ms,
+    }
+    outputs: Dict[str, Any] = {}
+    if success is not None:
+        metadata["degraded"] = not success
+        outputs["success"] = success
+    if cache_hit is not None:
+        metadata["cache_hit"] = cache_hit
+        metadata["cache_miss"] = not cache_hit
+        outputs["cache_hit"] = cache_hit
+    if error is not None:
+        metadata["degraded"] = True
+    span.finish(
+        metadata=safe_tool_metadata(metadata),
+        outputs=outputs,
+        error=error,
+    )
+
+
 def _configured_backend_name() -> str:
     raw = str(os.getenv("CONTENTBLITZ_CACHE_BACKEND", "in_memory")).strip().lower()
     if raw in {"in_memory", "in-memory", "memory", "inmemory"}:
@@ -133,33 +173,97 @@ def get_cache_backend_name() -> str:
 
 def set_cache(key: str, value: Any, ttl_seconds: int = 1800) -> bool:
     """Persist a value in the active cache backend."""
-    safe_key = _safe_key(key)
-    if not safe_key:
-        return False
-    if not _is_json_serializable(value):
-        return False
-
+    started_at = time.perf_counter()
+    span = start_tool_span("cache_write", metadata={"cache_hit": False})
     try:
-        safe_ttl = int(ttl_seconds)
-    except (TypeError, ValueError):
-        safe_ttl = _default_ttl_seconds()
-    safe_ttl = max(0, safe_ttl)
-    backend_name, backend = _active_backend()
-    return backend.set(
-        safe_key,
-        deepcopy(value),
-        ttl_seconds=safe_ttl,
-        metadata={"backend": backend_name},
-    )
+        safe_key = _safe_key(key)
+        if not safe_key:
+            _finish_cache_span(
+                span=span,
+                started_at=started_at,
+                span_name="cache_write",
+                success=False,
+                cache_hit=False,
+            )
+            return False
+        if not _is_json_serializable(value):
+            _finish_cache_span(
+                span=span,
+                started_at=started_at,
+                span_name="cache_write",
+                success=False,
+                cache_hit=False,
+            )
+            return False
+
+        try:
+            safe_ttl = int(ttl_seconds)
+        except (TypeError, ValueError):
+            safe_ttl = _default_ttl_seconds()
+        safe_ttl = max(0, safe_ttl)
+        backend_name, backend = _active_backend()
+        success = backend.set(
+            safe_key,
+            deepcopy(value),
+            ttl_seconds=safe_ttl,
+            metadata={"backend": backend_name},
+        )
+        _finish_cache_span(
+            span=span,
+            started_at=started_at,
+            span_name="cache_write",
+            success=success,
+            cache_hit=False,
+        )
+        return success
+    except Exception as error:
+        _finish_cache_span(
+            span=span,
+            started_at=started_at,
+            span_name="cache_write",
+            success=False,
+            cache_hit=False,
+            error=error,
+        )
+        raise
 
 
 def get_cache(key: str) -> Optional[Any]:
     """Read a value from the active cache backend if present and not expired."""
-    safe_key = _safe_key(key)
-    if not safe_key:
-        return None
-    _, backend = _active_backend()
-    return backend.get(safe_key)
+    started_at = time.perf_counter()
+    span = start_tool_span("cache_lookup")
+    try:
+        safe_key = _safe_key(key)
+        if not safe_key:
+            _finish_cache_span(
+                span=span,
+                started_at=started_at,
+                span_name="cache_lookup",
+                success=True,
+                cache_hit=False,
+            )
+            return None
+        _, backend = _active_backend()
+        value = backend.get(safe_key)
+        cache_hit = value is not None
+        _finish_cache_span(
+            span=span,
+            started_at=started_at,
+            span_name="cache_lookup",
+            success=True,
+            cache_hit=cache_hit,
+        )
+        return value
+    except Exception as error:
+        _finish_cache_span(
+            span=span,
+            started_at=started_at,
+            span_name="cache_lookup",
+            success=False,
+            cache_hit=False,
+            error=error,
+        )
+        raise
 
 
 def delete_cache(key: str) -> bool:

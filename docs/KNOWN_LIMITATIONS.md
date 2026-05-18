@@ -80,6 +80,13 @@ Current behavior:
 - app startup, unit tests, and integration tests continue without LangSmith credentials
 - tracing is best-effort; tracer setup/runtime failures degrade to no-op and never fail workflow execution
 
+Sampling behavior:
+
+- trace sampling is deterministic per session when `session_id` is available
+- sampling is telemetry-only and never changes routing, retries, cost controls, or outputs
+- when only failure sampling is enabled, child span coverage may be reduced for unsampled successful runs
+- observability metadata intentionally strips raw env-var-style keys and exposes only safe summary labels (for example `endpoint_host`, not full endpoint URL)
+
 ## Export Validation Can Mark Individual Formats Failed
 
 Export validation is format-specific and non-blocking per format.
