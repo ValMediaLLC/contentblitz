@@ -53,6 +53,14 @@ def test_invalid_status_safely_normalizes() -> None:
     assert normalize_progress_status("invalid", invalid_fallback="failed") == "failed"
 
 
+def test_generated_progress_timestamp_includes_subsecond_precision() -> None:
+    event = create_progress_event(
+        node_name="query_handler_node",
+        status="running",
+    )
+    assert "." in event.timestamp
+
+
 def test_progress_event_ordering_is_deterministic() -> None:
     events = [
         create_progress_event(

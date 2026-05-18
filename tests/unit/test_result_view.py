@@ -767,6 +767,41 @@ def test_completed_node_elapsed_uses_start_and_end_timestamps() -> None:
     assert rows[0].elapsed_label == "2.0s"
 
 
+def test_completed_node_elapsed_falls_back_to_weighted_duration_when_zero() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            }
+        ]
+    )
+
+    assert rows[0].elapsed_label == "1.2s"
+
+
+def test_completed_node_elapsed_does_not_shift_with_later_node_events() -> None:
+    rows = result_view_module._build_node_execution_rows(
+        [
+            {
+                "node_name": "query_handler_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:00+00:00",
+            },
+            {
+                "node_name": "research_agent_node",
+                "status": "completed",
+                "timestamp": "2026-05-17T12:00:05+00:00",
+            },
+        ]
+    )
+
+    by_node = {row.node_name: row.elapsed_label for row in rows}
+    assert by_node["query_handler_node"] == "1.2s"
+    assert by_node["research_agent_node"] == "3.2s"
+
+
 def test_skipped_nodes_are_hidden_from_node_execution_status(
     monkeypatch,
 ) -> None:
@@ -865,6 +900,8 @@ def test_completed_node_row_uses_horizontal_layout_and_right_status_badge(
     assert "cbx-node-status-badge" in rendered
     assert "✓" in rendered
     assert "Elapsed 0.0s" in rendered
+    assert "1.2s" in rendered
+    assert "width:100%;" in rendered
     assert (
         rendered.find("cbx-node-name")
         < rendered.find("cbx-node-progress-track")

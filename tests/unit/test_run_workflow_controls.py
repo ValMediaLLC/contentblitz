@@ -528,10 +528,16 @@ def test_active_execution_waiting_message_is_scoped_to_node_status(monkeypatch) 
         "render_execution_indicators",
         lambda **_kwargs: None,
     )
+    node_status_kwargs: Dict[str, Any] = {}
+
+    def _fake_render_node_statuses(*_args: Any, **kwargs: Any) -> None:
+        node_status_kwargs.update(kwargs)
+        dummy_st.caption(str(kwargs["empty_message"]))
+
     monkeypatch.setattr(
         run_workflow_page,
         "render_node_execution_statuses",
-        lambda _progress_events: None,
+        _fake_render_node_statuses,
     )
 
     run_workflow_page._render_active_execution_state(
@@ -542,4 +548,66 @@ def test_active_execution_waiting_message_is_scoped_to_node_status(monkeypatch) 
     )
 
     assert run_workflow_page._WAITING_FOR_EVENT_MESSAGE in dummy_st.caption_calls
+    assert node_status_kwargs["live_timers"] is True
     assert run_workflow_page._EMPTY_RESULT_PROMPT not in dummy_st.info_calls
+
+
+def test_active_execution_hides_workflow_started_message_only(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_execution_indicators",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_node_execution_statuses",
+        lambda *_args, **_kwargs: None,
+    )
+
+    run_workflow_page._render_active_execution_state(
+        container=None,
+        execution_status="running",
+        progress_events=[],
+        status_messages=[
+            "Workflow started.",
+            "Workflow started at 12:00 UTC.",
+            "Workflow completed with recoverable warnings.",
+        ],
+    )
+
+    assert "Workflow started." not in dummy_st.info_calls
+    assert "Workflow started at 12:00 UTC." not in dummy_st.info_calls
+    assert "Workflow completed with recoverable warnings." in dummy_st.info_calls
+
+
+def test_active_execution_clears_placeholder_between_refreshes(monkeypatch) -> None:
+    dummy_st = _DummyRenderStreamlit(button_result=False)
+    monkeypatch.setattr(run_workflow_page, "st", dummy_st)
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_execution_indicators",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_workflow_page,
+        "render_node_execution_statuses",
+        lambda *_args, **_kwargs: None,
+    )
+
+    placeholder = dummy_st.empty()
+    run_workflow_page._render_active_execution_state(
+        container=placeholder,
+        execution_status="running",
+        progress_events=[],
+        status_messages=["Workflow started."],
+    )
+    run_workflow_page._render_active_execution_state(
+        container=placeholder,
+        execution_status="running",
+        progress_events=[],
+        status_messages=["Workflow started."],
+    )
+
+    assert dummy_st.placeholder_empty_calls >= 2

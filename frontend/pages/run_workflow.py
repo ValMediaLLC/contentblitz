@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from queue import Empty, Queue
+from threading import Thread
+from time import monotonic, sleep
 from typing import Any
 
 import streamlit as st
@@ -52,6 +55,15 @@ _WIDGET_KEY_EXPORT_ENABLED = "cbx_export_enabled"
 _WIDGET_KEY_EXPORT_FORMATS = "cbx_export_formats"
 _EMPTY_RESULT_PROMPT = "Run the workflow to view outputs."
 _WAITING_FOR_EVENT_MESSAGE = "Waiting for first workflow event..."
+
+
+def _is_workflow_started_message(message: str) -> bool:
+    normalized = str(message).strip().lower()
+    if not normalized:
+        return False
+    return normalized.rstrip(".:!") == "workflow started" or normalized.startswith(
+        "workflow started "
+    )
 
 
 def _execution_status_from_result(
@@ -141,7 +153,11 @@ def _render_active_execution_state(
     progress_events: list[dict[str, Any]],
     status_messages: list[str],
 ) -> None:
-    host = container.container() if container is not None else st.container()
+    if container is not None:
+        container.empty()
+        host = container.container()
+    else:
+        host = st.container()
     with host:
         with st.expander("Workflow", expanded=True):
             render_execution_indicators(
@@ -154,10 +170,17 @@ def _render_active_execution_state(
                 live_timers=True,
                 empty_message=_WAITING_FOR_EVENT_MESSAGE,
             )
+            rendered_messages: set[str] = set()
             for message in status_messages:
                 safe_message = str(message).strip()
-                if safe_message and safe_message.lower() not in {"none", "null"}:
-                    st.info(safe_message)
+                if not safe_message or safe_message.lower() in {"none", "null"}:
+                    continue
+                if _is_workflow_started_message(safe_message):
+                    continue
+                if safe_message in rendered_messages:
+                    continue
+                rendered_messages.add(safe_message)
+                st.info(safe_message)
 
 
 def render() -> None:
@@ -209,7 +232,7 @@ def render() -> None:
                 set_progress_events(progress_events)
                 node_statuses = derive_node_statuses(progress_events)
                 set_node_statuses(node_statuses)
-                set_status_messages(["Workflow started."])
+                set_status_messages([])
                 _render_active_execution_state(
                     container=live_execution_placeholder,
                     execution_status="running",
@@ -217,39 +240,90 @@ def render() -> None:
                     status_messages=get_status_messages(),
                 )
                 final_result: dict[str, object] = {}
-                for event in stream_workflow_progress(
-                    user_query=safe_query,
-                    requested_outputs=requested_outputs,
-                    export_requested=export_requested,
-                    export_formats=export_formats,
-                ):
-                    if event.get("type") == "progress":
-                        raw_event = event.get("event")
-                        if isinstance(raw_event, dict):
-                            progress_events.append(dict(raw_event))
-                            set_progress_events(progress_events)
-                            node_statuses = derive_node_statuses(progress_events)
-                            set_node_statuses(node_statuses)
-                            _render_active_execution_state(
-                                container=live_execution_placeholder,
-                                execution_status="running",
-                                progress_events=progress_events,
-                                status_messages=get_status_messages(),
-                            )
-                    elif event.get("type") == "final":
-                        result_payload = event.get("result")
-                        if isinstance(result_payload, dict):
-                            final_result = result_payload
-                            raw_events = event.get("events")
-                            if isinstance(raw_events, list):
-                                progress_events = [
-                                    dict(item)
-                                    for item in raw_events
-                                    if isinstance(item, dict)
-                                ]
+                event_queue: Queue[dict[str, Any]] = Queue()
+
+                def _consume_stream() -> None:
+                    try:
+                        for stream_event in stream_workflow_progress(
+                            user_query=safe_query,
+                            requested_outputs=requested_outputs,
+                            export_requested=export_requested,
+                            export_formats=export_formats,
+                        ):
+                            if isinstance(stream_event, dict):
+                                event_queue.put(dict(stream_event))
+                    except Exception as stream_error:  # pragma: no cover - safety
+                        event_queue.put(
+                            {"type": "error", "error_message": str(stream_error)}
+                        )
+                    finally:
+                        event_queue.put({"type": "done"})
+
+                stream_thread = Thread(target=_consume_stream, daemon=True)
+                stream_thread.start()
+
+                last_live_render_at = monotonic()
+                stream_finished = False
+                while not stream_finished:
+                    consumed_event = False
+                    while True:
+                        try:
+                            event = event_queue.get_nowait()
+                        except Empty:
+                            break
+                        consumed_event = True
+                        event_type = str(event.get("type", "")).strip().lower()
+                        if event_type == "progress":
+                            raw_event = event.get("event")
+                            if isinstance(raw_event, dict):
+                                progress_events.append(dict(raw_event))
                                 set_progress_events(progress_events)
                                 node_statuses = derive_node_statuses(progress_events)
                                 set_node_statuses(node_statuses)
+                        elif event_type == "final":
+                            result_payload = event.get("result")
+                            if isinstance(result_payload, dict):
+                                final_result = result_payload
+                                raw_events = event.get("events")
+                                if isinstance(raw_events, list):
+                                    progress_events = [
+                                        dict(item)
+                                        for item in raw_events
+                                        if isinstance(item, dict)
+                                    ]
+                                    set_progress_events(progress_events)
+                                    node_statuses = derive_node_statuses(
+                                        progress_events
+                                    )
+                                    set_node_statuses(node_statuses)
+                        elif event_type == "error":
+                            message = str(event.get("error_message", "")).strip()
+                            raise RuntimeError(message or "Unknown stream error")
+                        elif event_type == "done":
+                            stream_finished = True
+
+                    current_time = monotonic()
+                    render_tick_elapsed = current_time - last_live_render_at
+                    should_live_tick = (
+                        bool(progress_events)
+                        and get_execution_status() == "running"
+                        and render_tick_elapsed >= 0.1
+                    )
+                    if consumed_event or should_live_tick:
+                        _render_active_execution_state(
+                            container=live_execution_placeholder,
+                            execution_status="running",
+                            progress_events=progress_events,
+                            status_messages=get_status_messages(),
+                        )
+                        last_live_render_at = current_time
+
+                    if stream_finished:
+                        break
+                    sleep(0.1)
+
+                if stream_thread.is_alive():
+                    stream_thread.join(timeout=0.5)
 
                 live_execution_placeholder.empty()
                 normalized_node_statuses = apply_optional_node_skips(

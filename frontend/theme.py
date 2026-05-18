@@ -326,19 +326,28 @@ button[kind="primary"]:hover {
 }
 
 .cbx-node-progress-track {
+  --cbx-node-bar-height: 0.38rem;
   width: 100%;
-  height: 0.34rem;
+  height: var(--cbx-node-bar-height);
+  min-height: var(--cbx-node-bar-height);
+  max-height: var(--cbx-node-bar-height);
   border-radius: 999px;
   background: var(--cbx-surface-soft);
   border: 1px solid var(--cbx-border);
   overflow: hidden;
   margin-top: 0;
+  align-self: center;
+  box-sizing: border-box;
 }
 
 .cbx-node-progress-fill {
+  display: block;
   height: 100%;
+  min-height: 100%;
+  max-height: 100%;
   border-radius: 999px;
   transition: width 220ms ease;
+  box-sizing: border-box;
 }
 
 .cbx-node-status-badge {

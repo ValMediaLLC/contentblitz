@@ -530,6 +530,13 @@ def _format_elapsed_seconds(seconds: float) -> str:
     return f"{safe_seconds:.1f}s"
 
 
+def _ensure_visible_elapsed(seconds: float) -> float:
+    safe_seconds = max(0.0, float(seconds))
+    if 0.0 < safe_seconds < 0.1:
+        return 0.1
+    return safe_seconds
+
+
 def _node_duration_seconds(node_name: str) -> float:
     if node_name == "research_agent_node":
         return _LONG_NODE_SECONDS
@@ -553,19 +560,9 @@ def _node_status_icon(status: str) -> str:
 
 def _node_elapsed_label(
     *,
-    first_seen_at: datetime | None,
-    last_seen_at: datetime | None,
-    status: str,
-    now: datetime | None = None,
+    elapsed_seconds: float,
 ) -> str:
-    if first_seen_at is None:
-        return ""
-    end_time = last_seen_at
-    if _normalized_status_key(status) == "running":
-        end_time = now or first_seen_at
-    if end_time is None:
-        return ""
-    return _format_elapsed_seconds((end_time - first_seen_at).total_seconds())
+    return _format_elapsed_seconds(elapsed_seconds)
 
 
 def _pipeline_elapsed_label(rows: list[_NodeExecutionRow]) -> str:
@@ -715,6 +712,42 @@ def _build_node_execution_rows(
             item[1]["first_seen"],
         ),
     )
+    def _elapsed_seconds_for_row(index: int) -> float:
+        node_name, record = rows[index]
+        first_seen_at = (
+            record.get("first_seen_at")
+            if isinstance(record.get("first_seen_at"), datetime)
+            else None
+        )
+        last_seen_at = (
+            record.get("last_seen_at")
+            if isinstance(record.get("last_seen_at"), datetime)
+            else None
+        )
+        status = _safe_text(record.get("status", "pending")) or "pending"
+        status_key = _normalized_status_key(status)
+        fallback_seconds = _node_duration_seconds(node_name)
+        terminal_statuses = {"completed", "degraded", "failed"}
+
+        if first_seen_at is None:
+            if status_key in terminal_statuses:
+                return fallback_seconds
+            return 0.0
+
+        if status_key == "running":
+            if now is None:
+                return 0.0
+            return _ensure_visible_elapsed((now - first_seen_at).total_seconds())
+
+        if last_seen_at is not None:
+            measured = (last_seen_at - first_seen_at).total_seconds()
+            if measured > 0:
+                return _ensure_visible_elapsed(measured)
+
+        if status_key in terminal_statuses:
+            return fallback_seconds
+        return 0.0
+
     return [
         _NodeExecutionRow(
             node_name=node_name,
@@ -723,18 +756,11 @@ def _build_node_execution_rows(
                 _safe_text(record.get("status", "pending"))
             ),
             elapsed_label=_node_elapsed_label(
-                first_seen_at=record.get("first_seen_at")
-                if isinstance(record.get("first_seen_at"), datetime)
-                else None,
-                last_seen_at=record.get("last_seen_at")
-                if isinstance(record.get("last_seen_at"), datetime)
-                else None,
-                status=_safe_text(record.get("status", "pending")),
-                now=now,
+                elapsed_seconds=_elapsed_seconds_for_row(index),
             ),
             duration_seconds=_node_duration_seconds(node_name),
         )
-        for node_name, record in rows
+        for index, (node_name, record) in enumerate(rows)
     ]
 
 

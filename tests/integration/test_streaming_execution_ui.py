@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
+import frontend.services.orchestrator_client as orchestrator_client_module
 from contentblitz.agents import image_agent as image_agent_module
 from contentblitz.agents import query_handler as query_handler_module
 from contentblitz.ui.progress import create_progress_event
@@ -176,7 +179,8 @@ def test_image_only_routing_and_rendering_remain_deterministic(
 ) -> None:
     def fail_query_classification(*args, **kwargs):
         raise AssertionError(
-            "query_handler.generate_text should not run for explicit image-only requests."
+            "query_handler.generate_text should not run for explicit image-only "
+            "requests."
         )
 
     def fake_prompt_enhancer(*args, **kwargs):
@@ -247,3 +251,56 @@ def test_image_only_routing_and_rendering_remain_deterministic(
             state=final_result, node_statuses=node_statuses
         )
     )
+
+
+def test_streaming_emits_running_event_from_task_start_before_completion(
+    monkeypatch,
+) -> None:
+    class _FakeGraph:
+        def stream(self, _state, *, stream_mode):
+            assert stream_mode == ["tasks", "updates", "values"]
+            yield ("values", {"workflow_status": "running"})
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "query_handler_node",
+                    "input": {},
+                    "triggers": ["start"],
+                },
+            )
+            time.sleep(0.002)
+            yield (
+                "updates",
+                {"query_handler_node": {"workflow_status": "routing_complete"}},
+            )
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "query_handler_node",
+                    "error": None,
+                    "result": {},
+                    "interrupts": [],
+                },
+            )
+            yield ("values", {"workflow_status": "success", "final_response": "done"})
+
+    monkeypatch.setattr(orchestrator_client_module, "_get_graph", lambda: _FakeGraph())
+
+    progress_events: list[dict] = []
+    for item in stream_workflow_progress(
+        user_query="test",
+        requested_outputs=["blog"],
+        export_requested=False,
+        export_formats=[],
+    ):
+        if item.get("type") != "progress":
+            continue
+        event = item.get("event")
+        if isinstance(event, dict):
+            progress_events.append(event)
+
+    statuses = [event.get("status") for event in progress_events]
+    assert statuses == ["running", "completed"]
+    assert "." in str(progress_events[0].get("timestamp", ""))
