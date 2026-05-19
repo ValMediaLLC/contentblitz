@@ -1,0 +1,136 @@
+# Phase 4 Observability Guide
+
+## Overview
+
+Phase 4 introduces optional, production-safe observability for ContentBlitz using LangSmith-compatible tracing wrappers.
+
+Primary goals:
+
+- improve workflow/node/tool trace visibility
+- preserve deterministic local testing defaults
+- enforce metadata safety and redaction
+- avoid changing orchestration behavior
+
+## Architecture Alignment
+
+Phase 4 observability is wrapper-based:
+
+- wraps workflow execution in `contentblitz.workflow.graph`
+- uses `contentblitz.core.observability` and `contentblitz.core.redaction`
+- keeps LangGraph architecture and authoritative nodes unchanged
+- does not move routing/orchestration logic into observability code
+
+Tracing is telemetry-only:
+
+- tracing must not mutate workflow state
+- tracing must not alter routing
+- tracing must not alter retry counts
+- tracing must not alter cost counters
+
+## Configuration
+
+Environment variables:
+
+- `LANGSMITH_TRACING`
+- `LANGSMITH_API_KEY`
+- `LANGSMITH_ENDPOINT`
+- `LANGSMITH_PROJECT`
+- `CONTENTBLITZ_TRACE_SAMPLE_RATE`
+- `CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE`
+- `CONTENTBLITZ_RUN_LANGSMITH_SMOKE`
+
+Default behavior:
+
+- tracing disabled unless explicitly enabled
+- missing `LANGSMITH_API_KEY` degrades tracing safely
+- no LangSmith credentials required for normal startup/tests
+
+## Safe Metadata and Redaction
+
+Phase 4 metadata is summarized and redacted before trace emission.
+
+Allowed examples:
+
+- workflow/node/tool status labels
+- routing/requested-output summaries
+- retry/cost counters
+- source/image/output counts
+- token usage summaries
+- fallback and degraded flags
+- `observability_summary` with safe labels only
+
+Never traced:
+
+- API keys or raw `.env` values
+- raw user input query text
+- raw prompts/provider request or response payloads
+- full generated drafts/final output bodies
+- raw stack traces
+- base64 image payloads
+
+## Streamlit UX Integration
+
+Workflow results include an Observability section that shows only safe diagnostics:
+
+- enabled/disabled/degraded status
+- tracing enabled flag
+- project label
+- endpoint hostname only
+- last trace attempt status
+
+The UI remains read-only with respect to workflow state and does not directly call LangSmith.
+
+## Provider Tool Span Coverage
+
+Tool-level child spans are emitted when tracing is enabled and sampled:
+
+- `generate_text`
+- `search_web` (+ fallback spans when used)
+- `generate_image` (+ fallback metadata when used)
+- `cache_lookup` / `cache_write`
+
+Duplicate node spans are avoided by deferring canonical node spans to LangGraph native tracing where available.
+
+## Validation Workflow
+
+Standard non-live validation:
+
+```bash
+pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
+```
+
+Phase 4 validation:
+
+```bash
+python scripts/validate_phase4.py
+```
+
+Dry-run smoke (safe default):
+
+```bash
+python scripts/dev/smoke_langsmith.py --dry-run
+```
+
+Optional live smoke (manual opt-in only):
+
+```bash
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
+```
+
+## Troubleshooting
+
+If traces do not appear:
+
+1. Verify `LANGSMITH_TRACING=true`.
+2. Verify `LANGSMITH_API_KEY` is present in environment variables.
+3. Verify endpoint/project configuration is correct.
+4. Verify sample rates are not set to `0.0` for the run type.
+5. Check UI observability status for `Disabled`/`Degraded`.
+6. Run dry-run smoke script to confirm safe config visibility.
+
+## Operational Limitations
+
+- CI and default local validation do not run live LangSmith calls.
+- Sampling may reduce trace coverage by design.
+- Observability is best-effort and degrades to no-op on tracer failures.
+- Use `docs/KNOWN_LIMITATIONS.md` for cross-phase constraints.

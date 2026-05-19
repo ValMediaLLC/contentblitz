@@ -147,3 +147,29 @@ Note:
 - on some Windows/OneDrive setups, `.coverage` file locks can occur
 - `scripts/validate_phase2.py` uses a temp `COVERAGE_FILE` path to avoid local lock failures
 - `scripts/validate_phase3.py` also avoids unsafe temp cleanup assumptions during validation runs
+
+## Phase 4 Observability Validation Path
+
+Observability validation is safe by default and does not require live LangSmith access:
+
+```bash
+python scripts/validate_phase4.py
+python scripts/dev/smoke_langsmith.py --dry-run
+```
+
+What this validates:
+
+1. observability config imports cleanly
+2. tracing-disabled execution path is safe
+3. observability redaction behavior is covered by tests
+4. graph tracing behavior is covered by tests
+5. UI observability status behavior is covered by tests
+6. representative unit/integration checks run with LangSmith env vars removed
+
+Optional live smoke is never run implicitly:
+
+```bash
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
+```
+
+Live smoke claims should only be made when this command is intentionally run and succeeds.

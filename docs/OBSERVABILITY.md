@@ -1,256 +1,187 @@
-# Observability Configuration
+# ContentBlitz Observability (Phase 4)
 
-## Scope
+## Purpose
 
-ContentBlitz Phase 4 observability support is optional and environment-driven.
+Phase 4 adds optional LangSmith tracing to improve debugging and execution visibility for:
 
-Tracing uses safe defaults:
+- workflow-level execution (`contentblitz_workflow`)
+- node progression across the authoritative 12-node LangGraph
+- provider/tool timing and fallback metadata
 
-- tracing is disabled by default
-- LangSmith credentials are not required for normal startup
-- LangSmith credentials are not required for unit/integration tests
-- observability helpers never return or log API key values
+Tracing is additive and must never change orchestration behavior.
+
+## Security and Safety Guarantees
+
+- `.env` is never committed.
+- `LANGSMITH_API_KEY` is read only from environment variables.
+- tracing must not mutate workflow state.
+- tracing must not alter routing.
+- tracing must not alter retry counts.
+- tracing must not alter cost counters.
+- raw user input is not included in trace metadata.
+- raw provider payloads are not included in trace metadata.
+- base64 image data is never traced.
+- secrets are redacted before metadata is sent.
 
 ## Environment Variables
 
-ContentBlitz reads the following variables:
+Required for optional tracing:
 
 - `LANGSMITH_TRACING`
 - `LANGSMITH_API_KEY`
 - `LANGSMITH_ENDPOINT`
 - `LANGSMITH_PROJECT`
+
+Optional Phase 4 controls:
+
 - `CONTENTBLITZ_TRACE_SAMPLE_RATE`
 - `CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE`
+- `CONTENTBLITZ_RUN_LANGSMITH_SMOKE`
 
-## Defaults
+Defaults:
 
-If not provided:
-
-- `LANGSMITH_TRACING` defaults to disabled
+- tracing is disabled unless explicitly enabled
 - `LANGSMITH_ENDPOINT` defaults to `https://api.smith.langchain.com`
 - `LANGSMITH_PROJECT` defaults to `ContentBlitz`
-- `CONTENTBLITZ_TRACE_SAMPLE_RATE` defaults to `1.0`
-- `CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE` defaults to `1.0`
+- sample rates default to `1.0`
 
-Sampling notes:
+If `LANGSMITH_TRACING=true` but `LANGSMITH_API_KEY` is missing, tracing degrades safely to disabled without failing app startup, tests, or workflow runs.
 
-- values must be in `[0.0, 1.0]`
-- invalid values fall back safely to defaults
-- sampling decisions are deterministic by `session_id` when present
-- sampling is observability-only and never affects workflow execution
+## Local Setup (Optional)
 
-If `LANGSMITH_TRACING=true` but `LANGSMITH_API_KEY` is missing:
+Example local `.env` values:
 
-- ContentBlitz degrades safely
-- tracing remains disabled
-- app startup and test execution continue normally
-
-## Example Setup (Opt-In)
-
-```bash
+```env
 LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=<set-in-your-local-env-only>
+LANGSMITH_API_KEY=<set-locally>
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_PROJECT=ContentBlitz
+CONTENTBLITZ_TRACE_SAMPLE_RATE=1.0
+CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE=1.0
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=0
 ```
 
-Do not commit API keys in `.env.example`, tests, fixtures, docs, logs, or state payloads.
+Do not commit keys or secret values to git, tests, fixtures, or exported artifacts.
 
-## Programmatic Helpers
+## Disabled-by-Default Behavior
 
-Use `contentblitz.core.observability`:
+- normal ContentBlitz startup does not require LangSmith credentials
+- unit and integration tests do not require LangSmith credentials
+- tracing setup/runtime failures degrade to safe no-op tracing
+- provider execution remains independent from tracing availability
 
-- `build_observability_config()` for secret-safe status
-- `is_tracing_enabled()` for a simple boolean
-- `observability_summary()` for a secret-safe dictionary payload
+## What Is Traced
 
-These helpers are read-only and do not mutate workflow state.
+Safe, compact metadata is included for:
 
-## UI Status And Diagnostics
+- workflow start/end status
+- routing decision
+- requested outputs
+- node name and node status
+- retry count and retry exhaustion summaries
+- cost counter summaries
+- export request summaries
+- degraded and fallback flags
+- source/image count summaries
+- token count summaries from tools when available
+- duration metadata for workflow and tool spans
+- observability summary:
+  - `tracing_enabled`
+  - `provider` (`langsmith`)
+  - `project_name`
+  - `endpoint_host` (hostname only)
 
-The Streamlit frontend shows a UI-safe observability panel with:
+## What Is Never Traced
 
-- tracing status: `Enabled`, `Disabled`, or `Degraded`
-- tracing enabled boolean (`true`/`false`)
-- configured project name (safe label only)
-- endpoint hostname only (no URL path/query)
-- last trace attempt status (`Ready`, `Not requested`, or `Unavailable`)
-- a safe note when tracing is unavailable
-- an instruction to review the LangSmith dashboard manually
+- API key values (`LANGSMITH_API_KEY`, `OPENAI_API_KEY`, `SERP_API_KEY`, `PERPLEXITY_API_KEY`)
+- raw `.env` values or environment dumps
+- raw prompts and raw provider payloads
+- full raw generated drafts/final responses
+- raw stack traces
+- base64 image data
+- raw user query text
 
-The UI diagnostics intentionally do **not** display:
+## Redaction and Safe Metadata Policy
 
-- API key values
-- full environment dumps
-- raw LangSmith client internals
-- raw provider payloads
-- stack traces
+The redaction layer (`contentblitz.core.redaction`) sanitizes metadata before trace emission:
 
-Frontend diagnostics are read-only and do not mutate orchestration state. The UI
-does not call providers or LangSmith directly.
+- key/token/bearer redaction
+- stack trace detection and normalization
+- base64 payload redaction
+- raw payload field blocking
+- bounded string/list/dict truncation
+- JSON-serializable normalization
 
-## Phase 4 Validation + Smoke
+Large state fields are summarized (length/count/hash-prefix/short preview) instead of sending full payloads.
 
-Phase 4 observability has two scripts:
+## Interaction With LangGraph
 
-1. `python scripts/validate_phase4.py`
-2. `python scripts/dev/smoke_langsmith.py --dry-run`
+- tracing wraps graph execution via safe workflow-span wrappers in `contentblitz.workflow.graph`
+- wrapper coverage includes `invoke`, `stream`, `ainvoke`, and `astream`
+- custom node spans are no-op in the LangSmith adapter to avoid duplicate spans when native LangGraph node spans already exist
+- graph architecture and authoritative node set are unchanged
 
-`validate_phase4.py` verifies:
+## Interaction With Streamlit UI
 
-- observability config imports cleanly
-- tracing-disabled behavior is safe
-- redaction tests pass
-- graph tracing tests pass
-- UI observability tests pass
-- representative unit/integration checks run without LangSmith credentials
+The Workflow section renders a safe observability panel using `contentblitz.ui.observability`:
 
-`smoke_langsmith.py` behavior:
+- status (`Enabled`, `Disabled`, `Degraded`)
+- tracing enabled boolean
+- safe project label
+- endpoint hostname only
+- last trace attempt label
 
-- defaults to safe diagnostics mode with `--dry-run` (no LangSmith calls)
-- prints environment variable presence only (`true`/`false`)
-- never prints API key values
-- never prints raw traces or stack traces
-- only attempts a live trace when `CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1`
+The UI does not call LangSmith directly, does not call providers, and does not mutate orchestration state.
 
-Optional live smoke (explicit opt-in):
+## Interaction With Provider Tools
+
+Provider tools emit child spans when tracing is enabled:
+
+- `generate_text`
+- `search_web` (with provider fallback spans such as `serp` / `perplexity_fallback` when used)
+- `generate_image` (with model fallback metadata when used)
+- cache spans (`cache_lookup`, `cache_write`)
+
+Tool metadata is sanitized through safe metadata builders and redaction before emission.
+
+## Validation and Testing
+
+Normal suite (no LangSmith credentials required):
+
+```bash
+pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
+```
+
+Phase 4 validation runner:
+
+```bash
+python scripts/validate_phase4.py
+```
+
+Dry-run smoke (no LangSmith calls):
+
+```bash
+python scripts/dev/smoke_langsmith.py --dry-run
+```
+
+Optional live smoke (explicit opt-in only):
 
 ```bash
 CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
 ```
 
-## Execution Integration
+## Troubleshooting: No Traces Appearing
 
-LangGraph execution is traced via wrappers in `contentblitz.workflow.graph`:
+1. Confirm `LANGSMITH_TRACING=true`.
+2. Confirm `LANGSMITH_API_KEY` is set in your environment.
+3. Confirm `LANGSMITH_PROJECT`/`LANGSMITH_ENDPOINT` values are valid.
+4. Confirm sample rates are not `0.0` for the path you expect.
+5. Run `python scripts/dev/smoke_langsmith.py --dry-run` to validate safe config detection.
+6. If tracing is degraded/disabled in UI, workflow execution is still expected to succeed without traces.
 
-- workflow-level spans around `invoke`, `stream`, `ainvoke`, and `astream`
-- node-level spans remain canonical via LangGraph/LangSmith native graph tracing
-- custom tool-level child spans are emitted from provider tools:
-  - `generate_text`
-  - `search_web`
-  - `generate_image`
-  - `cache_lookup`
-  - `cache_write`
+## Privacy and Security Limitations
 
-Tracing wraps execution only. It does not replace orchestration logic or routing.
-
-### Duplicate Node Span Cleanup
-
-When LangSmith tracing is enabled, custom node spans are intentionally disabled in
-the LangSmith tracer adapter to avoid duplicate node spans with identical names
-and near-identical durations. Tool spans remain enabled and attach beneath the
-active workflow/node context.
-
-## Safe Metadata Contract
-
-Trace metadata is restricted to safe fields:
-
-- `session_id` (if present)
-- `workflow_status`
-- `requested_outputs`
-- `routing_decision`
-- `node_name`
-- `node_status`
-- `tool_name`
-- `provider`
-- `model`
-- `agent_key`
-- `degraded`
-- `fallback_used`
-- `fallback_provider`
-- `fallback_model`
-- `fallback_reason`
-- `input_token_count`
-- `output_token_count`
-- `total_token_count`
-- `result_count`
-- `citation_available_count`
-- `image_url_present`
-- `cache_hit`
-- `cache_miss`
-- `retry_attempt`
-- `retry_exhausted`
-- `budget_exceeded`
-- `duration_ms`
-- `observability_summary`:
-  - `tracing_enabled`
-  - `provider` (`langsmith`)
-  - `project_name`
-  - `endpoint_host`
-- retry count summary
-- cost counter summary
-- export formats requested
-- provider degraded (boolean)
-- source count
-- image output count
-- boolean flags such as:
-  - `research_required`
-  - `clarification_needed`
-  - `export_requested`
-  - degraded/recoverable/export-failure status flags
-
-The observability layer intentionally excludes:
-
-- API keys and environment secrets
-- raw environment-variable metadata keys such as:
-  - `LANGSMITH_TRACING`
-  - `LANGSMITH_ENDPOINT`
-  - `LANGSMITH_PROJECT`
-  - `LANGSMITH_API_KEY`
-  - any `*_API_KEY`
-- raw prompts and raw provider responses
-- raw provider payload objects
-- stack traces
-- base64 image payloads
-- full raw user queries
-- full raw generated drafts/final responses
-
-## Payload Reduction Strategy
-
-Trace metadata intentionally summarizes large workflow payloads:
-
-- `content_drafts` -> per-channel summaries (length, counts, version, preview, hash prefix)
-- `final_response` -> summary (length, counts, section count, preview, hash prefix)
-- `research_data` -> status/count summaries and short preview only
-- `sources` -> counts and bounded domain summaries
-- `image_outputs` -> counts, provider summary, and degraded counts
-- `errors` -> bounded normalized safe error summaries
-
-Full workflow state is not sent as trace metadata.
-
-## Environment Metadata Safety
-
-ContentBlitz never emits raw `.env` key/value metadata in spans.
-
-Instead, spans include a safe observability summary:
-
-```json
-{
-  "observability_summary": {
-    "tracing_enabled": true,
-    "provider": "langsmith",
-    "project_name": "ContentBlitz",
-    "endpoint_host": "api.smith.langchain.com"
-  }
-}
-```
-
-Notes:
-
-- `endpoint_host` is hostname-only (no path/query).
-- LangSmith/OpenAI/SERP/Perplexity API keys are never included.
-
-## Redaction Layer
-
-`contentblitz.core.redaction` provides a dedicated trace redaction pipeline:
-
-- redact API-key-like tokens
-- redact bearer tokens
-- redact environment variable values
-- redact stack-trace-like content
-- redact base64 image payloads
-- truncate oversized strings and collections
-- normalize raw errors into safe summaries
-
-Observability metadata is sanitized recursively through this layer before being
-sent to tracing backends.
+- tracing is best-effort and telemetry-only; it is not a security boundary
+- summarized previews may still contain normal business text, but secret patterns are redacted
+- observability does not replace provider-side audit controls or external SIEM requirements
+- optional live smoke is manual and not part of default CI validation
