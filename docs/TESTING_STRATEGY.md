@@ -72,6 +72,21 @@ This script runs:
 2. live tests in skip-validation mode
 3. live smoke script in `--dry-run` mode
 
+Phase 4 observability validator:
+
+```bash
+python scripts/validate_phase4.py
+```
+
+This script validates, without requiring LangSmith credentials:
+
+1. observability config/import safety
+2. tracing-disabled behavior
+3. observability redaction tests
+4. observability graph tracing tests
+5. observability UI status tests
+6. representative no-credential unit/integration checks
+
 ## Core Commands
 
 Unit + integration with coverage:
@@ -90,6 +105,12 @@ Live smoke audit dry-run:
 
 ```bash
 python scripts/dev/smoke_phase2_live.py --dry-run
+```
+
+LangSmith observability smoke dry-run:
+
+```bash
+python scripts/dev/smoke_langsmith.py --dry-run
 ```
 
 ## Optional Live Smoke Commands
@@ -111,6 +132,7 @@ CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 pytest tests/l
 
 - unit/integration tests must not require API keys
 - unit/integration tests must not call live providers
+- observability smoke is opt-in via `CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1`
 - provider clients are mocked in contract and failure suites
 - live tests are opt-in only
 - frontend restore must not rerun providers

@@ -89,6 +89,36 @@ The UI diagnostics intentionally do **not** display:
 Frontend diagnostics are read-only and do not mutate orchestration state. The UI
 does not call providers or LangSmith directly.
 
+## Phase 4 Validation + Smoke
+
+Phase 4 observability has two scripts:
+
+1. `python scripts/validate_phase4.py`
+2. `python scripts/dev/smoke_langsmith.py --dry-run`
+
+`validate_phase4.py` verifies:
+
+- observability config imports cleanly
+- tracing-disabled behavior is safe
+- redaction tests pass
+- graph tracing tests pass
+- UI observability tests pass
+- representative unit/integration checks run without LangSmith credentials
+
+`smoke_langsmith.py` behavior:
+
+- defaults to safe diagnostics mode with `--dry-run` (no LangSmith calls)
+- prints environment variable presence only (`true`/`false`)
+- never prints API key values
+- never prints raw traces or stack traces
+- only attempts a live trace when `CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1`
+
+Optional live smoke (explicit opt-in):
+
+```bash
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
+```
+
 ## Execution Integration
 
 LangGraph execution is traced via wrappers in `contentblitz.workflow.graph`:
