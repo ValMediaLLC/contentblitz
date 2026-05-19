@@ -5,9 +5,10 @@ from contentblitz.ui.error_display import (
     normalize_errors_for_display,
     redact_sensitive_text,
 )
+from contentblitz.ui.observability import build_observability_diagnostics
 from contentblitz.ui.progress import (
-    UIProgressEvent,
     VALID_PROGRESS_STATUSES,
+    UIProgressEvent,
     build_pending_progress_events,
     create_progress_event,
     normalize_progress_status,
@@ -22,6 +23,8 @@ from contentblitz.ui.status import (
     build_initial_node_statuses,
     build_status_messages,
     derive_node_statuses,
+    normalize_observability_status,
+    observability_status_label,
     summarize_workflow_status,
 )
 
@@ -36,6 +39,9 @@ __all__ = [
     "derive_node_statuses",
     "summarize_workflow_status",
     "build_status_messages",
+    "normalize_observability_status",
+    "observability_status_label",
+    "build_observability_diagnostics",
     "dedupe_sources_for_display",
     "sanitize_image_outputs_for_display",
     "build_render_payload",

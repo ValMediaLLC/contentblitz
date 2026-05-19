@@ -14,6 +14,12 @@ from contentblitz.ui.progress import (
 from contentblitz.workflow.routing import AUTHORITATIVE_NODES
 
 _TERMINAL_STATUSES = {"completed", "skipped", "degraded", "failed"}
+_OBSERVABILITY_STATUSES = {"enabled", "disabled", "degraded"}
+_OBSERVABILITY_STATUS_LABELS = {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "degraded": "Degraded",
+}
 
 
 def _safe_dict(value: Any) -> dict[str, Any]:
@@ -22,6 +28,20 @@ def _safe_dict(value: Any) -> dict[str, Any]:
 
 def _safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def normalize_observability_status(status: Any) -> str:
+    """Normalize observability status to a safe bounded set."""
+    normalized = str(status).strip().lower()
+    if normalized in _OBSERVABILITY_STATUSES:
+        return normalized
+    return "disabled"
+
+
+def observability_status_label(status: Any) -> str:
+    """Return a display-safe label for observability status."""
+    normalized = normalize_observability_status(status)
+    return _OBSERVABILITY_STATUS_LABELS.get(normalized, "Disabled")
 
 
 def _dedupe_messages(messages: list[str]) -> list[str]:
@@ -231,7 +251,10 @@ def build_status_messages(
 
     if _has_recoverable_image_failure(state):
         messages.append(
-            "Image generation encountered a recoverable issue. Text outputs remain available."
+            (
+                "Image generation encountered a recoverable issue. "
+                "Text outputs remain available."
+            )
         )
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))

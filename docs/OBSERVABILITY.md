@@ -66,6 +66,29 @@ Use `contentblitz.core.observability`:
 
 These helpers are read-only and do not mutate workflow state.
 
+## UI Status And Diagnostics
+
+The Streamlit frontend shows a UI-safe observability panel with:
+
+- tracing status: `Enabled`, `Disabled`, or `Degraded`
+- tracing enabled boolean (`true`/`false`)
+- configured project name (safe label only)
+- endpoint hostname only (no URL path/query)
+- last trace attempt status (`Ready`, `Not requested`, or `Unavailable`)
+- a safe note when tracing is unavailable
+- an instruction to review the LangSmith dashboard manually
+
+The UI diagnostics intentionally do **not** display:
+
+- API key values
+- full environment dumps
+- raw LangSmith client internals
+- raw provider payloads
+- stack traces
+
+Frontend diagnostics are read-only and do not mutate orchestration state. The UI
+does not call providers or LangSmith directly.
+
 ## Execution Integration
 
 LangGraph execution is traced via wrappers in `contentblitz.workflow.graph`:
