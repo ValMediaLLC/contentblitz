@@ -177,5 +177,6 @@ Live calls are blocked when `CONTENTBLITZ_ENABLE_LIVE_CALLS=0`.
 - `docs/OBSERVABILITY.md`
 - `docs/PHASE4_OBSERVABILITY.md`
 - `docs/TESTING_STRATEGY.md`
+- `docs/TECHNICAL_DEBT.md`
 - `docs/KNOWN_LIMITATIONS.md`
 - `docs/PHASE2_LIVE_SMOKE_TESTS.md`

@@ -4,6 +4,8 @@
 
 This document tracks known implementation and operational limits in the current codebase, including Phase 4 observability support.
 
+For non-blocking implementation backlog and cleanup follow-ups, see `docs/TECHNICAL_DEBT.md`.
+
 ## Provider/Network Variability
 
 Live provider behavior depends on external network and provider availability.

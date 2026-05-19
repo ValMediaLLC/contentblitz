@@ -308,7 +308,7 @@ This behavior is documented and considered non-blocking for Phase 2.
 
 ---
 
-# Technical Debt / TODO Backlog
+# Technical Debt Backlog
 
 The following items are intentionally deferred beyond Phase 2.
 

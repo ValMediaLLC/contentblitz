@@ -273,9 +273,12 @@ def _build_key_facts(
 
     if quality == "degraded":
         fallback_facts = [
-            f"Signals for '{query or 'the topic'}' are based on limited citation snippets.",
-            f"Coverage focuses on directional trends rather than fully cited detail.",
-            f"Additional validation is recommended before publication decisions.",
+            (
+                f"Signals for '{query or 'the topic'}' are based on limited "
+                "citation snippets."
+            ),
+            "Coverage focuses on directional trends rather than fully cited detail.",
+            "Additional validation is recommended before publication decisions.",
         ]
     else:
         fallback_facts = [
@@ -286,12 +289,10 @@ def _build_key_facts(
     return _ensure_min_items(facts, query, fallback_facts)
 
 
-# TODO(content-quality):
-# Filter stopwords from extracted keywords before passing
-# research_data into content strategy agents.
-# Improve deterministic keyword extraction by removing stopwords
-# and normalizing singular/plural entities.
-# Examples: "the", "and", "for", "of"
+# TODO(architecture):
+# Improve deterministic keyword extraction by filtering common stopwords
+# and normalizing singular/plural entities before passing research_data
+# into downstream content strategy agents.
 def _build_keywords(query: str, sources: List[Dict[str, Any]]) -> List[str]:
     words = [token for token in _tokenize_query(query) if len(token) >= 3]
     from_titles: List[str] = []

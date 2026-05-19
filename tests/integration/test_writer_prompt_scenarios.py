@@ -69,7 +69,10 @@ def test_blog_only_prompt_generates_only_blog_writer_output() -> None:
 
 def test_technical_blog_prompt_generates_blog_with_readability_metadata() -> None:
     result = _run_prompt(
-        "write a highly technical blog article about multi-agent orchestration using LangGraph and retrieval-augmented generation"
+        (
+            "write a highly technical blog article about multi-agent "
+            "orchestration using LangGraph and retrieval-augmented generation"
+        )
     )
 
     _assert_blog_generated(result)
@@ -80,7 +83,8 @@ def test_technical_blog_prompt_generates_blog_with_readability_metadata() -> Non
 
 def test_beginner_friendly_blog_prompt_generates_blog() -> None:
     result = _run_prompt(
-        "write a beginner-friendly blog explaining AI workflows for small business owners"
+        "write a beginner-friendly blog explaining AI workflows "
+        "for small business owners"
     )
 
     _assert_blog_generated(result)
@@ -90,7 +94,8 @@ def test_beginner_friendly_blog_prompt_generates_blog() -> None:
 
 def test_opinionated_blog_prompt_generates_blog() -> None:
     result = _run_prompt(
-        "write a controversial blog post arguing that most AI marketing tools are overhyped"
+        "write a controversial blog post arguing that most "
+        "AI marketing tools are overhyped"
     )
 
     _assert_blog_generated(result)
@@ -103,7 +108,7 @@ def test_linkedin_prompt_generates_linkedin_writer_output() -> None:
 
     _assert_linkedin_generated(result)
 
-    # Known Query Handler TODO:
+    # Known routing limitation:
     # LinkedIn-only prompts may currently also include blog output.
     assert _errors_are_nonfatal(result)
 
@@ -122,7 +127,8 @@ def test_remote_work_linkedin_prompt_generates_linkedin_metadata() -> None:
 
 def test_blog_and_linkedin_prompt_generates_both_writer_outputs() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about "
+        "AI-powered content strategy systems"
     )
 
     _assert_blog_generated(result)
@@ -162,7 +168,8 @@ def test_future_ai_marketing_prompt_does_not_crash() -> None:
 
 def test_writer_prompt_does_not_modify_image_outputs() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about "
+        "AI-powered content strategy systems"
     )
 
     _assert_blog_generated(result)
