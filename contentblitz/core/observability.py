@@ -96,6 +96,26 @@ _MAX_SOURCE_DOMAINS = 8
 _MAX_EXPORT_FORMATS = 8
 _MAX_RETRY_TARGETS = 6
 _MAX_TOOL_INPUT_KEYS = 8
+_TRACE_INPUT_INTENT_OPTIONS = ("blog", "linkedin", "image", "pdf", "md", "html", "docx")
+_TRACE_INPUT_OUTPUT_INTENTS = {"blog", "linkedin", "image"}
+_TRACE_INPUT_EXPORT_INTENT_MAP = {
+    "markdown": "md",
+    "md": "md",
+    "html": "html",
+    "pdf": "pdf",
+    "docx": "docx",
+    "word": "docx",
+}
+_TRACE_INPUT_LINKEDIN_PATTERN = re.compile(r"\blinked[\s-]*in\b")
+_TRACE_INPUT_BLOG_PATTERN = re.compile(r"\bblog\b")
+_TRACE_INPUT_BLOG_POST_PATTERN = re.compile(r"\bblog\s+post\b")
+_TRACE_INPUT_ARTICLE_PATTERN = re.compile(
+    r"\b(article|seo article|long-form article|write an article)\b"
+)
+_TRACE_INPUT_IMAGE_PATTERN = re.compile(
+    r"\b(image|visual|graphic|concept art|image prompt|design prompt|illustration|"
+    r"futuristic design)\b"
+)
 _ENV_STYLE_METADATA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _FORBIDDEN_ENV_METADATA_KEYS = {
     "LANGSMITH_TRACING",
@@ -382,6 +402,88 @@ def _build_sampling_decision(
 def _safe_content_preview(value: Any) -> str:
     preview = summarize_text_content(value, max_preview_chars=MAX_TRACE_PREVIEW_CHARS)
     return _safe_text(preview.get("preview"))
+
+
+def _safe_request_preview(state: Mapping[str, Any]) -> str:
+    candidate = _safe_text(state.get("sanitized_user_query"))
+    if not candidate:
+        candidate = _safe_text(state.get("user_query"))
+    if not candidate:
+        return ""
+    return _safe_content_preview(candidate)
+
+
+def _normalize_intent_text(value: Any) -> str:
+    return " ".join(_safe_text(value).lower().split())
+
+
+def _infer_intent_from_query_preview(query_preview: str) -> set[str]:
+    normalized = _normalize_intent_text(query_preview)
+    if not normalized:
+        return set()
+
+    inferred: set[str] = set()
+    linkedin_requested = bool(_TRACE_INPUT_LINKEDIN_PATTERN.search(normalized))
+    blog_requested = bool(
+        _TRACE_INPUT_BLOG_PATTERN.search(normalized)
+        or _TRACE_INPUT_BLOG_POST_PATTERN.search(normalized)
+        or (
+            _TRACE_INPUT_ARTICLE_PATTERN.search(normalized)
+            and not linkedin_requested
+        )
+    )
+    image_requested = bool(_TRACE_INPUT_IMAGE_PATTERN.search(normalized))
+
+    if blog_requested:
+        inferred.add("blog")
+    if linkedin_requested:
+        inferred.add("linkedin")
+    if image_requested:
+        inferred.add("image")
+
+    if re.search(r"\bpdf\b", normalized):
+        inferred.add("pdf")
+    if re.search(r"\bhtml\b", normalized):
+        inferred.add("html")
+    if re.search(r"\b(docx|word)\b", normalized):
+        inferred.add("docx")
+    if re.search(r"\b(markdown|md)\b", normalized):
+        inferred.add("md")
+
+    return inferred
+
+
+def _safe_workflow_trace_intent(metadata: Mapping[str, Any]) -> list[str]:
+    requested_outputs = _safe_string_list(metadata.get("requested_outputs", []))
+    export_formats = _safe_string_list(metadata.get("export_formats_requested", []))
+    seen: set[str] = set()
+
+    for output in requested_outputs:
+        if output not in _TRACE_INPUT_OUTPUT_INTENTS or output in seen:
+            continue
+        seen.add(output)
+
+    for export_format in export_formats:
+        normalized = _TRACE_INPUT_EXPORT_INTENT_MAP.get(export_format, "")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+
+    inferred = _infer_intent_from_query_preview(metadata.get("query_preview", ""))
+    for token in inferred:
+        if token in _TRACE_INPUT_INTENT_OPTIONS:
+            seen.add(token)
+
+    ordered_intent = [token for token in _TRACE_INPUT_INTENT_OPTIONS if token in seen]
+    return ordered_intent
+
+
+def safe_workflow_trace_inputs(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Build safe workflow span inputs for LangSmith root traces."""
+    intent = _safe_workflow_trace_intent(metadata)
+    if not intent:
+        return {}
+    return {"intent": intent}
 
 
 def _safe_draft_summary(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -724,6 +826,17 @@ def _is_provider_degraded(state: Mapping[str, Any]) -> bool:
     return False
 
 
+def _effective_trace_workflow_status(state: Mapping[str, Any]) -> str:
+    workflow_status = _safe_text(state.get("workflow_status")).lower()
+    if not workflow_status:
+        return ""
+    if workflow_status in {"success", "research_complete"} and _is_degraded_workflow(
+        state
+    ):
+        return "partial_success"
+    return workflow_status
+
+
 def _merged_state_view(
     state: Mapping[str, Any],
     updates: Mapping[str, Any] | None = None,
@@ -754,8 +867,9 @@ def safe_trace_metadata(
     """Build safe trace metadata that excludes secrets and raw payloads."""
     requested_outputs = _safe_string_list(state.get("requested_outputs", []))
     routing_decision = _safe_text(state.get("routing_decision"))
-    workflow_status = _safe_text(state.get("workflow_status"))
+    workflow_status = _effective_trace_workflow_status(state)
     session_id = _safe_text(state.get("session_id"))
+    query_preview = _safe_request_preview(state)
     retry_metadata = _safe_retry_metadata(state)
     sources_summary = _safe_sources_summary(state)
     image_summary = _safe_image_output_summary(state)
@@ -784,6 +898,8 @@ def safe_trace_metadata(
         metadata["session_id"] = session_id
     if workflow_status:
         metadata["workflow_status"] = workflow_status
+    if query_preview:
+        metadata["query_preview"] = query_preview
     if routing_decision:
         metadata["routing_decision"] = routing_decision
 
@@ -1152,6 +1268,9 @@ class _LangSmithTraceSpanHandle:
             if isinstance(stripped_metadata_any, Mapping)
             else {}
         )
+        metadata_workflow_status = _safe_text(safe_metadata.get("workflow_status"))
+        if metadata_workflow_status:
+            safe_outputs["workflow_status"] = metadata_workflow_status
 
         def _scrub_run_metadata() -> None:
             if self._run is None:
@@ -1237,13 +1356,10 @@ class _LangSmithWorkflowTracer:
             if isinstance(stripped_metadata_any, Mapping)
             else {}
         )
-        requested_outputs = safe_metadata.get("requested_outputs", [])
-        if not isinstance(requested_outputs, list):
-            requested_outputs = []
         trace_ctx = self._trace_ctor(
             "contentblitz_workflow",
             run_type="chain",
-            inputs={"requested_outputs": list(requested_outputs)},
+            inputs=safe_workflow_trace_inputs(safe_metadata),
             metadata=safe_metadata,
             project_name=self._project,
             client=self._client,

@@ -79,6 +79,7 @@ def test_export_request_sets_export_requested_true(monkeypatch) -> None:
     updates = query_handler_module.query_handler_node(state)
 
     assert updates["export_requested"] is True
+    assert updates["export_metadata"]["formats_requested"] == ["pdf"]
 
 
 def test_budget_exceeded_routes_to_error_handler_node(monkeypatch) -> None:
@@ -389,6 +390,17 @@ def test_ambiguous_post_prompt_still_triggers_clarification(monkeypatch) -> None
     assert updates["routing_decision"] == "clarification_node"
 
 
+def test_ai_trends_prompt_remains_clarification(monkeypatch) -> None:
+    _mock_llm(monkeypatch, "not-json")
+    state = create_initial_state(user_query="AI trends")
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["clarification_needed"] is True
+    assert updates["requested_outputs"] == []
+    assert updates["routing_decision"] == "clarification_node"
+
+
 def test_malformed_llm_fallback_reclassifies_linkedin_only_without_blog(
     monkeypatch,
 ) -> None:
@@ -411,3 +423,98 @@ def test_malformed_llm_fallback_reclassifies_linkedin_only_without_blog(
 
     assert updates["requested_outputs"] == ["linkedin"]
     assert "blog" not in updates["requested_outputs"]
+
+
+def test_blog_linkedin_image_detection_is_deterministic_with_malformed_llm(
+    monkeypatch,
+) -> None:
+    _mock_llm(monkeypatch, "not-json")
+    state = create_initial_state(
+        user_query=(
+            "Create a blog article, LinkedIn post, and image concept "
+            "about AI marketing automation."
+        ),
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["requested_outputs"] == ["blog", "linkedin", "image"]
+    assert updates["routing_decision"] == "research_agent_node"
+
+
+def test_research_and_export_prompt_detects_research_and_pdf(monkeypatch) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(
+        user_query="Research AI content marketing trends and export as PDF",
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["requested_outputs"] == ["research"]
+    assert updates["export_requested"] is True
+    assert updates["export_metadata"]["formats_requested"] == ["pdf"]
+
+
+def test_export_only_prompt_defaults_to_blog_and_detects_formats(monkeypatch) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(
+        user_query="Export the final response as markdown and docx",
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["requested_outputs"] == ["blog"]
+    assert updates["export_requested"] is True
+    assert updates["export_metadata"]["formats_requested"] == ["markdown", "docx"]
+
+
+def test_unsupported_export_format_fails_safely_without_crashing(monkeypatch) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(user_query="Export this as PowerPoint")
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["export_requested"] is False
+    assert updates["export_metadata"]["formats_requested"] == []
+    assert any(
+        "unsupported" in str(message).lower()
+        for message in updates.get("status_messages", [])
+    )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_formats"),
+    [
+        ("Export this as markdown", ["markdown"]),
+        ("Export this as md", ["markdown"]),
+        ("Export this as HTML", ["html"]),
+        ("Export this as PDF", ["pdf"]),
+        ("Export this as Word", ["docx"]),
+        ("Export this as docx", ["docx"]),
+        ("Export this as html, PDF, and html", ["html", "pdf"]),
+    ],
+)
+def test_supported_export_formats_detected_deterministically(
+    monkeypatch,
+    query: str,
+    expected_formats: list[str],
+) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(user_query=query)
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["export_requested"] is True
+    assert updates["export_metadata"]["formats_requested"] == expected_formats
+
+
+def test_plural_images_prompt_routes_to_image_output(monkeypatch) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(
+        user_query="Create some futuristic images for clothing designs",
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+
+    assert updates["requested_outputs"] == ["image"]
+    assert updates["routing_decision"] == "image_agent_node"

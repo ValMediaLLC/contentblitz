@@ -96,6 +96,35 @@ class _BrokenTracer:
         raise RuntimeError("tracer start_node failed")
 
 
+@dataclass
+class _FakeLangSmithRun:
+    ended_outputs: Dict[str, Any] = field(default_factory=dict)
+    ended_error: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=lambda: {"metadata": {}})
+
+    def end(
+        self,
+        *,
+        outputs: Mapping[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.ended_outputs = dict(outputs or {})
+        self.ended_error = str(error or "")
+
+
+@dataclass
+class _FakeLangSmithTraceContext:
+    run: _FakeLangSmithRun = field(default_factory=_FakeLangSmithRun)
+    exited: bool = False
+
+    def __enter__(self) -> _FakeLangSmithRun:
+        return self.run
+
+    def __exit__(self, *_args: Any) -> None:
+        self.exited = True
+
+
 def test_safe_trace_metadata_contains_only_safe_fields() -> None:
     state = {
         "session_id": "session-123",
@@ -269,3 +298,61 @@ def test_safe_node_end_metadata_does_not_mutate_input_state() -> None:
 
     assert metadata["workflow_status"] == "success"
     assert state == original_state
+
+
+def test_langsmith_span_finish_keeps_partial_success_status() -> None:
+    context = _FakeLangSmithTraceContext()
+    handle = observability_module._LangSmithTraceSpanHandle(context)  # noqa: SLF001
+
+    handle.finish(
+        metadata={"workflow_status": "partial_success"},
+        outputs={"workflow_status": "success"},
+    )
+
+    assert context.run.ended_outputs["workflow_status"] == "partial_success"
+    assert context.run.ended_error == ""
+    assert context.exited is True
+
+
+def test_langsmith_span_finish_uses_effective_partial_success() -> None:
+    context = _FakeLangSmithTraceContext()
+    handle = observability_module._LangSmithTraceSpanHandle(context)  # noqa: SLF001
+    metadata = observability_module.safe_trace_metadata(
+        {
+            "workflow_status": "success",
+            "requested_outputs": ["blog"],
+            "export_metadata": {
+                "formats_requested": ["pdf"],
+                "error_log": [{"format": "pdf", "message": "safe export warning"}],
+                "export_status": {"pdf": "failed"},
+            },
+        }
+    )
+
+    handle.finish(
+        metadata=metadata,
+        outputs={"workflow_status": "success"},
+    )
+
+    assert context.run.ended_outputs["workflow_status"] == "partial_success"
+    assert context.run.ended_error == ""
+    assert context.exited is True
+
+
+def test_export_degradation_is_reflected_in_safe_trace_metadata() -> None:
+    state = {
+        "workflow_status": "partial_success",
+        "requested_outputs": ["blog"],
+        "export_requested": True,
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [{"message": "safe export failure"}],
+            "export_status": {"pdf": "failed"},
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "partial_success"
+    assert metadata["export_failure_status"] is True
+    assert metadata["degraded_workflow_status"] is True

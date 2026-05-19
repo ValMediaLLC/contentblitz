@@ -28,6 +28,7 @@ class _DummyCaptionColumn:
 @dataclass
 class _DummyStreamlit:
     warnings: List[str] = field(default_factory=list)
+    markdown_calls: List[str] = field(default_factory=list)
 
     def header(self, *_args: Any, **_kwargs: Any) -> None:
         return None
@@ -61,6 +62,8 @@ class _DummyStreamlit:
         return None
 
     def markdown(self, *_args: Any, **_kwargs: Any) -> None:
+        if _args:
+            self.markdown_calls.append(str(_args[0]))
         return None
 
     def success(self, *_args: Any, **_kwargs: Any) -> None:
@@ -228,3 +231,39 @@ def test_history_page_renders_selected_run_output_when_partial_outputs_are_empty
     payload = section_calls[0]["render_payload"]
     assert str(payload.get("final_response", "")).strip()
     assert payload.get("partial_output_mode") == "none"
+
+
+def test_history_status_normalization_handles_common_typo() -> None:
+    assert history_page._normalize_history_status("sucess") == "success"
+    assert (
+        history_page._normalize_history_status("partial success")
+        == "partial_success"
+    )
+
+
+def test_history_timeline_displays_normalized_status(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(history_page, "st", dummy_st)
+    monkeypatch.setattr(history_page, "get_persistence_messages", lambda: [])
+    monkeypatch.setattr(history_page, "clear_persistence_messages", lambda: None)
+    monkeypatch.setattr(
+        history_page,
+        "list_persisted_run_summaries",
+        lambda limit=200: [],
+    )
+    monkeypatch.setattr(
+        history_page,
+        "get_run_history",
+        lambda: [
+            {
+                "timestamp_utc": "2026-05-19T15:00:00+00:00",
+                "user_query": "Create a blog post",
+                "requested_outputs": ["blog"],
+                "workflow_status": "sucess",
+            }
+        ],
+    )
+
+    history_page.render()
+
+    assert any("status: `success`" in entry for entry in dummy_st.markdown_calls)

@@ -327,21 +327,15 @@ def _normalized_status(value: Any) -> str:
 def _aggregate_export_workflow_status(
     state: Mapping[str, Any], warnings: List[str]
 ) -> str:
+    workflow_status = _normalized_status(state.get("workflow_status"))
+    if workflow_status in {"failed", "awaiting_clarification", "partial_success"}:
+        return workflow_status
     ui_workflow_status = _normalized_status(state.get("ui_workflow_status"))
-    if ui_workflow_status in {
-        "failed",
-        "awaiting_clarification",
-        "partial_success",
-        "success",
-    }:
-        return ui_workflow_status
-
     node_statuses = {
         _safe_text(node): _safe_text(status).lower()
         for node, status in _safe_dict(state.get("ui_node_statuses", {})).items()
         if _safe_text(node) and _safe_text(status)
     }
-    workflow_status = _normalized_status(state.get("workflow_status"))
 
     if workflow_status == "failed" or any(
         status == "failed" for status in node_statuses.values()
@@ -362,6 +356,15 @@ def _aggregate_export_workflow_status(
         for item in _safe_list(state.get("errors", []))
         if isinstance(item, Mapping)
     )
+    export_metadata = _safe_dict(state.get("export_metadata", {}))
+    export_error_log = _safe_list(export_metadata.get("error_log", []))
+    export_status = _safe_dict(export_metadata.get("export_status", {}))
+    export_failed = bool(
+        export_error_log
+        or any(
+            _safe_text(status).lower() == "failed" for status in export_status.values()
+        )
+    )
     image_degraded = any(
         _safe_text(_safe_dict(item).get("status")).lower() == "failed"
         for item in _safe_list(state.get("image_outputs", []))
@@ -372,6 +375,7 @@ def _aggregate_export_workflow_status(
         or has_degraded_nodes
         or research_degraded
         or image_degraded
+        or export_failed
         or recoverable_error_present
         or len(warnings) > 0
     ):
@@ -379,6 +383,13 @@ def _aggregate_export_workflow_status(
 
     if workflow_status == "success":
         return "success"
+    if ui_workflow_status in {
+        "failed",
+        "awaiting_clarification",
+        "partial_success",
+        "success",
+    }:
+        return ui_workflow_status
     return "success"
 
 

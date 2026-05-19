@@ -321,3 +321,43 @@ def test_pdf_export_ignores_base64_image_references_without_state_mutation(
     assert "data:image/" not in text
     assert "/subtype /image" not in text
     assert state["image_outputs"][0]["local_path"] == original_local_path
+
+
+def test_pdf_workflow_summary_prefers_final_workflow_status(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        workflow_status="partial_success",
+        ui_workflow_status="success",
+    )
+
+    pdf_bytes = build_pdf_export_document(state)
+    text = pdf_bytes.decode("latin-1", errors="ignore").lower()
+
+    assert "workflow status: `partial_success`" in text
+    assert "workflow status: `success`" not in text
+
+
+def test_pdf_export_strips_markdown_fence_lines_from_rendered_text(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        content_drafts={
+            "blog": {
+                "body": "```markdown\n# Blog Header\nBody line\n```",
+                "version": 1,
+            },
+            "linkedin": {"body": "", "version": 0},
+            "research_report": {"body": ""},
+        },
+    )
+
+    pdf_bytes = build_pdf_export_document(state)
+    text = pdf_bytes.decode("latin-1", errors="ignore")
+
+    assert "```markdown" not in text
+    assert "```" not in text

@@ -35,13 +35,13 @@ def _get_graph():
 def _build_initial_state(
     *,
     user_query: str,
-    requested_outputs: List[str],
-    export_requested: bool,
+    requested_outputs: List[str] | None,
+    export_requested: bool = False,
     export_formats: List[str] | None,
 ) -> Dict[str, Any]:
     safe_query = str(user_query).strip()
     safe_outputs = [
-        str(item).strip() for item in requested_outputs if str(item).strip()
+        str(item).strip() for item in (requested_outputs or []) if str(item).strip()
     ]
     safe_export_formats = [
         str(item).strip().lower()
@@ -49,18 +49,18 @@ def _build_initial_state(
         if str(item).strip()
     ]
 
-    export_metadata = {
-        "formats_requested": safe_export_formats if export_requested else [],
-        "export_paths": {},
-        "exported_at": None,
-        "error_log": [],
-    }
-    return create_initial_state(
-        user_query=safe_query,
-        requested_outputs=safe_outputs,
-        export_requested=bool(export_requested),
-        export_metadata=export_metadata,
-    )
+    initial_state_overrides: Dict[str, Any] = {"user_query": safe_query}
+    if safe_outputs:
+        initial_state_overrides["requested_outputs"] = safe_outputs
+    if export_requested or safe_export_formats:
+        initial_state_overrides["export_requested"] = bool(export_requested)
+        initial_state_overrides["export_metadata"] = {
+            "formats_requested": safe_export_formats if export_requested else [],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+        }
+    return create_initial_state(**initial_state_overrides)
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -166,7 +166,7 @@ def _ordered_event_dicts(events: Iterable[UIProgressEvent]) -> List[Dict[str, An
 def stream_workflow_progress(
     *,
     user_query: str,
-    requested_outputs: List[str],
+    requested_outputs: List[str] | None = None,
     export_requested: bool = False,
     export_formats: List[str] | None = None,
 ) -> Iterator[Dict[str, Any]]:
@@ -251,7 +251,7 @@ def stream_workflow_progress(
 def run_workflow(
     *,
     user_query: str,
-    requested_outputs: List[str],
+    requested_outputs: List[str] | None = None,
     export_requested: bool = False,
     export_formats: List[str] | None = None,
 ) -> Dict[str, Any]:

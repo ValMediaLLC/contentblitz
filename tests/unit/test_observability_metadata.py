@@ -6,8 +6,10 @@ from typing import Any
 
 import pytest
 
+from contentblitz.agents import query_handler as query_handler_module
 from contentblitz.core import observability as observability_module
 from contentblitz.core.redaction import REDACTED_STACK_TRACE
+from contentblitz.state import create_initial_state
 
 
 def _collect_metadata_keys(value: Any) -> set[str]:
@@ -37,6 +39,18 @@ def test_trace_metadata_excludes_raw_user_query_and_final_response() -> None:
 
     assert "user_query" not in metadata
     assert "final_response" not in metadata
+
+
+def test_trace_metadata_uses_safe_query_preview_key() -> None:
+    state = {
+        "sanitized_user_query": "Create a blog and LinkedIn post about AI workflows.",
+        "workflow_status": "running",
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert "query_preview" in metadata
+    assert "request_preview" not in metadata
 
 
 def test_trace_metadata_preserves_safe_schema_fields() -> None:
@@ -136,6 +150,42 @@ def test_trace_metadata_is_json_serializable() -> None:
 
     assert isinstance(encoded, str)
     assert '"workflow_status": "success"' in encoded
+
+
+def test_trace_metadata_degraded_success_normalizes_to_partial_success() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [{"format": "pdf", "message": "safe export warning"}],
+            "export_status": {"pdf": "failed"},
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "partial_success"
+    assert metadata["degraded_workflow_status"] is True
+    assert metadata["export_failure_status"] is True
+
+
+def test_trace_metadata_success_without_degradation_stays_success() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [],
+            "export_status": {"pdf": "completed"},
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "success"
+    assert metadata["degraded_workflow_status"] is False
+    assert metadata["export_failure_status"] is False
 
 
 def test_safe_node_end_metadata_does_not_mutate_state() -> None:
@@ -238,3 +288,74 @@ def test_research_summary_preview_is_not_misclassified_as_stack_trace() -> None:
 
     assert preview != REDACTED_STACK_TRACE
     assert "Research summary line one." in preview
+
+
+def test_deterministic_prompt_resolved_outputs_appear_in_trace_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _mock_query_handler_llm(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"output": "not-json"}
+
+    monkeypatch.setattr(query_handler_module, "generate_text", _mock_query_handler_llm)
+
+    query = "Create a blog article, LinkedIn post, and image concept about AI."
+    initial_state = create_initial_state(user_query=query)
+    updates = query_handler_module.query_handler_node(initial_state)
+    merged_state = dict(initial_state)
+    merged_state.update(updates)
+
+    metadata = observability_module.safe_trace_metadata(merged_state)
+
+    assert metadata["requested_outputs"] == ["blog", "linkedin", "image"]
+    assert metadata["export_requested"] is False
+    assert metadata["clarification_needed"] is False
+
+
+def test_workflow_trace_inputs_omit_empty_intent() -> None:
+    metadata = {
+        "query_preview": "Create a post about AI workflows.",
+        "requested_outputs": [],
+        "export_formats_requested": [],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs == {}
+
+
+def test_workflow_trace_inputs_include_intent_when_present() -> None:
+    metadata = {
+        "query_preview": "Create a post about AI workflows.",
+        "requested_outputs": ["blog", "linkedin"],
+        "export_formats_requested": ["pdf", "markdown"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "linkedin", "pdf", "md"]
+
+
+def test_workflow_trace_inputs_keep_supported_intent_subset_only() -> None:
+    metadata = {
+        "requested_outputs": ["blog", "research", "image", "linkedin"],
+        "export_formats_requested": ["docx", "html", "word", "unknown"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "linkedin", "image", "html", "docx"]
+
+
+def test_workflow_trace_inputs_infer_intent_from_query_preview() -> None:
+    metadata = {
+        "query_preview": (
+            "Create a blog article, LinkedIn post, and image concept; "
+            "export as PDF and DOCX."
+        ),
+        "requested_outputs": [],
+        "export_formats_requested": [],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "linkedin", "image", "pdf", "docx"]

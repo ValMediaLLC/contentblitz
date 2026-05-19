@@ -25,11 +25,6 @@ from frontend.components.result_view import (
 )
 from frontend.config import FRONTEND_CONFIG
 from frontend.services.orchestrator_client import stream_workflow_progress
-from frontend.services.submission_options import (
-    WorkflowControls,
-    build_requested_outputs,
-    sanitize_export_formats,
-)
 from frontend.session import (
     add_history_entry,
     clear_persistence_messages,
@@ -51,8 +46,6 @@ from frontend.session import (
     set_status_messages,
 )
 
-_WIDGET_KEY_EXPORT_ENABLED = "cbx_export_enabled"
-_WIDGET_KEY_EXPORT_FORMATS = "cbx_export_formats"
 _EMPTY_RESULT_PROMPT = "Run the workflow to view outputs."
 _WAITING_FOR_EVENT_MESSAGE = "Waiting for first workflow event..."
 
@@ -89,61 +82,10 @@ def _execution_status_from_result(
 def _validate_submission_inputs(
     *,
     safe_query: str,
-    requested_outputs: list[str],
-    export_requested: bool,
-    export_formats: list[str],
 ) -> str:
     if not safe_query:
         return "A prompt is required before running the workflow."
-    if not requested_outputs:
-        return "Select at least one workflow output before execution."
-    if export_requested and not export_formats:
-        return "Select at least one export format when Enable Export is checked."
     return ""
-
-
-def _build_controls() -> WorkflowControls:
-    st.subheader("Workflow Controls")
-    col1, col2 = st.columns(2)
-    include_blog = col1.checkbox("Blog Output", value=True)
-    include_linkedin = col1.checkbox("LinkedIn Output", value=True)
-    include_research = col2.checkbox(
-        "Research Output",
-        value=False,
-        help=(
-            "Requests research output. Orchestrator remains authoritative for "
-            "final routing."
-        ),
-    )
-    include_image = col2.checkbox("Image Output", value=False)
-
-    export_enabled = st.checkbox(
-        "Enable Export",
-        value=False,
-        key=_WIDGET_KEY_EXPORT_ENABLED,
-    )
-    if not export_enabled and st.session_state.get(_WIDGET_KEY_EXPORT_FORMATS):
-        # Clear stale selections immediately when export is disabled so
-        # disabled multiselect chips do not linger in the UI.
-        st.session_state[_WIDGET_KEY_EXPORT_FORMATS] = []
-    selected_export_formats = st.multiselect(
-        "Export Formats",
-        options=list(FRONTEND_CONFIG.export_formats),
-        default=[],
-        key=_WIDGET_KEY_EXPORT_FORMATS,
-        disabled=not export_enabled,
-        help="Choose one or more formats to apply when export is enabled.",
-    )
-    if not export_enabled:
-        st.caption("Selected formats are ignored until Enable Export is checked.")
-    return WorkflowControls(
-        include_blog=bool(include_blog),
-        include_linkedin=bool(include_linkedin),
-        include_research=bool(include_research),
-        include_image=bool(include_image),
-        export_enabled=bool(export_enabled),
-        export_formats=sanitize_export_formats(selected_export_formats),
-    )
 
 
 def _render_active_execution_state(
@@ -183,12 +125,39 @@ def _render_active_execution_state(
                 st.info(safe_message)
 
 
+def _extract_submission_options_from_result(
+    result: dict[str, object],
+) -> dict[str, Any]:
+    requested_outputs = [
+        str(item).strip()
+        for item in result.get("requested_outputs", [])
+        if str(item).strip()
+    ]
+    export_requested = bool(result.get("export_requested", False))
+    export_metadata = (
+        result.get("export_metadata", {})
+        if isinstance(result.get("export_metadata", {}), dict)
+        else {}
+    )
+    formats_requested = [
+        str(item).strip().lower()
+        for item in export_metadata.get("formats_requested", [])
+        if str(item).strip()
+    ]
+    if not export_requested:
+        formats_requested = []
+    return {
+        "requested_outputs": requested_outputs,
+        "export_requested": export_requested,
+        "export_formats": formats_requested,
+    }
+
+
 def render() -> None:
     st.header("Run Workflow")
     st.caption(
-        "UI options are submitted as workflow preferences through the "
-        "orchestration service layer. "
-        "The orchestrator owns final routing/classification behavior."
+        "Describe what you want generated, including blog, LinkedIn, research, "
+        "image, or export format if needed."
     )
 
     with st.container(border=True):
@@ -198,28 +167,14 @@ def render() -> None:
             placeholder=FRONTEND_CONFIG.default_query_placeholder,
             height=120,
         )
-        controls = _build_controls()
         run_clicked = st.button("Run ContentBlitz", type="primary")
 
     if run_clicked:
         safe_query = str(query).strip()
-        requested_outputs = build_requested_outputs(controls)
-        export_requested = bool(controls.export_enabled)
-        export_formats = controls.export_formats if export_requested else []
-
-        set_last_submission(
-            {
-                "requested_outputs": requested_outputs,
-                "export_requested": export_requested,
-                "export_formats": export_formats,
-            }
-        )
+        set_last_submission({"user_query": safe_query})
 
         validation_error = _validate_submission_inputs(
             safe_query=safe_query,
-            requested_outputs=requested_outputs,
-            export_requested=export_requested,
-            export_formats=export_formats,
         )
         if validation_error:
             set_execution_status("idle")
@@ -246,9 +201,6 @@ def render() -> None:
                     try:
                         for stream_event in stream_workflow_progress(
                             user_query=safe_query,
-                            requested_outputs=requested_outputs,
-                            export_requested=export_requested,
-                            export_formats=export_formats,
                         ):
                             if isinstance(stream_event, dict):
                                 event_queue.put(dict(stream_event))
@@ -337,10 +289,10 @@ def render() -> None:
                 )
                 final_result["ui_workflow_status"] = ui_workflow_status
                 final_result["ui_node_statuses"] = normalized_node_statuses
+                selected_options = _extract_submission_options_from_result(final_result)
                 final_result["ui_selected_options"] = {
-                    "requested_outputs": requested_outputs,
-                    "export_requested": export_requested,
-                    "export_formats": export_formats,
+                    **selected_options,
+                    "user_query": safe_query,
                 }
                 computed_status_messages = build_status_messages(
                     state=final_result,
@@ -352,13 +304,10 @@ def render() -> None:
                 set_last_result(final_result)
                 set_execution_status(ui_workflow_status)
                 set_status_messages(computed_status_messages)
+                set_last_submission(final_result["ui_selected_options"])
                 persisted_run_id = save_persisted_run(
                     result=final_result,
-                    last_submission={
-                        "requested_outputs": requested_outputs,
-                        "export_requested": export_requested,
-                        "export_formats": export_formats,
-                    },
+                    last_submission=final_result["ui_selected_options"],
                     progress_events=progress_events,
                     node_statuses=normalized_node_statuses,
                     status_messages=computed_status_messages,
@@ -368,9 +317,10 @@ def render() -> None:
                     set_last_result(final_result)
                 add_history_entry(
                     user_query=safe_query,
-                    requested_outputs=requested_outputs,
+                    requested_outputs=selected_options["requested_outputs"],
                     workflow_status=str(
-                        final_result.get("workflow_status", "")
+                        final_result.get("ui_workflow_status", "")
+                        or final_result.get("workflow_status", "")
                     ).strip(),
                 )
             except Exception:
@@ -418,7 +368,9 @@ def render() -> None:
 
     result = get_last_result()
     if not result:
-        has_submitted_run = bool(get_last_submission().get("requested_outputs", []))
+        has_submitted_run = bool(
+            str(get_last_submission().get("user_query", "")).strip()
+        )
         show_active_state = execution_status in {
             "running",
             "failed",
