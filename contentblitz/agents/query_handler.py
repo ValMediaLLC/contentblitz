@@ -27,6 +27,10 @@ _INJECTION_WARNING_MESSAGE = (
     "Suspicious instruction patterns were detected and neutralized."
 )
 _WORD_RE = re.compile(r"[a-z0-9]+")
+_LINKEDIN_PATTERN = re.compile(r"\blinked[\s-]*in\b")
+_BLOG_PATTERN = re.compile(r"\bblog\b")
+_ARTICLE_PATTERN = re.compile(r"\barticle\b")
+_POST_PATTERN = re.compile(r"\bpost\b")
 _UNSAFE_INJECTION_TOKENS = {
     "ignore",
     "all",
@@ -105,6 +109,46 @@ def _with_injection_warning(state: Dict[str, Any]) -> list[str]:
     return existing
 
 
+def _normalize_query_text(query: str) -> str:
+    return " ".join(str(query or "").strip().lower().split())
+
+
+def _has_linkedin_intent(query: str) -> bool:
+    return bool(_LINKEDIN_PATTERN.search(_normalize_query_text(query)))
+
+
+def _has_explicit_blog_intent(query: str) -> bool:
+    return bool(_BLOG_PATTERN.search(_normalize_query_text(query)))
+
+
+def _apply_linkedin_output_precision(
+    query: str, classified: Dict[str, Any]
+) -> Dict[str, Any]:
+    updates = dict(classified)
+    if updates.get("clarification_needed", False):
+        return updates
+
+    if not _has_linkedin_intent(query) or _has_explicit_blog_intent(query):
+        updates["requested_outputs"] = _normalize_outputs(
+            updates.get("requested_outputs", [])
+        )
+        return updates
+
+    requested_outputs = _normalize_outputs(updates.get("requested_outputs", []))
+
+    if "linkedin" in requested_outputs and "blog" in requested_outputs:
+        requested_outputs = [item for item in requested_outputs if item != "blog"]
+    elif requested_outputs == ["blog"] or not requested_outputs:
+        requested_outputs = ["linkedin"]
+
+    updates["requested_outputs"] = requested_outputs
+    if requested_outputs == ["image"]:
+        updates["research_required"] = False
+    elif requested_outputs:
+        updates["research_required"] = bool(updates.get("research_required", True))
+    return updates
+
+
 def _injection_updates(
     state: Dict[str, Any],
     *,
@@ -129,9 +173,6 @@ def _has_safe_prompt_intent(query: str) -> bool:
     return any(token not in _UNSAFE_INJECTION_TOKENS for token in tokens)
 
 
-# TODO(routing):
-# Refine deterministic output classification so explicit LinkedIn-only
-# requests do not automatically include blog generation unless requested.
 def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw = response.get("output", "")
     if isinstance(raw, dict):
@@ -181,7 +222,7 @@ def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, An
 
 
 def _deterministic_fallback(query: str) -> Dict[str, Any]:
-    q = query.strip().lower()
+    q = _normalize_query_text(query)
     words = [w for w in q.split() if w]
 
     export_requested = any(token in q for token in ("export", "pdf", "download"))
@@ -192,8 +233,14 @@ def _deterministic_fallback(query: str) -> Dict[str, Any]:
         token in q
         for token in ("research", "analyze", "analysis", "investigate", "sources")
     )
-    blog_requested = any(token in q for token in ("blog", "article", "post"))
-    linkedin_requested = "linkedin" in q
+    linkedin_requested = _has_linkedin_intent(q)
+    blog_requested = bool(
+        _BLOG_PATTERN.search(q)
+        or (
+            not linkedin_requested
+            and (_ARTICLE_PATTERN.search(q) or _POST_PATTERN.search(q))
+        )
+    )
 
     vague_query = (
         not q
@@ -440,6 +487,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     classified = _parse_llm_classification(llm_response)
     if classified is None:
         classified = _deterministic_fallback(effective_query)
+    classified = _apply_linkedin_output_precision(effective_query, classified)
 
     classified["routing_decision"] = _determine_routing_decision(classified)
     classified["cost_controls"] = cost_controls

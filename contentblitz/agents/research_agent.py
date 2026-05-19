@@ -28,6 +28,44 @@ _MAX_SEARCH_QUERIES = 5
 _DEFAULT_SEARCH_QUERY_CAP = 5
 _MIN_LIST_ITEMS = 3
 _FALLBACK_KEYWORDS = ["market trends", "audience insights", "strategic positioning"]
+_KEYWORD_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "of",
+    "for",
+    "to",
+    "in",
+    "on",
+    "with",
+    "about",
+    "how",
+    "what",
+    "why",
+    "is",
+    "are",
+    "be",
+    "as",
+    "by",
+    "from",
+    "this",
+    "that",
+}
+_KEYWORD_PRESERVE_TOKENS = {
+    "linkedin",
+    "blog",
+    "image",
+    "research",
+    "not",
+    "without",
+    "vs",
+    "ai",
+    "seo",
+    "ux",
+}
 
 
 def _safe_list(value: Any) -> list[Any]:
@@ -226,6 +264,17 @@ def _tokenize_query(query: str) -> List[str]:
     return re.findall(r"[a-z0-9]+", query.lower())
 
 
+def _is_low_value_keyword(token: str) -> bool:
+    normalized = str(token).strip().lower()
+    if not normalized:
+        return True
+    if normalized in _KEYWORD_PRESERVE_TOKENS:
+        return False
+    if len(normalized) < 2:
+        return True
+    return normalized in _KEYWORD_STOPWORDS
+
+
 def _ensure_min_items(
     items: List[str], query: str, fallback_pool: List[str]
 ) -> List[str]:
@@ -289,24 +338,31 @@ def _build_key_facts(
     return _ensure_min_items(facts, query, fallback_facts)
 
 
-# TODO(architecture):
-# Improve deterministic keyword extraction by filtering common stopwords
-# and normalizing singular/plural entities before passing research_data
-# into downstream content strategy agents.
 def _build_keywords(query: str, sources: List[Dict[str, Any]]) -> List[str]:
-    words = [token for token in _tokenize_query(query) if len(token) >= 3]
+    words = [
+        token
+        for token in _tokenize_query(query)
+        if not _is_low_value_keyword(token)
+    ]
     from_titles: List[str] = []
     for source in sources[:5]:
         from_titles.extend(
             [
                 token
                 for token in _tokenize_query(str(source.get("title", "")))
-                if len(token) >= 4
+                if not _is_low_value_keyword(token)
             ]
         )
 
     candidates = words + from_titles
-    keywords = list(dict.fromkeys(candidates))
+    keywords: List[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        token = str(candidate).strip().lower()
+        if _is_low_value_keyword(token) or token in seen:
+            continue
+        seen.add(token)
+        keywords.append(token)
     if not keywords:
         keywords = [token.replace(" ", "_") for token in _FALLBACK_KEYWORDS]
     return _ensure_min_items(

@@ -16,12 +16,16 @@ Guidelines:
 
 ### Deterministic Keyword Extraction Quality
 
-- Source: `contentblitz/agents/research_agent.py` (`TODO(architecture)`)
-- Current behavior: keyword extraction is deterministic but does not yet filter
-  stopwords or normalize singular/plural variants.
+- Source: `contentblitz/agents/research_agent.py`
+- Status: partially resolved
+- Resolved in current baseline:
+  - bounded deterministic stopword filtering for extracted keywords
+  - deterministic duplicate removal with stable ordering
+  - regression tests for stopword removal and meaningful-term preservation
+- Remaining scope:
+  - optional bounded singular/plural normalization is deferred until additional
+    deterministic regression coverage is added.
 - Risk level: low (quality-only; no routing/state safety impact)
-- Next action: add bounded stopword filtering with regression tests proving
-  deterministic output stability.
 
 ## Frontend UX
 
@@ -56,12 +60,18 @@ Guidelines:
 
 ### LinkedIn-Only Routing Precision
 
-- Source: `contentblitz/agents/query_handler.py` (`TODO(routing)`)
-- Current behavior: certain explicit LinkedIn-only prompts may still include
-  blog output selection.
-- Risk level: medium (routing precision, not safety)
-- Next action: tighten classification rules and add targeted regression tests
-  for LinkedIn-only intent.
+- Source: `contentblitz/agents/query_handler.py`
+- Status: resolved
+- Resolved in current baseline:
+  - explicit LinkedIn-only phrasing no longer defaults to blog in fallback
+    classification
+  - `LinkedIn article` behavior is deterministic and LinkedIn-scoped unless blog
+    is explicitly requested
+  - `linked in` (space-separated) platform phrasing is treated as LinkedIn
+  - targeted regression tests cover LinkedIn-only, blog-only, and multi-output
+    prompt variants
+- Risk level: low to medium (routing precision)
+- Follow-up: continue monitoring prompt-regression suites for edge phrasing.
 
 ### Deterministic Image Fallback Asset Strategy
 

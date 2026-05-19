@@ -80,7 +80,10 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
                 {
                     "title": f"{query} source",
                     "url": "https://example.com/source",
-                    "snippet": "This is a long enough snippet to be treated as non-degraded.",
+                    "snippet": (
+                        "This is a long enough snippet to be treated "
+                        "as non-degraded."
+                    ),
                 }
             ]
         }
@@ -118,7 +121,10 @@ def test_degraded_snippets_trigger_fallback(monkeypatch) -> None:
                 {
                     "title": "Perplexity",
                     "url": "https://px.example",
-                    "snippet": "This fallback snippet is long enough for research synthesis.",
+                    "snippet": (
+                        "This fallback snippet is long enough "
+                        "for research synthesis."
+                    ),
                     "citation_available": True,
                 }
             ]
@@ -217,3 +223,37 @@ def test_cache_does_not_store_degraded_results(monkeypatch) -> None:
     assert "tool_outputs" not in updates
     assert "cache_metadata" not in updates
     _assert_complete_research_data(updates)
+
+
+def test_research_agent_updates_only_allowed_state_fields(monkeypatch) -> None:
+    state = create_initial_state(user_query="AI SEO LinkedIn marketing trends")
+    _mock_generate_text(monkeypatch)
+
+    def fake_search_web(query, depth="standard"):
+        return {
+            "results": [
+                {
+                    "title": "AI SEO LinkedIn marketing",
+                    "url": "https://example.com/source",
+                    "snippet": (
+                        "This snippet is long enough "
+                        "for deterministic synthesis."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+    updates = research_agent_module.research_agent_node(state)
+
+    allowed_keys = {
+        "research_data",
+        "sources",
+        "cost_controls",
+        "workflow_status",
+        "final_response",
+        "cache_metadata",
+    }
+    assert set(updates.keys()).issubset(allowed_keys)
+    assert "requested_outputs" not in updates
+    assert "routing_decision" not in updates
