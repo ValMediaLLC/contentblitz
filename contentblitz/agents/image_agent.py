@@ -167,9 +167,9 @@ def _append_recoverable_image_error(
     return existing_errors
 
 
-# TODO(fallback-management):
-# Replace recoverable image failure with placeholder/fallback image asset
-# once real image provider integration is implemented.
+# TODO(provider):
+# Replace recoverable image failure with a deterministic fallback image asset
+# when provider-specific fallback asset policy is finalized.
 def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate images via deterministic prompt enhancement + stateless tool calls."""
     cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))

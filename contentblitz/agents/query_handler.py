@@ -129,7 +129,7 @@ def _has_safe_prompt_intent(query: str) -> bool:
     return any(token not in _UNSAFE_INJECTION_TOKENS for token in tokens)
 
 
-# TODO(intent-classification):
+# TODO(routing):
 # Refine deterministic output classification so explicit LinkedIn-only
 # requests do not automatically include blog generation unless requested.
 def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
