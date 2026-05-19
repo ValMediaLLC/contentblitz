@@ -5,16 +5,20 @@ from typing import Any
 
 import pytest
 
-from frontend import app as app_module
+from frontend.components import result_view as result_view_module
 
 
 @dataclass
 class _DummyStreamlit:
+    subheader_calls: list[str] = field(default_factory=list)
     markdown_calls: list[str] = field(default_factory=list)
     info_calls: list[str] = field(default_factory=list)
     warning_calls: list[str] = field(default_factory=list)
     caption_calls: list[str] = field(default_factory=list)
     session_state: dict[str, Any] = field(default_factory=dict)
+
+    def subheader(self, value: str, *_args: Any, **_kwargs: Any) -> None:
+        self.subheader_calls.append(str(value))
 
     def markdown(self, value: str, *_args: Any, **_kwargs: Any) -> None:
         self.markdown_calls.append(str(value))
@@ -37,7 +41,7 @@ class _DummyStreamlit:
         ("degraded", "Degraded", 0, 1),
     ],
 )
-def test_ui_observability_status_renders_safely(
+def test_observability_status_renders_safely_in_workflow_section(
     monkeypatch: pytest.MonkeyPatch,
     status: str,
     status_label: str,
@@ -45,14 +49,13 @@ def test_ui_observability_status_renders_safely(
     expected_warning_count: int,
 ) -> None:
     dummy_st = _DummyStreamlit(session_state={"keep": "unchanged"})
-    monkeypatch.setattr(app_module, "st", dummy_st)
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
     monkeypatch.setattr(
-        app_module,
+        result_view_module,
         "build_observability_diagnostics",
         lambda: {
             "status": status,
             "status_label": status_label,
-            "status_tone_class": "cbx-status-green",
             "tracing_enabled": status == "enabled",
             "project_name": "ContentBlitz",
             "endpoint_host": "api.smith.langchain.com",
@@ -65,9 +68,13 @@ def test_ui_observability_status_renders_safely(
     )
 
     before_state = dict(dummy_st.session_state)
-    app_module._render_observability_status()  # noqa: SLF001
+    result_view_module.render_observability_section()
 
     rendered = "\n".join(dummy_st.markdown_calls + dummy_st.caption_calls).lower()
+    assert any(
+        value.strip().lower() == "observability"
+        for value in dummy_st.subheader_calls
+    )
     assert status_label.lower() in rendered
     assert "contentblitz" in rendered
     assert "api.smith.langchain.com" in rendered
@@ -79,18 +86,18 @@ def test_ui_observability_status_renders_safely(
     assert dict(dummy_st.session_state) == before_state
 
 
-def test_ui_observability_fallback_is_safe_when_diagnostics_fail(
+def test_observability_fallback_is_safe_when_diagnostics_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dummy_st = _DummyStreamlit()
-    monkeypatch.setattr(app_module, "st", dummy_st)
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
     monkeypatch.setattr(
-        app_module,
+        result_view_module,
         "build_observability_diagnostics",
         lambda: (_ for _ in ()).throw(RuntimeError("unexpected traceback")),
     )
 
-    app_module._render_observability_status()  # noqa: SLF001
+    result_view_module.render_observability_section()
 
     rendered = "\n".join(
         dummy_st.markdown_calls
@@ -103,13 +110,13 @@ def test_ui_observability_fallback_is_safe_when_diagnostics_fail(
     assert "traceback" not in rendered
 
 
-def test_ui_observability_render_does_not_call_langsmith_directly(
+def test_observability_render_does_not_call_langsmith_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from contentblitz.core import observability as observability_module
 
     dummy_st = _DummyStreamlit()
-    monkeypatch.setattr(app_module, "st", dummy_st)
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
     monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
 
@@ -117,6 +124,6 @@ def test_ui_observability_render_does_not_call_langsmith_directly(
         raise AssertionError("Direct LangSmith import is not expected in UI render.")
 
     monkeypatch.setattr(observability_module, "import_module", _unexpected_import)
-    app_module._render_observability_status()  # noqa: SLF001
+    result_view_module.render_observability_section()
 
     assert dummy_st.markdown_calls
