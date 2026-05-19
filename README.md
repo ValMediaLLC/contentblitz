@@ -56,6 +56,24 @@ CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
 CONTENTBLITZ_ENABLE_LIVE_CALLS=1
 ```
 
+Phase 4 observability (optional LangSmith tracing):
+
+```env
+LANGSMITH_TRACING=false
+LANGSMITH_API_KEY=
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=ContentBlitz
+CONTENTBLITZ_TRACE_SAMPLE_RATE=1.0
+CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE=1.0
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=0
+```
+
+Notes:
+
+- tracing is disabled by default unless `LANGSMITH_TRACING` is truthy and `LANGSMITH_API_KEY` is present
+- missing LangSmith credentials must not block normal startup, workflow runs, unit tests, or integration tests
+- `CONTENTBLITZ_RUN_LANGSMITH_SMOKE` only gates the optional live smoke script
+
 Runtime controls:
 
 - `CONTENTBLITZ_ENABLE_LIVE_CALLS` is the global provider-call gate used by text/search/image tools.
@@ -83,6 +101,10 @@ CONTENTBLITZ_SESSION_DIR=.contentblitz_sessions
 - State never stores secrets.
 - Provider errors are normalized.
 - Base64 image data is never stored in workflow state or persisted runs.
+- Tracing must not mutate workflow state.
+- Tracing must not alter routing, retry counts, or cost counters.
+- Raw user input and raw provider payloads are excluded from trace metadata.
+- Secrets are redacted before trace metadata is emitted.
 
 ## Validation and Testing
 
@@ -102,6 +124,19 @@ Unit and integration suite:
 
 ```bash
 pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
+```
+
+Phase 4 observability validation (non-live by default):
+
+```bash
+python scripts/validate_phase4.py
+python scripts/dev/smoke_langsmith.py --dry-run
+```
+
+Optional live LangSmith smoke (explicit opt-in only):
+
+```bash
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
 ```
 
 Live tests are optional and skip by default:
@@ -139,6 +174,8 @@ Live calls are blocked when `CONTENTBLITZ_ENABLE_LIVE_CALLS=0`.
 - `docs/PROVIDER_CONTRACTS.md`
 - `docs/CACHE_ARCHITECTURE.md`
 - `docs/COST_CONTROLS.md`
+- `docs/OBSERVABILITY.md`
+- `docs/PHASE4_OBSERVABILITY.md`
 - `docs/TESTING_STRATEGY.md`
 - `docs/KNOWN_LIMITATIONS.md`
 - `docs/PHASE2_LIVE_SMOKE_TESTS.md`

@@ -18,6 +18,7 @@ import streamlit as st
 
 from contentblitz.tools.exports.filenames import resolve_export_dir
 from contentblitz.ui.error_display import redact_sensitive_text
+from contentblitz.ui.observability import build_observability_diagnostics
 from contentblitz.ui.progress import normalize_progress_status, validate_node_name
 
 _DEBUG_TRACEBACK_MARKERS = (
@@ -44,8 +45,9 @@ _IMAGE_MIME_TYPES = {
     ".png": "image/png",
     ".webp": "image/webp",
 }
-_STATUS_GREEN = {"complete", "completed", "success", "succeeded"}
+_STATUS_GREEN = {"complete", "completed", "enabled", "success", "succeeded"}
 _STATUS_ORANGE = {
+    "disabled",
     "idle",
     "limited",
     "partial_success",
@@ -860,6 +862,67 @@ def render_progress_events(events: list[Mapping[str, Any]]) -> None:
                 st.caption(message)
 
 
+def render_observability_section() -> None:
+    """Render observability diagnostics in the Workflow section."""
+    try:
+        diagnostics = build_observability_diagnostics()
+    except Exception:  # pragma: no cover - defensive UI fallback
+        diagnostics = {
+            "status": "degraded",
+            "status_label": "Degraded",
+            "tracing_enabled": False,
+            "project_name": "ContentBlitz",
+            "endpoint_host": "unknown",
+            "last_trace_attempt_label": "Unavailable",
+            "note": "Observability diagnostics are temporarily unavailable.",
+            "dashboard_instruction": (
+                "For trace details, review the LangSmith dashboard manually."
+            ),
+        }
+
+    status = _safe_text(diagnostics.get("status", "")).lower() or "disabled"
+    status_label = (
+        _safe_text(diagnostics.get("status_label", "")) or _status_label(status)
+    )
+    tracing_enabled = (
+        "true" if bool(diagnostics.get("tracing_enabled", False)) else "false"
+    )
+    project_name = _safe_text(diagnostics.get("project_name", "")) or "ContentBlitz"
+    endpoint_host = _safe_text(diagnostics.get("endpoint_host", "")) or "unknown"
+    trace_attempt = (
+        _safe_text(diagnostics.get("last_trace_attempt_label", ""))
+        or "Not requested"
+    )
+
+    st.subheader("Observability")
+    _render_compact_cards(
+        [
+            ("Observability", status_label),
+            ("Tracing Enabled", tracing_enabled),
+            ("Project", project_name),
+            ("Endpoint Host", endpoint_host),
+            ("Last Trace Attempt", trace_attempt),
+        ],
+        max_value_length=22,
+        status_labels={"Observability"},
+    )
+
+    note = _safe_text(diagnostics.get("note", ""))
+    if note:
+        if status == "enabled":
+            st.caption(note)
+        elif status == "degraded":
+            st.warning(note)
+        else:
+            st.info(note)
+
+    dashboard_instruction = _safe_text(
+        diagnostics.get("dashboard_instruction", "")
+    )
+    if dashboard_instruction:
+        st.caption(dashboard_instruction)
+
+
 def render_status_messages(messages: list[str]) -> None:
     if not messages:
         return
@@ -1219,6 +1282,7 @@ def render_collapsible_output_sections(
             progress_events=progress_events,
         )
         render_node_execution_statuses(progress_events)
+        render_observability_section()
         render_status_messages(status_messages)
         render_usage_summary(render_payload)
         render_result_header(

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Mapping, Optional
 from urllib import parse, request
 from urllib.error import HTTPError, URLError
 
 from contentblitz.config import live_provider_calls_enabled
+from contentblitz.core.observability import safe_tool_metadata, start_tool_span
 from contentblitz.tools.perplexity import search_perplexity
 from contentblitz.tools.provider_types import SearchResult, SearchWebResult
 
@@ -269,9 +271,134 @@ def _is_unusable(result: SearchWebResult) -> bool:
     return True
 
 
-def _search_auto(query: str, *, max_results: int) -> SearchWebResult:
+def _finish_tool_span(
+    *,
+    span: Any,
+    started_at: float,
+    span_name: str,
+    provider: str,
+    fallback_used: bool,
+    fallback_provider: str = "",
+    fallback_reason: str = "",
+    retry_attempt: int = 0,
+    retry_exhausted: bool = False,
+    result: SearchWebResult | None = None,
+    error: BaseException | None = None,
+) -> None:
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    metadata: Dict[str, Any] = {
+        "tool_name": span_name,
+        "provider": provider,
+        "fallback_used": fallback_used,
+        "fallback_provider": str(fallback_provider or "").strip(),
+        "fallback_reason": str(fallback_reason or "").strip(),
+        "retry_attempt": max(0, int(retry_attempt)),
+        "retry_exhausted": bool(retry_exhausted),
+        "duration_ms": duration_ms,
+    }
+    outputs: Dict[str, Any] = {}
+
+    if result is not None:
+        citation_count = sum(1 for item in result.results if item.citation_available)
+        metadata.update(
+            {
+                "provider": result.provider or provider,
+                "degraded": result.degraded,
+                "result_count": len(result.results),
+                "source_count": len(result.results),
+                "citation_available_count": citation_count,
+            }
+        )
+        outputs = {
+            "provider": result.provider,
+            "degraded": result.degraded,
+            "result_count": len(result.results),
+        }
+    elif error is not None:
+        metadata["degraded"] = True
+        if not metadata["fallback_reason"]:
+            metadata["fallback_reason"] = "tool_exception"
+
+    span.finish(
+        metadata=safe_tool_metadata(metadata),
+        outputs=outputs,
+        error=error,
+    )
+
+
+def _run_provider_span(
+    *,
+    span_name: str,
+    provider: str,
+    fallback_used: bool,
+    fallback_reason: str = "",
+    query: str,
+    max_results: int,
+    search_fn: Any,
+) -> SearchWebResult:
+    started_at = time.perf_counter()
+    provider_span = start_tool_span(
+        span_name,
+        metadata={
+            "provider": provider,
+            "fallback_used": fallback_used,
+            "fallback_provider": provider if fallback_used else "",
+            "fallback_reason": fallback_reason,
+        },
+        inputs={"tool_name": span_name, "provider": provider},
+    )
     try:
-        serp_result = _search_serp(query=query, max_results=max_results)
+        result = search_fn(query=query, max_results=max_results)
+    except Exception as error:
+        _finish_tool_span(
+            span=provider_span,
+            started_at=started_at,
+            span_name=span_name,
+            provider=provider,
+            fallback_used=fallback_used,
+            fallback_provider=provider if fallback_used else "",
+            fallback_reason=fallback_reason,
+            retry_attempt=1,
+            retry_exhausted=False,
+            error=error,
+        )
+        raise
+    _finish_tool_span(
+        span=provider_span,
+        started_at=started_at,
+        span_name=span_name,
+        provider=provider,
+        fallback_used=fallback_used,
+        fallback_provider=provider if fallback_used else "",
+        fallback_reason=fallback_reason,
+        retry_attempt=1,
+        retry_exhausted=False,
+        result=result,
+    )
+    return result
+
+
+def _fallback_reason_from_result(result: SearchWebResult) -> str:
+    if not result.degraded:
+        return "unusable_results"
+    if isinstance(result.error, Mapping):
+        code = str(result.error.get("code", "")).strip()
+        if code:
+            return code
+    return "provider_error"
+
+
+def _search_auto(query: str, *, max_results: int) -> tuple[SearchWebResult, bool]:
+    try:
+        serp_result = _run_provider_span(
+            span_name="serp",
+            provider=_SERP_PROVIDER,
+            fallback_used=False,
+            fallback_reason="",
+            query=query,
+            max_results=max_results,
+            search_fn=_search_serp,
+        )
     except Exception:
         serp_result = _degraded_result(
             provider=_SERP_PROVIDER,
@@ -281,11 +408,18 @@ def _search_auto(query: str, *, max_results: int) -> SearchWebResult:
             recoverable=True,
         )
     if not _is_unusable(serp_result):
-        return serp_result
+        return serp_result, False
 
     try:
-        perplexity_result = _search_perplexity_placeholder(
-            query=query, max_results=max_results
+        fallback_reason = _fallback_reason_from_result(serp_result)
+        perplexity_result = _run_provider_span(
+            span_name="perplexity_fallback",
+            provider=_PERPLEXITY_PROVIDER,
+            fallback_used=True,
+            fallback_reason=fallback_reason,
+            query=query,
+            max_results=max_results,
+            search_fn=_search_perplexity_placeholder,
         )
     except Exception:
         perplexity_result = _degraded_result(
@@ -296,22 +430,28 @@ def _search_auto(query: str, *, max_results: int) -> SearchWebResult:
             recoverable=True,
         )
     if not _is_unusable(perplexity_result):
-        return perplexity_result
+        return perplexity_result, True
 
-    return SearchWebResult(
-        provider=_AUTO_PROVIDER,
-        query=query,
-        results=[],
-        degraded=True,
-        error={
-            "code": "all_providers_failed",
-            "message": "SERP and Perplexity providers failed or returned unusable results.",
-            "provider": _AUTO_PROVIDER,
-            "recoverable": True,
-            "providers_attempted": [_SERP_PROVIDER, _PERPLEXITY_PROVIDER],
-            "serp_error": serp_result.error,
-            "perplexity_error": perplexity_result.error,
-        },
+    return (
+        SearchWebResult(
+            provider=_AUTO_PROVIDER,
+            query=query,
+            results=[],
+            degraded=True,
+            error={
+                "code": "all_providers_failed",
+                "message": (
+                    "SERP and Perplexity providers failed or returned "
+                    "unusable results."
+                ),
+                "provider": _AUTO_PROVIDER,
+                "recoverable": True,
+                "providers_attempted": [_SERP_PROVIDER, _PERPLEXITY_PROVIDER],
+                "serp_error": serp_result.error,
+                "perplexity_error": perplexity_result.error,
+            },
+        ),
+        True,
     )
 
 
@@ -322,48 +462,126 @@ def search_web(
     provider: str = _AUTO_PROVIDER,
 ) -> SearchWebResult:
     """Run a provider-backed web search and return normalized results."""
+    started_at = time.perf_counter()
     safe_query = _sanitize_query(query)
     provider_name = str(provider or _SERP_PROVIDER).strip().lower()
+    tool_span = start_tool_span(
+        "search_web",
+        metadata={"provider": provider_name},
+        inputs={"tool_name": "search_web", "provider": provider_name},
+    )
     bounded_max_results = _safe_int(max_results, _DEFAULT_MAX_RESULTS)
     if bounded_max_results <= 0:
         bounded_max_results = _DEFAULT_MAX_RESULTS
     if bounded_max_results > _MAX_RESULTS_CAP:
         bounded_max_results = _MAX_RESULTS_CAP
 
-    if not safe_query:
-        return _degraded_result(
+    def _finalize(result: SearchWebResult, *, fallback_used: bool) -> SearchWebResult:
+        fallback_reason = ""
+        fallback_provider = ""
+        retry_attempt = 1
+        if fallback_used:
+            fallback_provider = result.provider or _PERPLEXITY_PROVIDER
+            fallback_reason = "provider_fallback"
+            retry_attempt = 2
+        if result.degraded and isinstance(result.error, Mapping):
+            code = str(result.error.get("code", "")).strip()
+            if code:
+                fallback_reason = code
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            span_name="search_web",
             provider=provider_name,
-            query=safe_query,
-            code="invalid_query",
-            message="Search query is empty.",
-            recoverable=False,
+            fallback_used=fallback_used,
+            fallback_provider=fallback_provider,
+            fallback_reason=fallback_reason,
+            retry_attempt=retry_attempt,
+            retry_exhausted=result.degraded,
+            result=result,
+        )
+        return result
+
+    if not safe_query:
+        return _finalize(
+            _degraded_result(
+                provider=provider_name,
+                query=safe_query,
+                code="invalid_query",
+                message="Search query is empty.",
+                recoverable=False,
+            ),
+            fallback_used=False,
         )
 
     if not live_provider_calls_enabled():
-        return _degraded_result(
+        return _finalize(
+            _degraded_result(
+                provider=provider_name,
+                query=safe_query,
+                code="live_calls_disabled",
+                message=(
+                    "Live provider calls are disabled by "
+                    "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+                ),
+                recoverable=False,
+            ),
+            fallback_used=False,
+        )
+
+    try:
+        if provider_name == _SERP_PROVIDER:
+            result = _run_provider_span(
+                span_name="serp",
+                provider=_SERP_PROVIDER,
+                fallback_used=False,
+                fallback_reason="",
+                query=safe_query,
+                max_results=bounded_max_results,
+                search_fn=_search_serp,
+            )
+            return _finalize(result, fallback_used=False)
+        if provider_name == _PERPLEXITY_PROVIDER:
+            result = _run_provider_span(
+                span_name="perplexity",
+                provider=_PERPLEXITY_PROVIDER,
+                fallback_used=False,
+                fallback_reason="",
+                query=safe_query,
+                max_results=bounded_max_results,
+                search_fn=_search_perplexity_placeholder,
+            )
+            return _finalize(result, fallback_used=False)
+        if provider_name == _AUTO_PROVIDER:
+            result, fallback_used = _search_auto(
+                safe_query, max_results=bounded_max_results
+            )
+            return _finalize(result, fallback_used=fallback_used)
+
+        return _finalize(
+            _degraded_result(
+                provider=provider_name,
+                query=safe_query,
+                code="invalid_provider",
+                message="Unsupported search provider.",
+                recoverable=False,
+            ),
+            fallback_used=False,
+        )
+    except Exception as error:
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            span_name="search_web",
             provider=provider_name,
-            query=safe_query,
-            code="live_calls_disabled",
-            message="Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
-            recoverable=False,
+            fallback_used=False,
+            fallback_provider="",
+            fallback_reason="tool_exception",
+            retry_attempt=1,
+            retry_exhausted=False,
+            error=error,
         )
-
-    if provider_name == _SERP_PROVIDER:
-        return _search_serp(safe_query, max_results=bounded_max_results)
-    if provider_name == _PERPLEXITY_PROVIDER:
-        return _search_perplexity_placeholder(
-            safe_query, max_results=bounded_max_results
-        )
-    if provider_name == _AUTO_PROVIDER:
-        return _search_auto(safe_query, max_results=bounded_max_results)
-
-    return _degraded_result(
-        provider=provider_name,
-        query=safe_query,
-        code="invalid_provider",
-        message="Unsupported search provider.",
-        recoverable=False,
-    )
+        raise
 
 
 __all__ = ["search_web", "SearchResult", "SearchWebResult"]

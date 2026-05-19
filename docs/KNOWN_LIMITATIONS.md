@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document tracks known implementation and operational limits in the current Phase 3 codebase.
+This document tracks known implementation and operational limits in the current codebase, including Phase 4 observability support.
 
 ## Provider/Network Variability
 
@@ -68,6 +68,31 @@ Implications:
 
 - live smoke checks are useful for manual operational validation
 - release safety is enforced primarily through unit/integration contract suites
+
+## LangSmith Tracing Is Optional and Credential-Gated
+
+Phase 4 observability support is additive and opt-in.
+
+Current behavior:
+
+- tracing is disabled unless `LANGSMITH_TRACING` is explicitly truthy
+- if tracing is requested but `LANGSMITH_API_KEY` is missing, tracing degrades to disabled
+- app startup, unit tests, and integration tests continue without LangSmith credentials
+- tracing is best-effort; tracer setup/runtime failures degrade to no-op and never fail workflow execution
+
+Sampling behavior:
+
+- trace sampling is deterministic per session when `session_id` is available
+- sampling is telemetry-only and never changes routing, retries, cost controls, or outputs
+- when only failure sampling is enabled, child span coverage may be reduced for unsampled successful runs
+- observability metadata intentionally strips raw env-var-style keys and exposes only safe summary labels (for example `endpoint_host`, not full endpoint URL)
+
+Privacy/safety scope:
+
+- observability metadata is redacted and summarized, but traces are still operational telemetry and not a compliance boundary
+- no raw API keys, raw prompts, raw provider payloads, stack traces, or base64 image payloads should be present in traces
+- if tracing setup fails, ContentBlitz intentionally degrades to no-op tracing without blocking workflow execution
+- CI does not run live LangSmith validation; optional live smoke must be run manually when needed
 
 ## Export Validation Can Mark Individual Formats Failed
 

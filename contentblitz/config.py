@@ -61,6 +61,8 @@ INJECTION_GUARD = {
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 _FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+LANGSMITH_ENDPOINT_DEFAULT = "https://api.smith.langchain.com"
+LANGSMITH_PROJECT_DEFAULT = "ContentBlitz"
 
 
 def _read_bool_env(var_name: str, *, default: bool) -> bool:
@@ -73,6 +75,14 @@ def _read_bool_env(var_name: str, *, default: bool) -> bool:
     if token in _FALSE_ENV_VALUES:
         return False
     return default
+
+
+def _read_text_env(var_name: str, *, default: str) -> str:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    value = str(raw).strip()
+    return value or default
 
 
 def live_provider_calls_enabled() -> bool:
@@ -110,3 +120,26 @@ def build_cache_metadata_defaults() -> Dict[str, Any]:
 def build_cost_controls_defaults() -> Dict[str, Any]:
     """Return a deep copy of cost control defaults."""
     return deepcopy(COST_CONTROLS_DEFAULTS)
+
+
+def langsmith_tracing_requested() -> bool:
+    """Return whether LangSmith tracing was explicitly requested."""
+    return _read_bool_env("LANGSMITH_TRACING", default=False)
+
+
+def langsmith_api_key_present() -> bool:
+    """Return whether a non-empty LangSmith API key is present."""
+    raw = os.getenv("LANGSMITH_API_KEY")
+    if raw is None:
+        return False
+    return bool(str(raw).strip())
+
+
+def langsmith_endpoint() -> str:
+    """Return LangSmith endpoint or a safe cloud default."""
+    return _read_text_env("LANGSMITH_ENDPOINT", default=LANGSMITH_ENDPOINT_DEFAULT)
+
+
+def langsmith_project() -> str:
+    """Return LangSmith project name or a safe default."""
+    return _read_text_env("LANGSMITH_PROJECT", default=LANGSMITH_PROJECT_DEFAULT)

@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Dict, List, Mapping, TypedDict
+from typing import (
+    Annotated,
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    TypedDict,
+)
 
 from langgraph.graph import END as LANGGRAPH_END
 from langgraph.graph import START as LANGGRAPH_START
@@ -17,10 +27,17 @@ from contentblitz.agents.export import export_node
 from contentblitz.agents.image_agent import image_agent_node
 from contentblitz.agents.linkedin_writer import linkedin_writer_node
 from contentblitz.agents.output_assembler import output_assembler_node
-from contentblitz.agents.query_handler import query_handler_node
 from contentblitz.agents.quality_validator import quality_validator_node
+from contentblitz.agents.query_handler import query_handler_node
 from contentblitz.agents.research_agent import research_agent_node
 from contentblitz.agents.retry_router import retry_router_node
+from contentblitz.core.observability import (
+    get_workflow_tracer,
+    safe_node_end_metadata,
+    safe_node_start_metadata,
+    safe_workflow_end_metadata,
+    safe_workflow_start_metadata,
+)
 from contentblitz.workflow.routing import (
     AUTHORITATIVE_NODES,
     BLOG_WRITER_NODE,
@@ -31,14 +48,14 @@ from contentblitz.workflow.routing import (
     IMAGE_AGENT_NODE,
     LINKEDIN_WRITER_NODE,
     OUTPUT_ASSEMBLER_NODE,
-    QUERY_HANDLER_NODE,
     QUALITY_VALIDATOR_NODE,
+    QUERY_HANDLER_NODE,
     RESEARCH_AGENT_NODE,
     RETRY_ROUTER_NODE,
+    route_after_query_handler,
     route_from_content_strategist,
     route_from_output_assembler,
     route_from_quality_validator,
-    route_after_query_handler,
     route_from_research_agent,
     route_from_retry_router,
 )
@@ -627,6 +644,7 @@ NODE_FUNCTIONS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
 
 
 def _merge_state_updates(
+    node_name: str,
     node_fn: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     """
@@ -637,13 +655,58 @@ def _merge_state_updates(
     """
 
     def _wrapped(state: Dict[str, Any]) -> Dict[str, Any]:
-        updates = node_fn(state)
+        tracer = get_workflow_tracer()
+        node_span = tracer.start_node(
+            node_name=node_name,
+            metadata=safe_node_start_metadata(state=state, node_name=node_name),
+        )
+        try:
+            updates = node_fn(state)
+        except Exception as error:
+            node_span.finish(
+                metadata=safe_node_end_metadata(
+                    state=state,
+                    node_name=node_name,
+                    node_status="failed",
+                    updates={},
+                ),
+                error=error,
+            )
+            raise
         if not isinstance(updates, dict):
+            node_span.finish(
+                metadata=safe_node_end_metadata(
+                    state=state,
+                    node_name=node_name,
+                    node_status="completed",
+                    updates={},
+                ),
+                outputs={"update_keys": []},
+            )
             return {}
         partial_updates: Dict[str, Any] = {}
         for key, value in updates.items():
             if state.get(key) != value:
                 partial_updates[key] = value
+        workflow_status = _clean_text(partial_updates.get("workflow_status"))
+        node_status = "completed"
+        if node_name == ERROR_HANDLER_NODE:
+            node_status = "failed"
+        elif workflow_status in {
+            "partial_success",
+            "degraded",
+            "completed_with_warnings",
+        }:
+            node_status = "degraded"
+        node_span.finish(
+            metadata=safe_node_end_metadata(
+                state=state,
+                node_name=node_name,
+                node_status=node_status,
+                updates=partial_updates,
+            ),
+            outputs={"update_keys": sorted(partial_updates.keys())},
+        )
         return partial_updates
 
     return _wrapped
@@ -707,6 +770,171 @@ class WorkflowGraph:
     routing_table: Dict[str, str]
 
 
+class _TracedCompiledGraph:
+    """Proxy around compiled LangGraph with optional workflow-level tracing."""
+
+    def __init__(self, compiled_graph: Any) -> None:
+        self._compiled_graph = compiled_graph
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._compiled_graph, name)
+
+    def invoke(self, state: Any, *args: Any, **kwargs: Any) -> Any:
+        initial_state = state if isinstance(state, Mapping) else {}
+        tracer = get_workflow_tracer()
+        workflow_span = tracer.start_workflow(
+            metadata=safe_workflow_start_metadata(initial_state),
+        )
+        try:
+            result = self._compiled_graph.invoke(state, *args, **kwargs)
+        except Exception as error:
+            workflow_span.finish(
+                metadata=safe_workflow_end_metadata(
+                    initial_state=initial_state,
+                    final_state=None,
+                ),
+                error=error,
+            )
+            raise
+
+        final_state = result if isinstance(result, Mapping) else {}
+        end_metadata = safe_workflow_end_metadata(
+            initial_state=initial_state,
+            final_state=final_state,
+        )
+        workflow_status = _clean_text(final_state.get("workflow_status"))
+        workflow_span.finish(
+            metadata=end_metadata,
+            outputs={"workflow_status": workflow_status},
+        )
+        return result
+
+    def stream(self, state: Any, *args: Any, **kwargs: Any) -> Iterator[Any]:
+        initial_state = state if isinstance(state, Mapping) else {}
+        tracer = get_workflow_tracer()
+        workflow_span = tracer.start_workflow(
+            metadata=safe_workflow_start_metadata(initial_state),
+        )
+        latest_state: Mapping[str, Any] = initial_state
+        stream_iterator = self._compiled_graph.stream(state, *args, **kwargs)
+        stream_error: BaseException | None = None
+        try:
+            for item in stream_iterator:
+                if (
+                    isinstance(item, tuple)
+                    and len(item) == 2
+                    and item[0] == "values"
+                    and isinstance(item[1], Mapping)
+                ):
+                    latest_state = dict(item[1])
+                yield item
+        except Exception as error:
+            stream_error = error
+            raise
+        finally:
+            workflow_status = (
+                _clean_text(latest_state.get("workflow_status"))
+                if isinstance(latest_state, Mapping)
+                else ""
+            )
+            if stream_error is not None:
+                workflow_span.finish(
+                    metadata=safe_workflow_end_metadata(
+                        initial_state=initial_state,
+                        final_state=latest_state,
+                    ),
+                    error=stream_error,
+                )
+            else:
+                workflow_span.finish(
+                    metadata=safe_workflow_end_metadata(
+                        initial_state=initial_state,
+                        final_state=latest_state,
+                    ),
+                    outputs={"workflow_status": workflow_status},
+                )
+
+    async def ainvoke(self, state: Any, *args: Any, **kwargs: Any) -> Any:
+        initial_state = state if isinstance(state, Mapping) else {}
+        tracer = get_workflow_tracer()
+        workflow_span = tracer.start_workflow(
+            metadata=safe_workflow_start_metadata(initial_state),
+        )
+        try:
+            result = await self._compiled_graph.ainvoke(state, *args, **kwargs)
+        except Exception as error:
+            workflow_span.finish(
+                metadata=safe_workflow_end_metadata(
+                    initial_state=initial_state,
+                    final_state=None,
+                ),
+                error=error,
+            )
+            raise
+
+        final_state = result if isinstance(result, Mapping) else {}
+        end_metadata = safe_workflow_end_metadata(
+            initial_state=initial_state,
+            final_state=final_state,
+        )
+        workflow_status = _clean_text(final_state.get("workflow_status"))
+        workflow_span.finish(
+            metadata=end_metadata,
+            outputs={"workflow_status": workflow_status},
+        )
+        return result
+
+    async def astream(
+        self,
+        state: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        initial_state = state if isinstance(state, Mapping) else {}
+        tracer = get_workflow_tracer()
+        workflow_span = tracer.start_workflow(
+            metadata=safe_workflow_start_metadata(initial_state),
+        )
+        latest_state: Mapping[str, Any] = initial_state
+        stream_error: BaseException | None = None
+
+        try:
+            async for item in self._compiled_graph.astream(state, *args, **kwargs):
+                if (
+                    isinstance(item, tuple)
+                    and len(item) == 2
+                    and item[0] == "values"
+                    and isinstance(item[1], Mapping)
+                ):
+                    latest_state = dict(item[1])
+                yield item
+        except Exception as error:
+            stream_error = error
+            raise
+        finally:
+            workflow_status = (
+                _clean_text(latest_state.get("workflow_status"))
+                if isinstance(latest_state, Mapping)
+                else ""
+            )
+            if stream_error is not None:
+                workflow_span.finish(
+                    metadata=safe_workflow_end_metadata(
+                        initial_state=initial_state,
+                        final_state=latest_state,
+                    ),
+                    error=stream_error,
+                )
+            else:
+                workflow_span.finish(
+                    metadata=safe_workflow_end_metadata(
+                        initial_state=initial_state,
+                        final_state=latest_state,
+                    ),
+                    outputs={"workflow_status": workflow_status},
+                )
+
+
 def _route_from_output_assembler_for_graph(state: Mapping[str, Any]) -> str:
     """
     Convert routing decision to graph edge target.
@@ -734,7 +962,7 @@ def build_langgraph() -> Any:
     graph = StateGraph(WorkflowState)
 
     for node_name, node_fn in NODE_FUNCTIONS.items():
-        graph.add_node(node_name, _merge_state_updates(node_fn))
+        graph.add_node(node_name, _merge_state_updates(node_name, node_fn))
 
     graph.add_edge(LANGGRAPH_START, QUERY_HANDLER_NODE)
 
@@ -757,4 +985,5 @@ def build_langgraph() -> Any:
     graph.add_edge(EXPORT_NODE, LANGGRAPH_END)
     graph.add_edge(ERROR_HANDLER_NODE, LANGGRAPH_END)
 
-    return graph.compile()
+    compiled = graph.compile()
+    return _TracedCompiledGraph(compiled)

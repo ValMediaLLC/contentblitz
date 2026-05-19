@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -19,6 +20,7 @@ from openai import (
 )
 
 from contentblitz.config import INJECTION_GUARD, live_provider_calls_enabled
+from contentblitz.core.observability import safe_tool_metadata, start_tool_span
 from contentblitz.tools.exports.filenames import resolve_export_dir
 
 _PROVIDER = "openai"
@@ -260,6 +262,91 @@ def _degraded_result(
     )
 
 
+def _model_span_name(model: str) -> str:
+    normalized = _safe_text(model).lower()
+    if normalized == _PRIMARY_MODEL:
+        return "dall_e_3"
+    if normalized == _FALLBACK_MODEL:
+        return "dall_e_2_fallback"
+    if normalized == _MODERN_IMAGE_MODEL:
+        return "gpt_image_1_fallback"
+    return "image_provider_attempt"
+
+
+def _finish_tool_span(
+    *,
+    span: Any,
+    started_at: float,
+    span_name: str,
+    requested_model: str,
+    fallback_used: bool,
+    fallback_provider: str = "",
+    fallback_model: str = "",
+    fallback_reason: str = "",
+    retry_attempt: int = 0,
+    retry_exhausted: bool = False,
+    result: GenerateImageResult | None = None,
+    error: BaseException | None = None,
+) -> None:
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    metadata: Dict[str, Any] = {
+        "tool_name": span_name,
+        "provider": _PROVIDER,
+        "model": requested_model,
+        "fallback_used": fallback_used,
+        "fallback_provider": _safe_text(fallback_provider),
+        "fallback_model": _safe_text(fallback_model),
+        "fallback_reason": _safe_text(fallback_reason),
+        "retry_attempt": max(0, int(retry_attempt)),
+        "retry_exhausted": bool(retry_exhausted),
+        "duration_ms": duration_ms,
+    }
+    outputs: Dict[str, Any] = {}
+    if result is not None:
+        has_image = bool(result.image_url or result.local_path)
+        metadata.update(
+            {
+                "provider": result.provider,
+                "model": result.model,
+                "final_model": result.model,
+                "degraded": result.degraded,
+                "image_url_present": has_image,
+                "result_count": 1 if has_image else 0,
+                "image_output_count": 1 if has_image else 0,
+            }
+        )
+        if fallback_used:
+            metadata["fallback_provider"] = _PROVIDER
+            metadata["fallback_model"] = result.model
+            if not metadata["fallback_reason"]:
+                metadata["fallback_reason"] = "model_fallback"
+        if result.degraded and isinstance(result.error, Mapping):
+            code = _safe_text(result.error.get("code"))
+            if code:
+                metadata["fallback_reason"] = code
+        outputs = {
+            "provider": result.provider,
+            "model": result.model,
+            "degraded": result.degraded,
+            "renderable": result.renderable,
+            "retry_exhausted": bool(retry_exhausted),
+        }
+    elif error is not None:
+        metadata.update(
+            {
+                "degraded": True,
+                "image_url_present": False,
+                "fallback_reason": metadata.get("fallback_reason")
+                or "tool_exception",
+            }
+        )
+    span.finish(
+        metadata=safe_tool_metadata(metadata),
+        outputs=outputs,
+        error=error,
+    )
+
+
 def _extract_data_item(response: Any) -> Optional[Mapping[str, Any]]:
     data = getattr(response, "data", None)
     if isinstance(data, list) and data:
@@ -386,94 +473,204 @@ def generate_image(
     raw_prompt = str(prompt or "")
     safe_prompt = _sanitize_prompt(raw_prompt)
     chosen_model = _safe_text(model) or _PRIMARY_MODEL
+    started_at = time.perf_counter()
+    tool_span = start_tool_span(
+        "generate_image",
+        metadata={
+            "provider": _PROVIDER,
+            "model": chosen_model,
+        },
+        inputs={"tool_name": "generate_image", "model": chosen_model},
+    )
 
-    if not safe_prompt:
-        return _degraded_result(
-            prompt=safe_prompt,
-            model=chosen_model,
-            error=_rejected_prompt_error("empty_prompt"),
+    attempt_counter = 0
+
+    def _finalize(
+        result: GenerateImageResult,
+        *,
+        retry_attempt: int = 0,
+        retry_exhausted: bool = False,
+    ) -> GenerateImageResult:
+        fallback_used = result.model != chosen_model
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            span_name="generate_image",
+            requested_model=chosen_model,
+            fallback_used=fallback_used,
+            fallback_provider=_PROVIDER if fallback_used else "",
+            fallback_model=result.model if fallback_used else "",
+            fallback_reason="model_fallback" if fallback_used else "",
+            retry_attempt=retry_attempt,
+            retry_exhausted=retry_exhausted,
+            result=result,
         )
-
-    blocked = _validate_prompt(safe_prompt)
-    if blocked is not None:
-        return _degraded_result(prompt=safe_prompt, model=chosen_model, error=blocked)
-
-    if not live_provider_calls_enabled():
-        return _degraded_result(
-            prompt=safe_prompt,
-            model=chosen_model,
-            error={
-                "code": "live_calls_disabled",
-                "message": (
-                    "Live provider calls are disabled by "
-                    "CONTENTBLITZ_ENABLE_LIVE_CALLS."
-                ),
-                "provider": _PROVIDER,
-                "recoverable": False,
-            },
-        )
-
-    api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
-    if not api_key:
-        return _degraded_result(
-            prompt=safe_prompt,
-            model=chosen_model,
-            error={
-                "code": "configuration_error",
-                "message": "OPENAI_API_KEY is not configured.",
-                "provider": _PROVIDER,
-                "recoverable": False,
-            },
-        )
-
-    client = _build_openai_client(api_key=api_key)
-
-    models_to_try = [chosen_model]
-    if _FALLBACK_MODEL not in models_to_try:
-        models_to_try.append(_FALLBACK_MODEL)
-
-    last_error: Optional[Dict[str, Any]] = None
-    index = 0
-    while index < len(models_to_try):
-        model_name = models_to_try[index]
-        try:
-            result = _call_provider(
-                client,
-                model=model_name,
-                prompt=safe_prompt,
-                size=str(size or _DEFAULT_SIZE),
-                quality=quality,
-            )
-        except Exception as exc:  # pragma: no cover - deterministic via mocks in tests
-            normalized = _normalize_provider_error(exc)
-            last_error = normalized
-            if _should_try_modern_image_model(
-                exc,
-                normalized_error=normalized,
-                models_already_scheduled=models_to_try,
-            ):
-                models_to_try.append(_MODERN_IMAGE_MODEL)
-            index += 1
-            continue
-
-        if result.degraded:
-            last_error = result.error
-            index += 1
-            continue
         return result
 
-    return _degraded_result(
-        prompt=safe_prompt,
-        model=models_to_try[-1],
-        error={
-            "code": "provider_failure",
-            "message": "Image generation failed after primary and fallback models.",
-            "provider": _PROVIDER,
-            "recoverable": True,
-            "models_attempted": models_to_try,
-            "last_error": last_error,
-        },
-    )
+    try:
+        if not safe_prompt:
+            return _finalize(
+                _degraded_result(
+                    prompt=safe_prompt,
+                    model=chosen_model,
+                    error=_rejected_prompt_error("empty_prompt"),
+                )
+            )
+
+        blocked = _validate_prompt(safe_prompt)
+        if blocked is not None:
+            return _finalize(
+                _degraded_result(
+                    prompt=safe_prompt,
+                    model=chosen_model,
+                    error=blocked,
+                )
+            )
+
+        if not live_provider_calls_enabled():
+            return _finalize(
+                _degraded_result(
+                    prompt=safe_prompt,
+                    model=chosen_model,
+                    error={
+                        "code": "live_calls_disabled",
+                        "message": (
+                            "Live provider calls are disabled by "
+                            "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+                        ),
+                        "provider": _PROVIDER,
+                        "recoverable": False,
+                    },
+                )
+            )
+
+        api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
+        if not api_key:
+            return _finalize(
+                _degraded_result(
+                    prompt=safe_prompt,
+                    model=chosen_model,
+                    error={
+                        "code": "configuration_error",
+                        "message": "OPENAI_API_KEY is not configured.",
+                        "provider": _PROVIDER,
+                        "recoverable": False,
+                    },
+                )
+            )
+
+        client = _build_openai_client(api_key=api_key)
+        models_to_try = [chosen_model]
+        if _FALLBACK_MODEL not in models_to_try:
+            models_to_try.append(_FALLBACK_MODEL)
+
+        last_error: Optional[Dict[str, Any]] = None
+        index = 0
+        while index < len(models_to_try):
+            model_name = models_to_try[index]
+            attempt_counter += 1
+            child_name = _model_span_name(model_name)
+            child_started_at = time.perf_counter()
+            child_span = start_tool_span(
+                child_name,
+                metadata={
+                    "provider": _PROVIDER,
+                    "model": model_name,
+                    "fallback_used": model_name != chosen_model,
+                },
+                inputs={"tool_name": child_name, "model": model_name},
+            )
+            try:
+                result = _call_provider(
+                    client,
+                    model=model_name,
+                    prompt=safe_prompt,
+                    size=str(size or _DEFAULT_SIZE),
+                    quality=quality,
+                )
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - deterministic via mocks in tests
+                normalized = _normalize_provider_error(exc)
+                last_error = normalized
+                _finish_tool_span(
+                    span=child_span,
+                    started_at=child_started_at,
+                    span_name=child_name,
+                    requested_model=model_name,
+                    fallback_used=model_name != chosen_model,
+                    fallback_provider=_PROVIDER if model_name != chosen_model else "",
+                    fallback_model=model_name if model_name != chosen_model else "",
+                    fallback_reason="model_attempt_failed",
+                    retry_attempt=attempt_counter,
+                    retry_exhausted=False,
+                    error=exc,
+                )
+                if _should_try_modern_image_model(
+                    exc,
+                    normalized_error=normalized,
+                    models_already_scheduled=models_to_try,
+                ):
+                    models_to_try.append(_MODERN_IMAGE_MODEL)
+                index += 1
+                continue
+
+            _finish_tool_span(
+                span=child_span,
+                started_at=child_started_at,
+                span_name=child_name,
+                requested_model=model_name,
+                fallback_used=model_name != chosen_model,
+                fallback_provider=_PROVIDER if model_name != chosen_model else "",
+                fallback_model=model_name if model_name != chosen_model else "",
+                fallback_reason="",
+                retry_attempt=attempt_counter,
+                retry_exhausted=False,
+                result=result,
+            )
+            if result.degraded:
+                last_error = result.error
+                index += 1
+                continue
+            return _finalize(
+                result,
+                retry_attempt=attempt_counter,
+                retry_exhausted=False,
+            )
+
+        return _finalize(
+            _degraded_result(
+                prompt=safe_prompt,
+                model=models_to_try[-1],
+                error={
+                    "code": "provider_failure",
+                    "message": (
+                        "Image generation failed after primary and fallback models."
+                    ),
+                    "provider": _PROVIDER,
+                    "recoverable": True,
+                    "models_attempted": models_to_try,
+                    "last_error": last_error,
+                },
+            ),
+            retry_attempt=attempt_counter,
+            retry_exhausted=True,
+        )
+    except Exception as error:
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            span_name="generate_image",
+            requested_model=chosen_model,
+            fallback_used=False,
+            fallback_provider="",
+            fallback_model="",
+            fallback_reason="tool_exception",
+            retry_attempt=attempt_counter,
+            retry_exhausted=False,
+            error=error,
+        )
+        raise
 
 
 __all__ = ["GenerateImageResult", "generate_image"]

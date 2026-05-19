@@ -21,6 +21,7 @@ class _DummyContextManager:
 
 @dataclass
 class _DummyStreamlit:
+    subheader_calls: List[str] = field(default_factory=list)
     markdown_calls: List[str] = field(default_factory=list)
     image_calls: List[tuple[str, str]] = field(default_factory=list)
     info_calls: List[str] = field(default_factory=list)
@@ -33,6 +34,8 @@ class _DummyStreamlit:
     download_button_calls: List[dict[str, Any]] = field(default_factory=list)
 
     def subheader(self, *_args: Any, **_kwargs: Any) -> None:
+        if _args:
+            self.subheader_calls.append(str(_args[0]))
         return None
 
     def markdown(self, value: str, *_args: Any, **_kwargs: Any) -> None:
@@ -1224,6 +1227,59 @@ def test_research_section_does_not_duplicate_blog_output(monkeypatch) -> None:
     assert any(call["label"] == "Research" for call in dummy_st.expander_calls)
     assert sum("Blog content." in call for call in dummy_st.markdown_calls) == 1
     assert sum("Research content." in call for call in dummy_st.markdown_calls) == 1
+
+
+def test_observability_section_renders_above_workflow_messages(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+    monkeypatch.setattr(
+        result_view_module,
+        "build_observability_diagnostics",
+        lambda: {
+            "status": "enabled",
+            "status_label": "Enabled",
+            "tracing_enabled": True,
+            "project_name": "ContentBlitz",
+            "endpoint_host": "api.smith.langchain.com",
+            "last_trace_attempt_label": "Ready",
+            "note": "Tracing is enabled for this app session.",
+            "dashboard_instruction": (
+                "For trace details, review the LangSmith dashboard manually."
+            ),
+        },
+    )
+
+    payload = {
+        "workflow_status": "success",
+        "final_response": "## Blog Draft\nBody",
+        "usage_summary": {},
+        "image_prompts": [],
+        "image_outputs": [],
+        "sources": [],
+        "export_status": {"requested": False, "paths": {}, "errors": []},
+    }
+
+    result_view_module.render_collapsible_output_sections(
+        render_payload=payload,
+        status_messages=["Workflow completed successfully."],
+        execution_status="success",
+        indicator_result={},
+        node_statuses={},
+        progress_events=[],
+        raw_state={"requested_outputs": ["blog"]},
+        raw_submission={},
+    )
+
+    assert dummy_st.subheader_calls.count("Observability") == 1
+    assert dummy_st.subheader_calls.count("Workflow Messages") == 1
+    assert dummy_st.subheader_calls.index(
+        "Observability"
+    ) < dummy_st.subheader_calls.index(
+        "Workflow Messages",
+    )
+    rendered_markdown = "\n".join(dummy_st.markdown_calls)
+    assert "Tracing Enabled" in rendered_markdown
+    assert "Endpoint Host" in rendered_markdown
 
 
 def test_debug_section_is_collapsed_and_sanitized(monkeypatch) -> None:

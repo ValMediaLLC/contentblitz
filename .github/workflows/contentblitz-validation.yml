@@ -27,6 +27,7 @@ jobs:
           python scripts/validate_phase1.py
           python scripts/validate_phase2.py
           python scripts/validate_phase3.py
+          python scripts/validate_phase4.py
 
       - name: Unit + integration tests
         run: |

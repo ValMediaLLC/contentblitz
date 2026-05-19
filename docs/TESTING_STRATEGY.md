@@ -72,6 +72,21 @@ This script runs:
 2. live tests in skip-validation mode
 3. live smoke script in `--dry-run` mode
 
+Phase 4 observability validator:
+
+```bash
+python scripts/validate_phase4.py
+```
+
+This script validates, without requiring LangSmith credentials:
+
+1. observability config/import safety
+2. tracing-disabled behavior
+3. observability redaction tests
+4. observability graph tracing tests
+5. observability UI status tests
+6. representative no-credential unit/integration checks
+
 ## Core Commands
 
 Unit + integration with coverage:
@@ -90,6 +105,12 @@ Live smoke audit dry-run:
 
 ```bash
 python scripts/dev/smoke_phase2_live.py --dry-run
+```
+
+LangSmith observability smoke dry-run:
+
+```bash
+python scripts/dev/smoke_langsmith.py --dry-run
 ```
 
 ## Optional Live Smoke Commands
@@ -111,6 +132,7 @@ CONTENTBLITZ_RUN_LIVE_TESTS=1 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=1 pytest tests/l
 
 - unit/integration tests must not require API keys
 - unit/integration tests must not call live providers
+- observability smoke is opt-in via `CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1`
 - provider clients are mocked in contract and failure suites
 - live tests are opt-in only
 - frontend restore must not rerun providers
@@ -125,3 +147,29 @@ Note:
 - on some Windows/OneDrive setups, `.coverage` file locks can occur
 - `scripts/validate_phase2.py` uses a temp `COVERAGE_FILE` path to avoid local lock failures
 - `scripts/validate_phase3.py` also avoids unsafe temp cleanup assumptions during validation runs
+
+## Phase 4 Observability Validation Path
+
+Observability validation is safe by default and does not require live LangSmith access:
+
+```bash
+python scripts/validate_phase4.py
+python scripts/dev/smoke_langsmith.py --dry-run
+```
+
+What this validates:
+
+1. observability config imports cleanly
+2. tracing-disabled execution path is safe
+3. observability redaction behavior is covered by tests
+4. graph tracing behavior is covered by tests
+5. UI observability status behavior is covered by tests
+6. representative unit/integration checks run with LangSmith env vars removed
+
+Optional live smoke is never run implicitly:
+
+```bash
+CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 python scripts/dev/smoke_langsmith.py
+```
+
+Live smoke claims should only be made when this command is intentionally run and succeeds.

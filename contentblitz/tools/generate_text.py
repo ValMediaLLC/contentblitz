@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -15,7 +16,12 @@ from openai import (
     RateLimitError,
 )
 
-from contentblitz.config import INJECTION_GUARD, RETRY_POLICY, live_provider_calls_enabled
+from contentblitz.config import (
+    INJECTION_GUARD,
+    RETRY_POLICY,
+    live_provider_calls_enabled,
+)
+from contentblitz.core.observability import safe_tool_metadata, start_tool_span
 
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "gpt-4o"
@@ -200,6 +206,92 @@ def _degraded_result(model: str, error: Dict[str, Any]) -> GenerateTextResult:
     )
 
 
+def _fallback_used(
+    *,
+    requested_model: str,
+    result: GenerateTextResult,
+) -> bool:
+    requested = str(requested_model).strip() or _PRIMARY_MODEL
+    if not result.degraded:
+        return str(result.model).strip() != requested
+    if not isinstance(result.error, Mapping):
+        return False
+    attempted = result.error.get("models_attempted", [])
+    if not isinstance(attempted, list):
+        return False
+    normalized = [str(item).strip() for item in attempted if str(item).strip()]
+    return len(normalized) > 1
+
+
+def _finish_tool_span(
+    *,
+    span: Any,
+    started_at: float,
+    requested_model: str,
+    agent_key: str,
+    retry_attempt: int = 0,
+    retry_exhausted: bool = False,
+    result: GenerateTextResult | None = None,
+    error: BaseException | None = None,
+) -> None:
+    duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+    metadata: Dict[str, Any] = {
+        "tool_name": "generate_text",
+        "provider": _PROVIDER,
+        "model": requested_model,
+        "agent_key": agent_key,
+        "retry_attempt": max(0, int(retry_attempt)),
+        "retry_exhausted": bool(retry_exhausted),
+        "duration_ms": duration_ms,
+    }
+    outputs: Dict[str, Any] = {}
+
+    if result is not None:
+        fallback_used = _fallback_used(
+            requested_model=requested_model,
+            result=result,
+        )
+        metadata.update(
+            {
+                "model": result.model,
+                "final_model": result.model,
+                "degraded": result.degraded,
+                "fallback_used": fallback_used,
+                "input_token_count": result.input_tokens,
+                "output_token_count": result.output_tokens,
+                "total_token_count": result.total_tokens,
+            }
+        )
+        if fallback_used:
+            metadata["fallback_provider"] = _PROVIDER
+            metadata["fallback_model"] = result.model
+            metadata["fallback_reason"] = "model_fallback"
+        if result.degraded and isinstance(result.error, Mapping):
+            fallback_reason = str(result.error.get("code", "")).strip()
+            if fallback_reason:
+                metadata["fallback_reason"] = fallback_reason
+        outputs = {
+            "degraded": result.degraded,
+            "provider": result.provider,
+            "model": result.model,
+            "retry_exhausted": bool(retry_exhausted),
+        }
+    elif error is not None:
+        metadata.update(
+            {
+                "degraded": True,
+                "fallback_used": False,
+                "fallback_reason": "tool_exception",
+            }
+        )
+
+    span.finish(
+        metadata=safe_tool_metadata(metadata),
+        outputs=outputs,
+        error=error,
+    )
+
+
 def _call_provider(
     client: OpenAI,
     *,
@@ -245,89 +337,152 @@ def generate_text(
     max_tokens: int | None = None,
 ) -> GenerateTextResult:
     """Generate text using OpenAI with guarded retries and safe fallback behavior."""
+    requested_model = str(model).strip() or _PRIMARY_MODEL
     agent = str(agent_key).strip()
-    if agent not in RETRY_POLICY:
-        return _degraded_result(
-            model=model or _PRIMARY_MODEL,
-            error={
-                "code": "invalid_agent_key",
-                "message": "Unknown agent key for retry policy.",
-                "provider": _PROVIDER,
-                "recoverable": False,
-            },
-        )
-
-    raw_prompt = str(prompt or "")
-    safe_prompt = _sanitize_prompt(raw_prompt)
-    if not safe_prompt:
-        return _degraded_result(
-            model=model or _PRIMARY_MODEL,
-            error=_rejected_prompt_error("empty_prompt"),
-        )
-
-    blocked_error = _validate_prompt(safe_prompt)
-    if blocked_error is not None:
-        return _degraded_result(model=model or _PRIMARY_MODEL, error=blocked_error)
-
-    if not live_provider_calls_enabled():
-        return _degraded_result(
-            model=model or _PRIMARY_MODEL,
-            error={
-                "code": "live_calls_disabled",
-                "message": "Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
-                "provider": _PROVIDER,
-                "recoverable": False,
-            },
-        )
-
-    api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
-    if not api_key:
-        return _degraded_result(
-            model=model or _PRIMARY_MODEL,
-            error={
-                "code": "configuration_error",
-                "message": "OPENAI_API_KEY is not configured.",
-                "provider": _PROVIDER,
-                "recoverable": False,
-            },
-        )
-
-    client = _build_openai_client(api_key=api_key)
-    attempts_per_model = _safe_int(RETRY_POLICY.get(agent, 0), default=0) + 1
-
-    primary_model = str(model).strip() or _PRIMARY_MODEL
-    models_to_try = [primary_model]
-    if primary_model != _FALLBACK_MODEL:
-        models_to_try.append(_FALLBACK_MODEL)
-
-    last_error: Optional[Dict[str, Any]] = None
-    for model_name in models_to_try:
-        for _ in range(attempts_per_model):
-            try:
-                return _call_provider(
-                    client,
-                    model=model_name,
-                    prompt=safe_prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            except (
-                Exception
-            ) as exc:  # pragma: no cover - deterministic via mocks in tests
-                last_error = _normalize_provider_error(exc)
-
-    return _degraded_result(
-        model=models_to_try[-1],
-        error={
-            "code": "provider_failure",
-            "message": "Text generation failed after retries and fallback.",
+    started_at = time.perf_counter()
+    tool_span = start_tool_span(
+        "generate_text",
+        metadata={
             "provider": _PROVIDER,
-            "recoverable": True,
-            "attempts_per_model": attempts_per_model,
-            "models_attempted": models_to_try,
-            "last_error": last_error,
+            "model": requested_model,
+            "agent_key": agent,
         },
+        inputs={"tool_name": "generate_text", "agent_key": agent},
     )
+
+    def _finalize(
+        result: GenerateTextResult,
+        *,
+        retry_attempt: int = 0,
+        retry_exhausted: bool = False,
+    ) -> GenerateTextResult:
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            requested_model=requested_model,
+            agent_key=agent,
+            retry_attempt=retry_attempt,
+            retry_exhausted=retry_exhausted,
+            result=result,
+        )
+        return result
+
+    try:
+        if agent not in RETRY_POLICY:
+            return _finalize(
+                _degraded_result(
+                    model=requested_model,
+                    error={
+                        "code": "invalid_agent_key",
+                        "message": "Unknown agent key for retry policy.",
+                        "provider": _PROVIDER,
+                        "recoverable": False,
+                    },
+                )
+            )
+
+        raw_prompt = str(prompt or "")
+        safe_prompt = _sanitize_prompt(raw_prompt)
+        if not safe_prompt:
+            return _finalize(
+                _degraded_result(
+                    model=requested_model,
+                    error=_rejected_prompt_error("empty_prompt"),
+                )
+            )
+
+        blocked_error = _validate_prompt(safe_prompt)
+        if blocked_error is not None:
+            return _finalize(
+                _degraded_result(model=requested_model, error=blocked_error)
+            )
+
+        if not live_provider_calls_enabled():
+            return _finalize(
+                _degraded_result(
+                    model=requested_model,
+                    error={
+                        "code": "live_calls_disabled",
+                        "message": (
+                            "Live provider calls are disabled by "
+                            "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+                        ),
+                        "provider": _PROVIDER,
+                        "recoverable": False,
+                    },
+                )
+            )
+
+        api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
+        if not api_key:
+            return _finalize(
+                _degraded_result(
+                    model=requested_model,
+                    error={
+                        "code": "configuration_error",
+                        "message": "OPENAI_API_KEY is not configured.",
+                        "provider": _PROVIDER,
+                        "recoverable": False,
+                    },
+                )
+            )
+
+        client = _build_openai_client(api_key=api_key)
+        attempts_per_model = _safe_int(RETRY_POLICY.get(agent, 0), default=0) + 1
+        attempt_counter = 0
+
+        models_to_try = [requested_model]
+        if requested_model != _FALLBACK_MODEL:
+            models_to_try.append(_FALLBACK_MODEL)
+
+        last_error: Optional[Dict[str, Any]] = None
+        for model_name in models_to_try:
+            for _ in range(attempts_per_model):
+                attempt_counter += 1
+                try:
+                    return _finalize(
+                        _call_provider(
+                            client,
+                            model=model_name,
+                            prompt=safe_prompt,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                        ),
+                        retry_attempt=attempt_counter,
+                        retry_exhausted=False,
+                    )
+                except (
+                    Exception
+                ) as exc:  # pragma: no cover - deterministic via mocks in tests
+                    last_error = _normalize_provider_error(exc)
+
+        return _finalize(
+            _degraded_result(
+                model=models_to_try[-1],
+                error={
+                    "code": "provider_failure",
+                    "message": "Text generation failed after retries and fallback.",
+                    "provider": _PROVIDER,
+                    "recoverable": True,
+                    "attempts_per_model": attempts_per_model,
+                    "models_attempted": models_to_try,
+                    "last_error": last_error,
+                },
+            ),
+            retry_attempt=attempt_counter,
+            retry_exhausted=True,
+        )
+    except Exception as error:
+        _finish_tool_span(
+            span=tool_span,
+            started_at=started_at,
+            requested_model=requested_model,
+            agent_key=agent,
+            retry_attempt=0,
+            retry_exhausted=False,
+            error=error,
+        )
+        raise
 
 
 __all__ = ["GenerateTextResult", "generate_text"]
