@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.core.cost_controls import (
@@ -217,6 +218,10 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     content_brief.setdefault("image", {})
 
     cost_controls = normalize_cost_controls(_safe_dict(state.get("cost_controls", {})))
+    provider_latency_total_ms = 0
+    provider_call_count = 0
+    provider_name = ""
+    model_used = ""
 
     for output_type in ("blog", "linkedin", "image"):
         if output_type not in outputs:
@@ -239,6 +244,7 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
             research_data=research_data,
             sources=sources,
         )
+        provider_started_at = perf_counter()
         llm_response = _safe_dict(
             generate_text(
                 prompt=prompt,
@@ -246,6 +252,17 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 model=preferred_text_model(cost_controls),
             )
         )
+        provider_latency_total_ms += max(
+            0,
+            int((perf_counter() - provider_started_at) * 1000),
+        )
+        provider_call_count += 1
+        provider_candidate = str(llm_response.get("provider", "")).strip().lower()
+        model_candidate = str(llm_response.get("model", "")).strip()
+        if provider_candidate:
+            provider_name = provider_candidate
+        if model_candidate:
+            model_used = model_candidate
         cost_controls = apply_text_tokens(cost_controls, llm_response)
         content_brief[output_type] = _parse_brief_output(
             llm_output=llm_response.get("output", ""),
@@ -262,6 +279,18 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "workflow_status": "strategy_complete",
         "final_response": None,
     }
+    if provider_call_count > 0:
+        tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
+        strategist_metrics: Dict[str, Any] = {
+            "provider_call_count": provider_call_count,
+            "provider_latency_ms": max(0, int(provider_latency_total_ms)),
+        }
+        if provider_name:
+            strategist_metrics["provider"] = provider_name
+        if model_used:
+            strategist_metrics["model"] = model_used
+        tool_outputs["content_strategist"] = strategist_metrics
+        updates["tool_outputs"] = tool_outputs
 
     if "research" in outputs and any(
         item in outputs for item in ("blog", "linkedin", "image")

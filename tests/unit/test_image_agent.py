@@ -115,6 +115,11 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
     assert updates["image_outputs"][0]["status"] == "success"
     assert updates["image_outputs"][0]["url"] == "https://example.com/success.png"
     assert updates["image_outputs"][0]["renderable"] is True
+    assert updates["tool_outputs"]["image_agent"]["provider_call_count"] == 1
+    assert isinstance(
+        updates["tool_outputs"]["image_agent"]["provider_latency_ms"],
+        int,
+    )
     assert updates["draft_status"]["image"] == "complete"
 
 

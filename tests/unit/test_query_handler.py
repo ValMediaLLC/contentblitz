@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -174,6 +175,43 @@ def test_node_returns_only_state_updates(monkeypatch) -> None:
     assert "conversation_history" not in updates
 
 
+def test_provider_latency_metadata_recorded_when_query_handler_calls_generate_text(
+    monkeypatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "intent": "content_creation",
+            "requested_outputs": ["blog"],
+            "research_required": True,
+            "clarification_needed": False,
+            "clarification_message": None,
+            "export_requested": False,
+        }
+    )
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (prompt, metadata)
+        assert agent_key == "query_handler"
+        assert model
+        time.sleep(0.002)
+        return {
+            "output": payload,
+            "provider": "openai",
+            "model": "gpt-4o",
+        }
+
+    monkeypatch.setattr(query_handler_module, "generate_text", fake_generate_text)
+    state = create_initial_state(user_query="Write a blog post about observability")
+    updates = query_handler_module.query_handler_node(state)
+    query_metrics = updates["tool_outputs"]["query_handler"]
+
+    assert query_metrics["provider"] == "openai"
+    assert query_metrics["model"] == "gpt-4o"
+    assert query_metrics["provider_call_count"] == 1
+    assert isinstance(query_metrics["provider_latency_ms"], int)
+    assert query_metrics["provider_latency_ms"] >= 0
+
+
 def test_query_handler_does_not_propagate_stale_retry_flags(monkeypatch) -> None:
     payload = json.dumps(
         {
@@ -217,6 +255,9 @@ def test_explicit_image_only_request_with_non_empty_query_routes_deterministical
     assert updates["requested_outputs"] == ["image"]
     assert updates["research_required"] is False
     assert updates["routing_decision"] == "image_agent_node"
+    assert "tool_outputs" not in updates or "query_handler" not in updates.get(
+        "tool_outputs", {}
+    )
 
 
 def test_obvious_prompt_injection_routes_to_clarification_with_safe_metadata(

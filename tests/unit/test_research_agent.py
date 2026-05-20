@@ -1,4 +1,5 @@
 import json
+import time
 
 from contentblitz.agents import research_agent as research_agent_module
 from contentblitz.state import create_initial_state
@@ -63,6 +64,8 @@ def test_cache_hit_skips_search_web(monkeypatch) -> None:
     updates = research_agent_module.research_agent_node(state)
     assert calls["search"] == 0
     assert updates["research_data"]["cache_hit"] is True
+    assert "provider_latency_ms" not in updates["research_data"]
+    assert "provider_call_count" not in updates["research_data"]
     assert updates["sources"][0]["title"] == "Cached"
     _assert_complete_research_data(updates)
 
@@ -75,6 +78,7 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
 
     def fake_search_web(query, depth="standard"):
         calls["search"] += 1
+        time.sleep(0.002)
         return {
             "results": [
                 {
@@ -95,6 +99,9 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
     assert "research_data" in updates
     assert isinstance(updates["sources"], list)
     assert updates["cost_controls"]["search_queries_used_this_session"] > 0
+    assert updates["research_data"]["provider_call_count"] == calls["search"]
+    assert isinstance(updates["research_data"]["provider_latency_ms"], int)
+    assert updates["research_data"]["provider_latency_ms"] >= 0
     _assert_complete_research_data(updates)
 
 

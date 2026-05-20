@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 from urllib.parse import urlparse
 
@@ -97,6 +98,16 @@ def _safe_list(value: Any) -> list[Any]:
 
 def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
 
 
 def _build_search_queries(user_query: str) -> List[str]:
@@ -685,15 +696,21 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     collected_sources: List[Dict[str, Any]] = []
     fallback_used = False
     search_calls_used = 0
+    provider_latency_total_ms = 0
+    provider_call_count = 0
 
     for search_query in search_queries:
         if remaining_calls <= 0:
             break
 
+        primary_started_at = perf_counter()
         try:
             primary_response = search_web(query=search_query, depth="standard")
         except Exception:
             primary_response = {"results": []}
+        primary_duration_ms = max(0, int((perf_counter() - primary_started_at) * 1000))
+        provider_latency_total_ms += primary_duration_ms
+        provider_call_count += 1
         remaining_calls -= 1
         search_calls_used += 1
         executed_queries.append(search_query)
@@ -714,10 +731,17 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             collected_sources.append(_make_degraded_perplexity_source(search_query))
             continue
 
+        fallback_started_at = perf_counter()
         try:
             fallback_response = search_web(query=search_query, depth="fallback")
         except Exception:
             fallback_response = {"results": []}
+        fallback_duration_ms = max(
+            0,
+            int((perf_counter() - fallback_started_at) * 1000),
+        )
+        provider_latency_total_ms += fallback_duration_ms
+        provider_call_count += 1
         remaining_calls -= 1
         search_calls_used += 1
 
@@ -769,6 +793,11 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "entities": entities,
         "deterministic_summary_used": deterministic_summary_used,
     }
+    if provider_call_count > 0:
+        research_data["provider_call_count"] = provider_call_count
+        research_data["provider_latency_ms"] = (
+            _safe_non_negative_int(provider_latency_total_ms) or 0
+        )
 
     cost_controls["search_queries_used_this_session"] = used_queries + search_calls_used
     if token_budget_exceeded(cost_controls):

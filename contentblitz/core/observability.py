@@ -7,6 +7,7 @@ import os
 import re
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import import_module
 from typing import Any, Callable, Dict, Mapping, Protocol
 from urllib.parse import urlparse
@@ -93,6 +94,7 @@ _TOOL_TRACE_INT_FIELDS = (
     "source_count",
     "image_output_count",
     "duration_ms",
+    "provider_latency_ms",
 )
 _TRACE_SAMPLE_RATE_ENV = "CONTENTBLITZ_TRACE_SAMPLE_RATE"
 _TRACE_FAILURE_SAMPLE_RATE_ENV = "CONTENTBLITZ_TRACE_FAILURE_SAMPLE_RATE"
@@ -316,6 +318,52 @@ def _safe_non_negative_int(value: Any) -> int | None:
     if isinstance(value, float):
         return max(0, int(value))
     return None
+
+
+def _safe_iso_timestamp(value: datetime | None) -> str:
+    if not isinstance(value, datetime):
+        return ""
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC).isoformat(timespec="milliseconds")
+
+
+def build_node_timing_metadata(
+    *,
+    node_started_at: datetime | None = None,
+    node_ended_at: datetime | None = None,
+    duration_ms: int | None = None,
+) -> dict[str, Any]:
+    """Build safe node timing metadata for observability spans."""
+    started_iso = _safe_iso_timestamp(node_started_at)
+    ended_iso = _safe_iso_timestamp(node_ended_at)
+    safe_duration_ms = _safe_non_negative_int(duration_ms)
+
+    if (
+        safe_duration_ms is None
+        and isinstance(node_started_at, datetime)
+        and isinstance(node_ended_at, datetime)
+    ):
+        start_value = (
+            node_started_at
+            if node_started_at.tzinfo is not None
+            else node_started_at.replace(tzinfo=UTC)
+        )
+        end_value = (
+            node_ended_at
+            if node_ended_at.tzinfo is not None
+            else node_ended_at.replace(tzinfo=UTC)
+        )
+        measured_ms = int((end_value - start_value).total_seconds() * 1000)
+        safe_duration_ms = max(0, measured_ms)
+
+    metadata: dict[str, Any] = {}
+    if started_iso:
+        metadata["node_started_at"] = started_iso
+    if ended_iso:
+        metadata["node_ended_at"] = ended_iso
+    if safe_duration_ms is not None:
+        metadata["duration_ms"] = safe_duration_ms
+    return metadata
 
 
 def _safe_string_list(value: Any) -> list[str]:
@@ -1092,13 +1140,173 @@ def safe_trace_metadata(
     return {}
 
 
+def _node_provider_from_sources(sources: Any) -> str:
+    if not isinstance(sources, list):
+        return ""
+    for item in sources:
+        if not isinstance(item, Mapping):
+            continue
+        provider = _safe_text(item.get("provider") or item.get("source")).lower()
+        if provider:
+            return provider
+    return ""
+
+
+def _explicit_provider_latency_ms(
+    *,
+    node_name: str,
+    state: Mapping[str, Any],
+) -> int | None:
+    return _explicit_provider_performance_metrics(node_name=node_name, state=state)[0]
+
+
+def _explicit_provider_call_count(
+    *,
+    node_name: str,
+    state: Mapping[str, Any],
+) -> int | None:
+    return _explicit_provider_performance_metrics(node_name=node_name, state=state)[1]
+
+
+def _explicit_provider_performance_metrics(
+    *,
+    node_name: str,
+    state: Mapping[str, Any],
+) -> tuple[int | None, int | None]:
+    def _metrics_from_payload(
+        payload: Mapping[str, Any],
+    ) -> tuple[int | None, int | None]:
+        return (
+            _safe_non_negative_int(payload.get("provider_latency_ms")),
+            _safe_non_negative_int(payload.get("provider_call_count")),
+        )
+
+    if node_name == "blog_writer_node":
+        blog = _safe_mapping_value(
+            _safe_mapping_value(state.get("content_drafts", {})).get("blog")
+        )
+        return _metrics_from_payload(blog)
+    if node_name == "linkedin_writer_node":
+        linkedin = _safe_mapping_value(
+            _safe_mapping_value(state.get("content_drafts", {})).get("linkedin")
+        )
+        return _metrics_from_payload(linkedin)
+    if node_name == "research_agent_node":
+        research_data = _safe_mapping_value(state.get("research_data", {}))
+        return _metrics_from_payload(research_data)
+    if node_name == "image_agent_node":
+        image_tool_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("image_agent")
+        )
+        return _metrics_from_payload(image_tool_output)
+    if node_name == "query_handler_node":
+        query_handler_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("query_handler")
+        )
+        return _metrics_from_payload(query_handler_output)
+    if node_name == "content_strategist_node":
+        strategist_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("content_strategist")
+        )
+        return _metrics_from_payload(strategist_output)
+    return None, None
+
+
+def _node_performance_context(
+    *,
+    node_name: str,
+    state: Mapping[str, Any],
+    duration_ms: int | None = None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+
+    safe_duration_ms = _safe_non_negative_int(duration_ms)
+    if safe_duration_ms is not None:
+        context["duration_ms"] = safe_duration_ms
+
+    provider = ""
+    model = ""
+    provider_latency_ms = _explicit_provider_latency_ms(
+        node_name=node_name,
+        state=state,
+    )
+    provider_call_count = _explicit_provider_call_count(
+        node_name=node_name,
+        state=state,
+    )
+
+    if node_name == "research_agent_node":
+        research_data = _safe_mapping_value(state.get("research_data", {}))
+        if "cache_hit" in research_data:
+            context["cache_hit"] = _safe_bool(research_data.get("cache_hit"))
+        provider = _node_provider_from_sources(state.get("sources", []))
+        if not provider and _safe_bool(research_data.get("fallback_used", False)):
+            provider = "perplexity"
+    elif node_name == "blog_writer_node":
+        content_drafts = _safe_mapping_value(state.get("content_drafts", {}))
+        blog = _safe_mapping_value(content_drafts.get("blog"))
+        model = _safe_text(blog.get("model_used"))
+        if model:
+            provider = "openai"
+    elif node_name == "linkedin_writer_node":
+        linkedin = _safe_mapping_value(
+            _safe_mapping_value(state.get("content_drafts", {})).get("linkedin")
+        )
+        model = _safe_text(linkedin.get("model_used"))
+        if model:
+            provider = "openai"
+    elif node_name == "image_agent_node":
+        image_tool_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("image_agent")
+        )
+        provider = _safe_text(image_tool_output.get("provider")).lower()
+        model = _safe_text(image_tool_output.get("provider"))
+        if not provider:
+            image_outputs = state.get("image_outputs", [])
+            if isinstance(image_outputs, list) and image_outputs:
+                first = image_outputs[0]
+                if isinstance(first, Mapping):
+                    provider = _safe_text(first.get("provider")).lower()
+                    model = _safe_text(first.get("provider"))
+    elif node_name == "query_handler_node":
+        query_handler_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("query_handler")
+        )
+        provider = _safe_text(query_handler_output.get("provider")).lower()
+        model = _safe_text(query_handler_output.get("model"))
+    elif node_name == "content_strategist_node":
+        strategist_output = _safe_mapping_value(
+            _safe_mapping_value(state.get("tool_outputs", {})).get("content_strategist")
+        )
+        provider = _safe_text(strategist_output.get("provider")).lower()
+        model = _safe_text(strategist_output.get("model"))
+
+    if provider:
+        context["provider"] = provider
+    if model:
+        context["model"] = model
+
+    if provider_latency_ms is not None:
+        context["provider_latency_ms"] = provider_latency_ms
+    if provider_call_count is not None:
+        context["provider_call_count"] = provider_call_count
+
+    return context
+
+
 def safe_node_start_metadata(
     *,
     state: Mapping[str, Any],
     node_name: str,
+    node_started_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Build safe metadata for node start spans."""
-    return safe_trace_metadata(state, node_name=node_name, node_status="running")
+    metadata = safe_trace_metadata(state, node_name=node_name, node_status="running")
+    metadata.update(build_node_timing_metadata(node_started_at=node_started_at))
+    stripped = _strip_unsafe_env_metadata(metadata)
+    if isinstance(stripped, Mapping):
+        return dict(stripped)
+    return {}
 
 
 def safe_node_end_metadata(
@@ -1107,14 +1315,35 @@ def safe_node_end_metadata(
     node_name: str,
     node_status: str,
     updates: Mapping[str, Any] | None = None,
+    node_started_at: datetime | None = None,
+    node_ended_at: datetime | None = None,
+    duration_ms: int | None = None,
 ) -> dict[str, Any]:
     """Build safe metadata for node end spans."""
     merged_state = _merged_state_view(state, updates)
-    return safe_trace_metadata(
+    metadata = safe_trace_metadata(
         merged_state,
         node_name=node_name,
         node_status=node_status,
     )
+    metadata.update(
+        build_node_timing_metadata(
+            node_started_at=node_started_at,
+            node_ended_at=node_ended_at,
+            duration_ms=duration_ms,
+        )
+    )
+    metadata.update(
+        _node_performance_context(
+            node_name=node_name,
+            state=merged_state,
+            duration_ms=duration_ms,
+        )
+    )
+    stripped = _strip_unsafe_env_metadata(metadata)
+    if isinstance(stripped, Mapping):
+        return dict(stripped)
+    return {}
 
 
 def safe_workflow_start_metadata(state: Mapping[str, Any]) -> dict[str, Any]:

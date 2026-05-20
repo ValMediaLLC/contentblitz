@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.core.cost_controls import (
@@ -183,6 +184,22 @@ def _safe_image_error_payload(raw_error: Any) -> Dict[str, Any]:
     }
 
 
+def _provider_perf_metrics(
+    *,
+    provider_latency_ms: int | None,
+    provider_call_count: int,
+) -> Dict[str, int]:
+    if provider_call_count <= 0:
+        return {}
+    safe_latency = (
+        0 if provider_latency_ms is None else max(0, int(provider_latency_ms))
+    )
+    return {
+        "provider_call_count": provider_call_count,
+        "provider_latency_ms": safe_latency,
+    }
+
+
 # TODO(provider):
 # Replace recoverable image failure with a deterministic fallback image asset
 # when provider-specific fallback asset policy is finalized.
@@ -261,9 +278,22 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     used = int(cost_controls.get("image_generations_used_this_session", 0))
 
+    provider_latency_ms: int | None = None
+    provider_call_count = 0
     try:
+        provider_started_at = perf_counter()
         image_response = _safe_dict(generate_image(prompt=enhanced_prompt, style=style))
+        provider_latency_ms = max(
+            0,
+            int((perf_counter() - provider_started_at) * 1000),
+        )
+        provider_call_count = 1
     except Exception:  # pragma: no cover - defensive path
+        provider_latency_ms = max(
+            0,
+            int((perf_counter() - provider_started_at) * 1000),
+        )
+        provider_call_count = 1
         failure_message = _SAFE_IMAGE_PROVIDER_WARNING
         failure_payload = {
             "status": "failed",
@@ -283,6 +313,10 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "reason": "unknown_provider_error",
             "attempted": True,
             "provider_status": "degraded",
+            **_provider_perf_metrics(
+                provider_latency_ms=provider_latency_ms,
+                provider_call_count=provider_call_count,
+            ),
         }
         return {
             "image_prompts": image_prompts,
@@ -330,6 +364,10 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "reason": failure_reason,
             "attempted": True,
             "provider_status": "degraded",
+            **_provider_perf_metrics(
+                provider_latency_ms=provider_latency_ms,
+                provider_call_count=provider_call_count,
+            ),
         }
         return {
             "image_prompts": image_prompts,
@@ -380,6 +418,10 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "provider_status": "degraded",
             "images_generated": len(sanitized_images),
             "renderable_images": renderable_count,
+            **_provider_perf_metrics(
+                provider_latency_ms=provider_latency_ms,
+                provider_call_count=provider_call_count,
+            ),
         }
         return {
             "image_prompts": image_prompts,
@@ -399,6 +441,10 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "provider_status": "ok",
         "images_generated": len(sanitized_images),
         "renderable_images": renderable_count,
+        **_provider_perf_metrics(
+            provider_latency_ms=provider_latency_ms,
+            provider_call_count=provider_call_count,
+        ),
     }
     return {
         "image_prompts": image_prompts,

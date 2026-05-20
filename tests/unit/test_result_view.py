@@ -954,6 +954,42 @@ def test_usage_summary_renders_compact_cards(monkeypatch) -> None:
     assert any("Estimated Cost Level" in call for call in dummy_st.markdown_calls)
 
 
+def test_performance_summary_renders_safe_cards(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    result_view_module.render_performance_summary(
+        {
+            "performance_summary": {
+                "executed_node_count": 4,
+                "timed_node_count": 4,
+                "total_duration_ms": 2200,
+                "average_duration_ms": 550,
+                "provider_latency_total_ms": 1400,
+                "nodes": [
+                    {
+                        "node_name": "query_handler_node",
+                        "status": "completed",
+                        "duration_ms": 200,
+                    },
+                    {
+                        "node_name": "research_agent_node",
+                        "status": "completed",
+                        "duration_ms": 1200,
+                        "provider": "serp_api",
+                        "provider_latency_ms": 1200,
+                        "cache_hit": False,
+                    },
+                ],
+            }
+        }
+    )
+
+    assert "Performance Summary" in dummy_st.subheader_calls
+    assert any("Executed Nodes" in call for call in dummy_st.markdown_calls)
+    assert any("Total Duration" in call for call in dummy_st.markdown_calls)
+
+
 def test_truncate_display_value_caps_text_safely() -> None:
     assert (
         result_view_module._truncate_display_value(

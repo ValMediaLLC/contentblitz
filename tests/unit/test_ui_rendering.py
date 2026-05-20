@@ -402,6 +402,50 @@ def test_usage_summary_marks_budget_exceeded_and_surfaces_warning() -> None:
     )
 
 
+def test_performance_summary_aggregates_progress_event_metadata() -> None:
+    state = _base_state()
+    state["ui_progress_events"] = [
+        {
+            "node_name": "query_handler_node",
+            "status": "completed",
+            "timestamp": "2026-05-20T12:00:00+00:00",
+            "safe_metadata": {
+                "duration_ms": 120,
+                "node_started_at": "2026-05-20T12:00:00+00:00",
+                "node_ended_at": "2026-05-20T12:00:00.120+00:00",
+            },
+        },
+        {
+            "node_name": "research_agent_node",
+            "status": "completed",
+            "timestamp": "2026-05-20T12:00:02+00:00",
+            "safe_metadata": {
+                "duration_ms": 640,
+                "provider_latency_ms": 640,
+                "provider": "serp_api",
+                "cache_hit": True,
+            },
+        },
+    ]
+
+    payload = build_render_payload(
+        state=state,
+        node_statuses=build_initial_node_statuses(),
+    )
+    performance = payload["performance_summary"]
+
+    assert performance["executed_node_count"] == 2
+    assert performance["timed_node_count"] == 2
+    assert performance["total_duration_ms"] == 760
+    assert performance["average_duration_ms"] == 380
+    assert performance["provider_latency_total_ms"] == 640
+    nodes = performance["nodes"]
+    assert nodes[0]["node_name"] == "query_handler_node"
+    assert nodes[1]["node_name"] == "research_agent_node"
+    assert nodes[1]["cache_hit"] is True
+    assert nodes[1]["provider"] == "serp_api"
+
+
 def test_render_payload_marks_provider_degradation_for_fallback_drafts() -> None:
     state = _base_state()
     state["requested_outputs"] = ["blog", "linkedin", "image"]

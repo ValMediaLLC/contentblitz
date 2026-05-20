@@ -1,3 +1,5 @@
+import time
+
 from contentblitz.agents import blog_writer as blog_writer_module
 from contentblitz.state import create_initial_state
 
@@ -220,3 +222,18 @@ def test_degraded_generate_text_creates_marked_fallback_draft(monkeypatch) -> No
     assert updates["status_messages"][0].startswith(
         "Draft unavailable because text generation is currently limited."
     )
+
+
+def test_provider_latency_is_recorded_for_timed_generate_text_call(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (prompt, agent_key, model, metadata)
+        time.sleep(0.003)
+        return {"output": "Main draft."}
+
+    monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
+    updates = blog_writer_module.blog_writer_node(_base_state())
+    blog = updates["content_drafts"]["blog"]
+
+    assert blog["provider_call_count"] == 1
+    assert isinstance(blog["provider_latency_ms"], int)
+    assert blog["provider_latency_ms"] >= 0

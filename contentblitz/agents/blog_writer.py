@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.core.cost_controls import (
@@ -175,6 +176,16 @@ def _response_total_tokens(llm_response: Mapping[str, Any]) -> int:
     return 0
 
 
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
+
+
 def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate a blog draft using content brief + available citations."""
     content_brief = _safe_dict(state.get("content_brief", {}))
@@ -256,6 +267,7 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         retry_feedback=retry_feedback,
     )
 
+    started_at = perf_counter()
     llm_response = _safe_dict(
         generate_text(
             prompt=prompt,
@@ -263,6 +275,8 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             model=model,
         )
     )
+    provider_latency_ms = max(0, int((perf_counter() - started_at) * 1000))
+    provider_call_count = 1
     raw_output = str(llm_response.get("output", "")).strip()
     degraded_response = bool(llm_response.get("degraded", False))
     provider_error = _safe_dict(llm_response.get("error", {}))
@@ -309,6 +323,9 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "real_generation_succeeded": not fallback_generated,
         "generation_tokens": _response_total_tokens(llm_response),
     }
+    if provider_call_count > 0:
+        blog_update["provider_call_count"] = provider_call_count
+        blog_update["provider_latency_ms"] = _safe_non_negative_int(provider_latency_ms)
     updates: Dict[str, Any] = {
         "content_drafts": {"blog": blog_update},
         "draft_status": {

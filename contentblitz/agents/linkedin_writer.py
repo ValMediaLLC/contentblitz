@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
 from contentblitz.core.cost_controls import (
@@ -378,6 +379,16 @@ def _response_total_tokens(llm_response: Mapping[str, Any]) -> int:
     return 0
 
 
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
+
+
 def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Generate a LinkedIn draft from the strategist brief."""
     user_query = str(state.get("user_query", "")).strip()
@@ -447,6 +458,9 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         linkedin_brief=linkedin_brief,
         retry_feedback=retry_feedback,
     )
+    provider_latency_total_ms = 0
+    provider_call_count = 0
+    first_started_at = perf_counter()
     first_response = _safe_dict(
         generate_text(
             prompt=prompt,
@@ -454,6 +468,8 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             model=model,
         )
     )
+    provider_latency_total_ms += max(0, int((perf_counter() - first_started_at) * 1000))
+    provider_call_count += 1
     cost_controls = apply_text_tokens(cost_controls, first_response)
     body = str(first_response.get("output", "")).strip()
     fallback_generated = bool(first_response.get("degraded", False))
@@ -475,6 +491,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             retry_feedback=retry_feedback,
             previous_char_count=len(body),
         )
+        retry_started_at = perf_counter()
         retry_response = _safe_dict(
             generate_text(
                 prompt=retry_prompt,
@@ -482,6 +499,11 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 model=retry_model,
             )
         )
+        provider_latency_total_ms += max(
+            0,
+            int((perf_counter() - retry_started_at) * 1000),
+        )
+        provider_call_count += 1
         cost_controls = apply_text_tokens(cost_controls, retry_response)
         retry_body = str(retry_response.get("output", "")).strip()
         retry_degraded = bool(retry_response.get("degraded", False))
@@ -544,6 +566,11 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "real_generation_succeeded": not fallback_generated,
         "generation_tokens": _response_total_tokens(first_response),
     }
+    if provider_call_count > 0:
+        linkedin_update["provider_call_count"] = provider_call_count
+        linkedin_update["provider_latency_ms"] = _safe_non_negative_int(
+            provider_latency_total_ms
+        )
 
     updates: Dict[str, Any] = {
         "content_drafts": {"linkedin": linkedin_update},
