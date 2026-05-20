@@ -251,9 +251,15 @@ def _synthesize_summary(
     query: str,
     sources: List[Dict[str, Any]],
     cost_controls: Mapping[str, Any],
-) -> tuple[str, Dict[str, Any], bool]:
+) -> tuple[str, Dict[str, Any], bool, int, int]:
     if not sources:
-        return _deterministic_research_summary(query=query, sources=sources), {}, True
+        return (
+            _deterministic_research_summary(query=query, sources=sources),
+            {},
+            True,
+            0,
+            0,
+        )
 
     top = sources[:5]
     bullets = "\n".join(
@@ -264,6 +270,7 @@ def _synthesize_summary(
         f"Topic: {query}\n"
         f"Findings:\n{bullets}"
     )
+    summary_started_at = perf_counter()
     llm_response = _safe_dict(
         generate_text(
             prompt=prompt,
@@ -271,13 +278,23 @@ def _synthesize_summary(
             model=preferred_text_model(cost_controls),
         )
     )
+    summary_provider_latency_ms = max(
+        0,
+        int((perf_counter() - summary_started_at) * 1000),
+    )
     summary = str(_safe_dict(llm_response).get("output", "")).strip()
     if summary:
-        return summary, llm_response, False
-    return _deterministic_research_summary(
-        query=query,
-        sources=sources,
-    ), llm_response, True
+        return summary, llm_response, False, summary_provider_latency_ms, 1
+    return (
+        _deterministic_research_summary(
+            query=query,
+            sources=sources,
+        ),
+        llm_response,
+        True,
+        summary_provider_latency_ms,
+        1,
+    )
 
 
 def _make_degraded_perplexity_source(query: str) -> Dict[str, Any]:
@@ -667,23 +684,39 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         cost_controls.get("search_query_cap_per_session", _DEFAULT_SEARCH_QUERY_CAP)
     )
     remaining_calls = max(0, query_cap - used_queries)
+    provider_latency_total_ms = 0
+    provider_call_count = 0
 
     query_generation_prompt = (
         "Generate 3-5 search queries as JSON list for this topic:\n" f"{query}"
     )
-    query_generation = generate_text(
-        prompt=query_generation_prompt,
-        agent_key="research_agent",
-        model=preferred_text_model(cost_controls),
+    query_generation_started_at = perf_counter()
+    query_generation = _safe_dict(
+        generate_text(
+            prompt=query_generation_prompt,
+            agent_key="research_agent",
+            model=preferred_text_model(cost_controls),
+        )
     )
-    cost_controls = apply_text_tokens(cost_controls, _safe_dict(query_generation))
+    query_generation_provider_latency_ms = max(
+        0,
+        int((perf_counter() - query_generation_started_at) * 1000),
+    )
+    provider_latency_total_ms += query_generation_provider_latency_ms
+    provider_call_count += 1
+    cost_controls = apply_text_tokens(cost_controls, query_generation)
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
+        degraded_payload = _degraded_research_payload(
+            query,
+            reason="token_budget_exceeded_after_query_planning",
+        )
+        degraded_payload["provider_call_count"] = provider_call_count
+        degraded_payload["provider_latency_ms"] = (
+            _safe_non_negative_int(provider_latency_total_ms) or 0
+        )
         return {
-            "research_data": _degraded_research_payload(
-                query,
-                reason="token_budget_exceeded_after_query_planning",
-            ),
+            "research_data": degraded_payload,
             "sources": [],
             "cost_controls": cost_controls,
             "workflow_status": "research_complete",
@@ -696,8 +729,6 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     collected_sources: List[Dict[str, Any]] = []
     fallback_used = False
     search_calls_used = 0
-    provider_latency_total_ms = 0
-    provider_call_count = 0
 
     for search_query in search_queries:
         if remaining_calls <= 0:
@@ -763,11 +794,19 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     deduped_sources = _sanitize_sources_for_output(query=query, sources=deduped_sources)
     quality = "degraded" if degraded else "standard"
-    summary, summary_response, deterministic_summary_used = _synthesize_summary(
+    (
+        summary,
+        summary_response,
+        deterministic_summary_used,
+        summary_provider_latency_ms,
+        summary_provider_call_count,
+    ) = _synthesize_summary(
         query=query,
         sources=deduped_sources,
         cost_controls=cost_controls,
     )
+    provider_latency_total_ms += summary_provider_latency_ms
+    provider_call_count += summary_provider_call_count
     cost_controls = apply_text_tokens(cost_controls, summary_response)
     if not summary.strip():
         summary = _deterministic_research_summary(query=query, sources=deduped_sources)

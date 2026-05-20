@@ -99,10 +99,56 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
     assert "research_data" in updates
     assert isinstance(updates["sources"], list)
     assert updates["cost_controls"]["search_queries_used_this_session"] > 0
-    assert updates["research_data"]["provider_call_count"] == calls["search"]
+    # Includes query-planning + summary-synthesis generate_text calls.
+    assert updates["research_data"]["provider_call_count"] == calls["search"] + 2
     assert isinstance(updates["research_data"]["provider_latency_ms"], int)
     assert updates["research_data"]["provider_latency_ms"] >= 0
     _assert_complete_research_data(updates)
+
+
+def test_provider_latency_aggregates_text_and_search_calls(monkeypatch) -> None:
+    state = create_initial_state(user_query="future of battery technology")
+    calls = {"text": 0, "search": 0}
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        calls["text"] += 1
+        time.sleep(0.003)
+        if "Generate 3-5 search queries" in prompt:
+            return {
+                "output": json.dumps(
+                    ["battery query 1", "battery query 2", "battery query 3"]
+                )
+            }
+        return {"output": "Synthesized research summary."}
+
+    def fake_search_web(query, depth="standard"):
+        _ = query
+        calls["search"] += 1
+        assert depth == "standard"
+        return {
+            "results": [
+                {
+                    "title": "Battery source",
+                    "url": "https://example.com/battery",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    research_data = updates["research_data"]
+
+    assert calls["text"] == 2
+    assert calls["search"] == 3
+    assert research_data["provider_call_count"] == calls["text"] + calls["search"]
+    assert research_data["provider_latency_ms"] > 0
 
 
 def test_degraded_snippets_trigger_fallback(monkeypatch) -> None:
