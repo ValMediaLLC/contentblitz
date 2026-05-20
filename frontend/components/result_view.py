@@ -11,6 +11,13 @@ from typing import Any, Mapping
 
 import streamlit as st
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+    normalize_user_warning,
+)
 from contentblitz.tools.exports.filenames import resolve_export_dir
 from contentblitz.ui.error_display import redact_sensitive_text
 from contentblitz.ui.observability import build_observability_diagnostics
@@ -985,10 +992,11 @@ def _render_provider_degradation_status(render_payload: Mapping[str, Any]) -> No
     if not text_degraded and not image_degraded:
         return
 
-    st.warning(
-        "OpenAI provider unavailable or quota-limited. "
-        "ContentBlitz generated limited fallback outputs."
-    )
+    st.warning(TOP_LEVEL_PROVIDER_WARNING)
+    if text_degraded:
+        st.info(TEXT_FALLBACK_WARNING)
+    if image_degraded:
+        st.info(IMAGE_RECOVERABLE_WARNING)
     provider_status = render_payload.get("provider_status", {})
     if not isinstance(provider_status, Mapping):
         provider_status = {}
@@ -1021,6 +1029,37 @@ def _render_fallback_badges() -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def _provider_warning_skip_set(render_payload: Mapping[str, Any]) -> set[str]:
+    degradation = render_payload.get("degradation_metadata", {})
+    if not isinstance(degradation, Mapping):
+        return set()
+    text_degraded = bool(degradation.get("text_generation_degraded", False))
+    image_degraded = bool(degradation.get("image_generation_degraded", False))
+    skip_messages: set[str] = set()
+    if text_degraded or image_degraded:
+        skip_messages.add(TOP_LEVEL_PROVIDER_WARNING)
+    if text_degraded:
+        skip_messages.add(TEXT_FALLBACK_WARNING)
+    if image_degraded:
+        skip_messages.add(IMAGE_RECOVERABLE_WARNING)
+    return {normalize_user_warning(message) for message in skip_messages}
+
+
+def _filter_status_messages_for_render(
+    *,
+    messages: list[str],
+    render_payload: Mapping[str, Any],
+) -> list[str]:
+    skip_set = _provider_warning_skip_set(render_payload)
+    filtered: list[str] = []
+    for message in dedupe_user_warnings(messages):
+        normalized = normalize_user_warning(message)
+        if normalized in skip_set:
+            continue
+        filtered.append(normalized)
+    return filtered
 
 
 def render_final_response(result: Mapping[str, Any]) -> None:
@@ -1326,7 +1365,12 @@ def render_collapsible_output_sections(
         render_node_execution_statuses(progress_events)
         render_observability_section()
         _render_provider_degradation_status(render_payload)
-        render_status_messages(status_messages)
+        render_status_messages(
+            _filter_status_messages_for_render(
+                messages=status_messages,
+                render_payload=render_payload,
+            )
+        )
         render_usage_summary(render_payload)
         render_result_header(
             {"ui_workflow_status": render_payload.get("workflow_status", "")}
@@ -1410,10 +1454,13 @@ def render_collapsible_output_sections(
 
 def render_degraded_and_error_state(render_payload: Mapping[str, Any]) -> None:
     warnings = render_payload.get("warnings", [])
+    skip_set = _provider_warning_skip_set(render_payload)
     if isinstance(warnings, list):
-        for warning in warnings:
-            safe_warning = str(warning).strip()
+        for warning in dedupe_user_warnings(warnings):
+            safe_warning = normalize_user_warning(str(warning).strip())
             if safe_warning and safe_warning.lower() not in {"none", "null"}:
+                if safe_warning in skip_set:
+                    continue
                 st.warning(safe_warning)
 
     errors = render_payload.get("errors", [])

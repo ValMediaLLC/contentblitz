@@ -319,7 +319,11 @@ def test_degraded_generate_text_creates_marked_linkedin_fallback(monkeypatch) ->
     assert linkedin["provider_failure_reason"] == "quota_exceeded"
     assert linkedin["real_generation_succeeded"] is False
     assert linkedin["generation_tokens"] == 0
-    assert "limited fallback update" in linkedin["body"].lower()
+    assert "fallback linkedin outline" in linkedin["body"].lower()
+    assert "limited fallback structure" in linkedin["body"].lower()
+    assert not linkedin["body"].startswith("AI-driven content operations")
+    assert linkedin["body"].lstrip().startswith("## Fallback LinkedIn Outline")
+    assert "content_creation" not in linkedin["body"].lower()
     assert state["user_query"] not in linkedin["body"]
     assert updates["errors"][-1]["type"] == "text_generation_degraded"
     assert updates["status_messages"][0].startswith(

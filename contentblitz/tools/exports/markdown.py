@@ -5,6 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 from contentblitz.quality.citations import validate_citation_sources
 from contentblitz.safety.output_sanitizer import sanitize_markdown_output
 
@@ -272,6 +278,42 @@ def _message_indicates_warning(message: str) -> bool:
     return any(token in lowered for token in _WARNING_KEYWORDS)
 
 
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = _safe_text(draft.get("generation_status")).lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    return _safe_text(draft.get("provider_status")).lower() == "degraded"
+
+
+def _has_text_generation_degradation(state: Mapping[str, Any]) -> bool:
+    content_drafts = _safe_dict(state.get("content_drafts", {}))
+    for channel in ("blog", "linkedin"):
+        draft = _safe_dict(content_drafts.get(channel, {}))
+        if _is_fallback_draft(draft):
+            return True
+    return False
+
+
+def _has_image_generation_degradation(state: Mapping[str, Any]) -> bool:
+    image_outputs = _safe_list(state.get("image_outputs", []))
+    for raw in image_outputs:
+        item = _safe_dict(raw)
+        status = _safe_text(item.get("status")).lower()
+        if status in {"failed", "degraded"}:
+            return True
+    for raw_error in _safe_list(state.get("errors", [])):
+        error = _safe_dict(raw_error)
+        if bool(error.get("recoverable", False)) and _safe_text(
+            error.get("agent")
+        ).lower() == "image_agent":
+            return True
+    return False
+
+
 def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
     warnings: List[str] = []
     for value in _safe_list(state.get("warnings", [])):
@@ -290,19 +332,21 @@ def _collect_export_warnings(state: Mapping[str, Any]) -> List[str]:
             "Research results are degraded and may require manual verification."
         )
 
-    image_outputs = _safe_list(state.get("image_outputs", []))
-    if any(
-        _safe_text(_safe_dict(item).get("status")).lower() == "failed"
-        for item in image_outputs
-    ):
-        warnings.append("Image generation encountered a recoverable issue.")
+    text_degraded = _has_text_generation_degradation(state)
+    image_degraded = _has_image_generation_degradation(state)
+    if text_degraded:
+        warnings.append(TEXT_FALLBACK_WARNING)
+    if image_degraded:
+        warnings.append(IMAGE_RECOVERABLE_WARNING)
+    if text_degraded or image_degraded:
+        warnings.append(TOP_LEVEL_PROVIDER_WARNING)
 
     for error in _safe_list(state.get("errors", [])):
         message = _normalize_error_message(error)
         if message:
             warnings.append(message)
 
-    return list(dict.fromkeys(item for item in warnings if item))
+    return dedupe_user_warnings(item for item in warnings if item)
 
 
 def collect_export_warnings(state: Mapping[str, Any]) -> List[str]:

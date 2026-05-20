@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
 
@@ -76,6 +77,16 @@ def _fallback_draft(blog_brief: Mapping[str, Any]) -> str:
     objective = str(
         blog_brief.get("objective", "Create an informative article.")
     ).strip()
+    objective = re.sub(
+        r"support\s+'[^']+'\s+for:\s*",
+        "Requested deliverable: ",
+        objective,
+        flags=re.IGNORECASE,
+    ).strip()
+    if objective.lower().startswith("requested deliverable:"):
+        objective_label = objective
+    else:
+        objective_label = f"Requested deliverable: {objective}"
     audience = str(blog_brief.get("audience", "professional audience")).strip()
     angle = (
         str(blog_brief.get("angle", "practical guidance")).strip()
@@ -85,7 +96,7 @@ def _fallback_draft(blog_brief: Mapping[str, Any]) -> str:
         "## Fallback Blog Outline\n"
         "Text generation was unavailable, so this is a limited outline "
         "based on retrieved research sources.\n\n"
-        f"- Objective: {objective}\n"
+        f"- {objective_label}\n"
         f"- Audience: {audience}\n"
         f"- Suggested angle: {angle}\n"
         "- Next step: Regenerate this draft when provider availability returns."

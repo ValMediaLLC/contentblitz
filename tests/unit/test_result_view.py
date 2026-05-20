@@ -9,6 +9,19 @@ from typing import Any, List, Mapping
 
 from frontend.components import result_view as result_view_module
 
+_PROVIDER_WARNING = (
+    "OpenAI provider unavailable or quota-limited. "
+    "ContentBlitz generated limited fallback outputs."
+)
+_TEXT_FALLBACK_WARNING = (
+    "Text generation was unavailable. "
+    "Blog and LinkedIn outputs are fallback outlines."
+)
+_IMAGE_DEGRADED_WARNING = (
+    "Image generation encountered a recoverable issue. "
+    "Text/research/export outputs remain available."
+)
+
 
 @dataclass
 class _DummyContextManager:
@@ -1492,6 +1505,62 @@ def test_provider_degradation_banner_and_status_cards_render(monkeypatch) -> Non
         for call in dummy_st.warning_calls
     )
     assert any("Text Generation" in call for call in dummy_st.markdown_calls)
+
+
+def test_provider_warning_messages_are_deduped_in_workflow_view(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    payload = {
+        "workflow_status": "partial_success",
+        "final_response": "## Blog Draft\nFallback body.",
+        "usage_summary": {},
+        "image_prompts": [],
+        "image_outputs": [],
+        "sources": [],
+        "provider_status": {
+            "text_generation": "degraded",
+            "image_generation": "degraded",
+            "search": "completed",
+            "export": "completed",
+        },
+        "degradation_metadata": {
+            "text_generation_degraded": True,
+            "image_generation_degraded": True,
+            "fallback_content_used": True,
+            "real_generation_succeeded": False,
+            "provider_failure_reason": "authentication_failed",
+        },
+        "export_status": {"requested": False, "paths": {}, "errors": []},
+    }
+
+    status_messages = [
+        _PROVIDER_WARNING,
+        (
+            "Draft unavailable because text generation is currently limited. "
+            "Research sources were collected successfully and can be used to "
+            "regenerate this section once the provider is available."
+        ),
+        _IMAGE_DEGRADED_WARNING,
+        _PROVIDER_WARNING,
+    ]
+    result_view_module.render_collapsible_output_sections(
+        render_payload=payload,
+        status_messages=status_messages,
+        execution_status="partial_success",
+        indicator_result={"workflow_status": "partial_success"},
+        node_statuses={"blog_writer_node": "degraded"},
+        progress_events=[{"node_name": "blog_writer_node", "status": "degraded"}],
+        raw_state={"requested_outputs": ["blog", "linkedin", "image"]},
+        raw_submission={},
+    )
+
+    assert (
+        dummy_st.warning_calls.count(_PROVIDER_WARNING)
+        == 1
+    )
+    assert dummy_st.info_calls.count(_TEXT_FALLBACK_WARNING) == 1
+    assert dummy_st.info_calls.count(_IMAGE_DEGRADED_WARNING) == 1
 
 
 def test_blog_section_shows_fallback_badges_when_degraded(monkeypatch) -> None:

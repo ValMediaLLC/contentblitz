@@ -54,8 +54,18 @@ def _fallback_brief(
     if not summary:
         summary = f"Research context for '{user_query or 'the topic'}' is limited."
 
+    safe_intent = str(intent).strip().replace("_", " ")
+    requested_topic = user_query or "the requested topic"
+    if safe_intent:
+        objective = (
+            f"Requested deliverable: {requested_topic}. "
+            f"Intent focus: {safe_intent}."
+        )
+    else:
+        objective = f"Requested deliverable: {requested_topic}."
+
     common = {
-        "objective": f"Support '{intent or 'content creation'}' for: {user_query or 'the requested topic'}",
+        "objective": objective,
         "audience": audience,
         "tone": tone,
         "research_anchor": summary,
@@ -88,7 +98,9 @@ def _fallback_brief(
         "format": "image",
         "angle": "single-scene visual concept",
         "visual_direction": "clean, high contrast, modern composition",
-        "prompt_focus": f"Visualize '{user_query or 'the topic'}' with strategic clarity.",
+        "prompt_focus": (
+            f"Visualize '{user_query or 'the topic'}' with strategic clarity."
+        ),
     }
 
 
@@ -167,10 +179,13 @@ def _build_research_report(
     if not summary:
         summary = f"Research context for '{user_query or 'the topic'}' is limited."
     title = f"Research Report: {user_query or 'Requested Topic'}"
-    body = (
-        f"Research report for '{user_query or 'the requested topic'}'. "
-        f"{summary} Sources reviewed: {len(sources)}."
-    )
+    if summary.lstrip().startswith("## Research Summary"):
+        body = summary
+    else:
+        body = (
+            f"Research report for '{user_query or 'the requested topic'}'. "
+            f"{summary} Sources reviewed: {len(sources)}."
+        )
     sections = [
         "Executive Summary",
         "Key Findings",

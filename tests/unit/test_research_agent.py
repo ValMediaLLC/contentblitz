@@ -257,3 +257,56 @@ def test_research_agent_updates_only_allowed_state_fields(monkeypatch) -> None:
     assert set(updates.keys()).issubset(allowed_keys)
     assert "requested_outputs" not in updates
     assert "routing_decision" not in updates
+
+
+def test_deterministic_research_summary_used_when_text_synthesis_unavailable(
+    monkeypatch,
+) -> None:
+    state = create_initial_state(user_query="best electric cars to buy in 2026")
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["best electric cars 2026 analysis"])}
+        return {
+            "output": "",
+            "degraded": True,
+            "error": {"code": "authentication_failed", "recoverable": True},
+        }
+
+    def fake_search_web(query, depth="standard"):
+        return {
+            "results": [
+                {
+                    "title": "IEA EV Outlook 2026",
+                    "url": "https://www.iea.org/reports/global-ev-outlook-2026",
+                    "snippet": (
+                        "EV adoption growth is accelerating while charging "
+                        "infrastructure, pricing, and range remain key buyer factors."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    summary = updates["research_data"]["synthesized_summary"]
+
+    assert updates["research_data"]["deterministic_summary_used"] is True
+    assert "## Research Summary" in summary
+    assert "Sources reviewed: 1" in summary
+    assert "Citation-ready sources: 1" in summary
+    assert "iea.org" in summary
+    assert "Retrieved Themes" in summary
+    assert "Useful Source Leads" in summary
+    assert "IEA EV Outlook 2026" in summary
+
+
+def test_deterministic_research_summary_handles_no_sources_safely() -> None:
+    summary = research_agent_module._deterministic_research_summary(  # noqa: SLF001
+        query="emerging AI market",
+        sources=[],
+    )
+
+    assert "no usable sources were retrieved" in summary.lower()

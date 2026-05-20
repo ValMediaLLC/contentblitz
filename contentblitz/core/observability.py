@@ -24,6 +24,12 @@ from contentblitz.core.redaction import (
     sanitize_trace_value,
     summarize_text_content,
 )
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 
 _STATUS_VALUES = {"pending", "running", "completed", "degraded", "failed", "skipped"}
 _WORKFLOW_FAILURE_STATUSES = {
@@ -845,6 +851,19 @@ def _safe_provider_failure_reason(state: Mapping[str, Any]) -> str:
     return ""
 
 
+def _fallback_channel_usage(state: Mapping[str, Any]) -> tuple[bool, bool]:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return False, False
+    blog_fallback = _is_fallback_draft(_safe_mapping_value(drafts.get("blog")))
+    linkedin_fallback = _is_fallback_draft(_safe_mapping_value(drafts.get("linkedin")))
+    return blog_fallback, linkedin_fallback
+
+
+def _safe_mapping_value(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
 def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
     errors = state.get("errors", [])
     if isinstance(errors, list):
@@ -871,6 +890,23 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
         if isinstance(error, Mapping) and bool(error.get("recoverable", False)):
             return True
     return False
+
+
+def _deduped_user_warning_count(state: Mapping[str, Any]) -> int:
+    messages: list[str] = []
+    for key in ("warnings", "status_messages"):
+        for item in _safe_string_list(state.get(key, [])):
+            messages.append(item)
+
+    text_degraded = _has_text_generation_degradation(state)
+    image_degraded = _has_recoverable_image_failure(state)
+    if text_degraded:
+        messages.append(TEXT_FALLBACK_WARNING)
+    if image_degraded:
+        messages.append(IMAGE_RECOVERABLE_WARNING)
+    if text_degraded or image_degraded:
+        messages.append(TOP_LEVEL_PROVIDER_WARNING)
+    return len(dedupe_user_warnings(messages))
 
 
 def _has_export_failure(state: Mapping[str, Any]) -> bool:
@@ -963,6 +999,16 @@ def safe_trace_metadata(
     draft_summary = _safe_draft_summary(state)
     final_response_summary = _safe_final_response_summary(state)
     export_outcome_summary = _safe_export_outcome_summary(state)
+    blog_fallback_used, linkedin_fallback_used = _fallback_channel_usage(state)
+    deterministic_research_fallback_used = bool(
+        _safe_mapping_value(state.get("research_data", {})).get(
+            "deterministic_summary_used",
+            False,
+        )
+    )
+
+    safe_node_name = _safe_text(node_name)
+    safe_node_status = _safe_text(node_status).lower()
 
     metadata: dict[str, Any] = {
         "requested_outputs": requested_outputs,
@@ -972,6 +1018,9 @@ def safe_trace_metadata(
         "text_generation_degraded": _has_text_generation_degradation(state),
         "image_generation_degraded": _has_recoverable_image_failure(state),
         "fallback_content_used": _has_text_generation_degradation(state),
+        "fallback_blog_used": blog_fallback_used,
+        "fallback_linkedin_used": linkedin_fallback_used,
+        "deterministic_research_fallback_used": deterministic_research_fallback_used,
         "real_generation_succeeded": not _has_text_generation_degradation(state),
         "provider_failure_reason": _safe_provider_failure_reason(state),
         "provider_degraded": _is_provider_degraded(state),
@@ -987,6 +1036,7 @@ def safe_trace_metadata(
         "failed_export_formats": export_outcome_summary["failed_export_formats"],
         "export_warning_count": export_outcome_summary["export_warning_count"],
         "export_error_count": export_outcome_summary["export_error_count"],
+        "user_warning_count": _deduped_user_warning_count(state),
         "source_count": _safe_source_count(state),
         "image_output_count": _safe_image_output_count(state),
         "retry_attempt": retry_metadata.get("retry_attempt", 0),
@@ -994,6 +1044,10 @@ def safe_trace_metadata(
         "budget_exceeded": _safe_bool(retry_metadata.get("budget_exceeded", False)),
         "observability_summary": _safe_observability_summary_metadata(),
     }
+    if safe_node_name in _AUTHORITATIVE_NODE_SET:
+        metadata["node_name"] = safe_node_name
+    if safe_node_status in _STATUS_VALUES:
+        metadata["node_status"] = safe_node_status
 
     if session_id:
         metadata["session_id"] = session_id
@@ -1030,14 +1084,6 @@ def safe_trace_metadata(
         metadata["final_response_summary"] = final_response_summary
     if retry_metadata:
         metadata["retry_metadata"] = retry_metadata
-
-    safe_node_name = _safe_text(node_name)
-    if safe_node_name in _AUTHORITATIVE_NODE_SET:
-        metadata["node_name"] = safe_node_name
-
-    safe_node_status = _safe_text(node_status).lower()
-    if safe_node_status in _STATUS_VALUES:
-        metadata["node_status"] = safe_node_status
 
     sanitized = sanitize_trace_value(metadata)
     sanitized = _strip_unsafe_env_metadata(sanitized)

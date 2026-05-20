@@ -6,6 +6,7 @@ import json
 import re
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping
+from urllib.parse import urlparse
 
 from contentblitz.core.cost_controls import (
     apply_text_tokens,
@@ -66,6 +67,28 @@ _KEYWORD_PRESERVE_TOKENS = {
     "seo",
     "ux",
 }
+_THEME_RULES = (
+    (
+        ("adoption", "demand", "growth", "market", "sales"),
+        "market growth and adoption",
+    ),
+    (
+        ("2026", "availability", "launch", "model", "release"),
+        "model availability and release timelines",
+    ),
+    (
+        ("affordability", "cost", "ownership", "price", "pricing"),
+        "pricing and total cost of ownership",
+    ),
+    (
+        ("charging", "infrastructure", "network", "station"),
+        "charging infrastructure and accessibility",
+    ),
+    (
+        ("battery", "efficiency", "performance", "range"),
+        "range and battery performance",
+    ),
+)
 
 
 def _safe_list(value: Any) -> list[Any]:
@@ -217,9 +240,9 @@ def _synthesize_summary(
     query: str,
     sources: List[Dict[str, Any]],
     cost_controls: Mapping[str, Any],
-) -> tuple[str, Dict[str, Any]]:
+) -> tuple[str, Dict[str, Any], bool]:
     if not sources:
-        return f"Limited research results were found for '{query}'.", {}
+        return _deterministic_research_summary(query=query, sources=sources), {}, True
 
     top = sources[:5]
     bullets = "\n".join(
@@ -239,11 +262,11 @@ def _synthesize_summary(
     )
     summary = str(_safe_dict(llm_response).get("output", "")).strip()
     if summary:
-        return summary, llm_response
-    return (
-        f"Research findings compiled for '{query}' from {len(sources)} sources.",
-        llm_response,
-    )
+        return summary, llm_response, False
+    return _deterministic_research_summary(
+        query=query,
+        sources=sources,
+    ), llm_response, True
 
 
 def _make_degraded_perplexity_source(query: str) -> Dict[str, Any]:
@@ -301,6 +324,127 @@ def _fallback_summary(query: str, quality: str) -> str:
             "so this summary uses deterministic fallback analysis."
         )
     return f"Synthesized research summary for '{topic}' based on collected sources."
+
+
+def _extract_domain(url: str) -> str:
+    raw = str(url).strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+    return str(parsed.hostname or "").strip().lower()
+
+
+def _representative_domains(sources: List[Dict[str, Any]]) -> List[str]:
+    domains: List[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        domain = _extract_domain(str(source.get("url", "")))
+        if not domain or domain in seen:
+            continue
+        seen.add(domain)
+        domains.append(domain)
+        if len(domains) >= 4:
+            break
+    return domains
+
+
+def _source_theme_candidates(sources: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for source in sources[:8]:
+        title = str(source.get("title", "")).strip()
+        snippet = str(source.get("snippet", "")).strip()
+        if title:
+            parts.append(title.lower())
+        if snippet:
+            parts.append(snippet.lower())
+    return " ".join(parts)
+
+
+def _detect_retrieved_themes(sources: List[Dict[str, Any]]) -> List[str]:
+    haystack = _source_theme_candidates(sources)
+    if not haystack:
+        return []
+
+    themes: List[str] = []
+    for markers, label in _THEME_RULES:
+        if any(marker in haystack for marker in markers):
+            themes.append(label)
+
+    if not themes:
+        themes.append("directional trends synthesized from retrieved sources")
+    return themes[:5]
+
+
+def _truncate_single_line(value: str, limit: int = 180) -> str:
+    text = " ".join(value.split()).strip()
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit].rstrip()
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return f"{clipped}..."
+
+
+def _deterministic_source_leads(sources: List[Dict[str, Any]]) -> List[str]:
+    leads: List[str] = []
+    for source in sources:
+        title = str(source.get("title", "")).strip() or "Source"
+        snippet = str(source.get("snippet", "")).strip()
+        if not snippet:
+            continue
+        leads.append(f"{title} — {_truncate_single_line(snippet)}")
+        if len(leads) >= 3:
+            break
+    return leads
+
+
+def _deterministic_research_summary(
+    *,
+    query: str,
+    sources: List[Dict[str, Any]],
+) -> str:
+    if not sources:
+        topic = query.strip() or "the requested topic"
+        return (
+            "## Research Summary\n\n"
+            "Text synthesis was unavailable, and no usable sources were retrieved for "
+            f"'{topic}'. Try rerunning when providers are available."
+        )
+
+    citation_ready = sum(
+        1 for source in sources if bool(source.get("citation_available", False))
+    )
+    domains = _representative_domains(sources)
+    themes = _detect_retrieved_themes(sources)
+    source_leads = _deterministic_source_leads(sources)
+
+    lines = [
+        "## Research Summary",
+        "",
+        (
+            "Text synthesis was unavailable, so this is a deterministic summary "
+            "from retrieved sources."
+        ),
+        "",
+        "### Source Coverage",
+        f"- Sources reviewed: {len(sources)}",
+        f"- Citation-ready sources: {citation_ready}",
+    ]
+    if domains:
+        lines.append(f"- Representative domains: {', '.join(domains)}")
+
+    lines.extend(["", "### Retrieved Themes"])
+    lines.extend([f"- {theme}" for theme in themes])
+
+    if source_leads:
+        lines.extend(["", "### Useful Source Leads"])
+        lines.extend(
+            [f"{index}. {lead}" for index, lead in enumerate(source_leads, start=1)]
+        )
+
+    return "\n".join(lines).strip()
 
 
 def _build_key_facts(
@@ -595,16 +739,15 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     deduped_sources = _sanitize_sources_for_output(query=query, sources=deduped_sources)
     quality = "degraded" if degraded else "standard"
-    summary, summary_response = _synthesize_summary(
+    summary, summary_response, deterministic_summary_used = _synthesize_summary(
         query=query,
         sources=deduped_sources,
         cost_controls=cost_controls,
     )
     cost_controls = apply_text_tokens(cost_controls, summary_response)
     if not summary.strip():
-        summary = _fallback_summary(query=query, quality=quality)
-    if quality == "degraded":
-        summary = _fallback_summary(query=query, quality=quality)
+        summary = _deterministic_research_summary(query=query, sources=deduped_sources)
+        deterministic_summary_used = True
 
     key_facts = _build_key_facts(query=query, sources=deduped_sources, quality=quality)
     keywords = _build_keywords(query=query, sources=deduped_sources)
@@ -624,6 +767,7 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "key_facts": key_facts,
         "keywords": keywords,
         "entities": entities,
+        "deterministic_summary_used": deterministic_summary_used,
     }
 
     cost_controls["search_queries_used_this_session"] = used_queries + search_calls_used

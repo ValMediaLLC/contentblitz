@@ -214,6 +214,7 @@ def test_degraded_generate_text_creates_marked_fallback_draft(monkeypatch) -> No
     assert blog["real_generation_succeeded"] is False
     assert blog["generation_tokens"] == 0
     assert "Fallback Blog Outline" in blog["body"]
+    assert "content_creation" not in blog["body"].lower()
     assert state["user_query"] not in blog["body"]
     assert updates["errors"][-1]["type"] == "text_generation_degraded"
     assert updates["status_messages"][0].startswith(

@@ -435,6 +435,17 @@ def test_trace_metadata_includes_safe_fallback_degradation_flags() -> None:
         "image_outputs": [
             {"status": "failed", "error": {"message": "safe", "recoverable": True}}
         ],
+        "status_messages": [
+            (
+                "Draft unavailable because text generation is currently limited. "
+                "Research sources were collected successfully and can be used to "
+                "regenerate this section once the provider is available."
+            ),
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            ),
+        ],
     }
 
     metadata = observability_module.safe_trace_metadata(state)
@@ -443,7 +454,56 @@ def test_trace_metadata_includes_safe_fallback_degradation_flags() -> None:
     assert metadata["text_generation_degraded"] is True
     assert metadata["image_generation_degraded"] is True
     assert metadata["fallback_content_used"] is True
+    assert metadata["fallback_blog_used"] is True
+    assert metadata["fallback_linkedin_used"] is True
+    assert metadata["deterministic_research_fallback_used"] is False
     assert metadata["real_generation_succeeded"] is False
     assert metadata["provider_failure_reason"] == "quota_exceeded"
+    assert metadata["user_warning_count"] >= 1
     assert "traceback" not in serialized
     assert "openai_api_key" not in serialized
+
+
+def test_trace_metadata_warning_count_uses_deduped_user_facing_warnings() -> None:
+    state = {
+        "workflow_status": "partial_success",
+        "requested_outputs": ["blog", "linkedin", "image"],
+        "content_drafts": {
+            "blog": {
+                "body": "## Fallback Blog Outline",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "linkedin": {
+                "body": "## Fallback LinkedIn Outline",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+        },
+        "image_outputs": [{"status": "failed"}],
+        "status_messages": [
+            (
+                "Draft unavailable because text generation is currently limited. "
+                "Research sources were collected successfully and can be used to "
+                "regenerate this section once the provider is available."
+            ),
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            ),
+            (
+                "Image generation failed in this run, but text outputs may still be "
+                "usable."
+            ),
+        ],
+        "warnings": [
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            )
+        ],
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["user_warning_count"] == 3

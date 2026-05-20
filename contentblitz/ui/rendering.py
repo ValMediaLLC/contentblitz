@@ -6,6 +6,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 from contentblitz.safety.output_sanitizer import (
     sanitize_markdown_output,
     sanitize_plain_output,
@@ -654,18 +660,15 @@ def build_render_payload(
         _safe_text(_safe_dict(item).get("status")).lower() == "failed"
         for item in _safe_list(state_snapshot.get("image_outputs", []))
     ):
-        warnings.append(
-            "Image generation failed in this run, but text outputs may still be usable."
-        )
+        warnings.append(IMAGE_RECOVERABLE_WARNING)
     image_generation_degraded = any(
         _safe_text(_safe_dict(item).get("status")).lower() in {"failed", "degraded"}
         for item in _safe_list(state_snapshot.get("image_outputs", []))
     )
+    if text_generation_degraded:
+        warnings.append(TEXT_FALLBACK_WARNING)
     if text_generation_degraded or image_generation_degraded:
-        warnings.append(
-            "OpenAI provider unavailable or quota-limited. "
-            "ContentBlitz generated limited fallback outputs."
-        )
+        warnings.append(TOP_LEVEL_PROVIDER_WARNING)
 
     export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
     export_errors = _safe_list(export_metadata.get("error_log", []))
@@ -803,8 +806,8 @@ def build_render_payload(
         "image_outputs": image_outputs,
         "sources": display_sources,
         "errors": normalize_errors_for_display(state_snapshot.get("errors", [])),
-        "warnings": list(
-            dict.fromkeys([item for item in warnings if _safe_text(item)])
+        "warnings": dedupe_user_warnings(
+            [item for item in warnings if _safe_text(item)]
         ),
         "node_statuses": merged_statuses,
         "usage_summary": usage_summary,

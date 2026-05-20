@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 from contentblitz.ui.error_display import normalize_errors_for_display
 from contentblitz.ui.progress import (
     UIProgressEvent,
@@ -111,15 +117,7 @@ def observability_status_label(status: Any) -> str:
 
 
 def _dedupe_messages(messages: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for message in messages:
-        cleaned = str(message).strip()
-        if not cleaned or cleaned.lower() in {"none", "null"} or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        deduped.append(cleaned)
-    return deduped
+    return dedupe_user_warnings(messages)
 
 
 def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
@@ -337,18 +335,12 @@ def build_status_messages(
         )
 
     if _has_recoverable_image_failure(state):
-        messages.append(
-            (
-                "Image generation encountered a recoverable issue. "
-                "Text outputs remain available."
-            )
-        )
+        messages.append(IMAGE_RECOVERABLE_WARNING)
 
+    if _has_text_generation_degradation(state):
+        messages.append(TEXT_FALLBACK_WARNING)
     if _has_text_generation_degradation(state) or _has_recoverable_image_failure(state):
-        messages.append(
-            "OpenAI provider unavailable or quota-limited. "
-            "ContentBlitz generated limited fallback outputs."
-        )
+        messages.append(TOP_LEVEL_PROVIDER_WARNING)
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))
     export_failures = _export_failure_count(export_metadata)

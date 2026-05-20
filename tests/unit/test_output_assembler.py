@@ -302,8 +302,56 @@ def test_fallback_text_content_sets_partial_success_and_warning() -> None:
     updates = output_assembler_module.output_assembler_node(state)
 
     assert updates["workflow_status"] == "partial_success"
-    assert "fallback draft content is limited" in updates["final_response"].lower()
+    assert "blog and linkedin outputs are fallback outlines" in updates[
+        "final_response"
+    ].lower()
     assert updates["assembled_outputs"]["text_generation_degraded"] is True
     assert updates["assembled_outputs"]["fallback_content_used"] is True
     assert updates["assembled_outputs"]["real_generation_succeeded"] is False
     assert updates["assembled_outputs"]["provider_failure_reason"] == "quota_exceeded"
+
+
+def test_fallback_warnings_are_deduplicated_and_internal_terms_not_exposed() -> None:
+    state = _base_state(
+        requested_outputs=["blog", "linkedin", "image"],
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nRequested deliverable: test",
+                "version": 1,
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "linkedin": {
+                "body": "## Fallback LinkedIn Outline\nLimited structure.",
+                "version": 1,
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "research_report": {"body": ""},
+        },
+        best_drafts={"blog": None, "linkedin": None},
+        status_messages=[
+            "Draft unavailable because text generation is currently limited. "
+            "Research sources were collected successfully and can be used to "
+            "regenerate this section once the provider is available."
+        ],
+        image_outputs=[{"status": "failed"}],
+        errors=[{"agent": "image_agent", "recoverable": True}],
+    )
+    updates = output_assembler_module.output_assembler_node(state)
+    final_response = updates["final_response"]
+    status_messages = updates["status_messages"]
+
+    assert updates["workflow_status"] == "partial_success"
+    assert final_response.count("OpenAI provider unavailable or quota-limited.") == 1
+    assert final_response.count("Blog and LinkedIn outputs are fallback outlines.") == 1
+    assert (
+        final_response.count("Image generation encountered a recoverable issue.") == 1
+    )
+    assert "content_creation" not in final_response.lower()
+    assert status_messages.count(
+        (
+            "Text generation was unavailable. "
+            "Blog and LinkedIn outputs are fallback outlines."
+        )
+    ) == 1

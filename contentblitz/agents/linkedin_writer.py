@@ -218,31 +218,53 @@ def _truncate_with_tail(text: str, tail: str, max_chars: int) -> str:
 def _fallback_post(
     user_query: str,
     linkedin_brief: Mapping[str, Any],
-    hook: str,
-    cta: str,
     hashtags: List[str],
 ) -> str:
     objective = str(
         linkedin_brief.get("objective", "Deliver practical insight")
     ).strip()
-    audience = str(linkedin_brief.get("audience", "operators and leaders")).strip()
-    angle = str(linkedin_brief.get("angle", "execution-focused perspective")).strip()
-    return (
-        f"{hook}\n\n"
-        "Text generation was unavailable, so this is a limited fallback update.\n\n"
-        "Most teams still treat AI content operations as one-off experiments.\n\n"
-        "Here is a better pattern: define a narrow outcome, assign clear "
-        "ownership, and measure one weekly signal that proves progress.\n\n"
-        f"When your objective is {objective.lower()}, speed matters less than "
-        "consistency. "
-        f"Audience fit ({audience}) and message clarity should drive every draft.\n\n"
-        "My view: strong systems outperform isolated prompts. Build a repeatable "
-        "loop, keep it simple, and improve from live feedback.\n\n"
-        f"This angle works best when you optimize for {angle.lower()} and keep "
-        "roles explicit.\n\n"
-        f"{cta}\n"
-        f"{' '.join(hashtags)}"
+    objective = re.sub(
+        r"support\s+'[^']+'\s+for:\s*",
+        "Requested deliverable: ",
+        objective,
+        flags=re.IGNORECASE,
     ).strip()
+    audience = str(linkedin_brief.get("audience", "operators and leaders")).strip()
+    angle = (
+        str(linkedin_brief.get("angle", "execution-focused perspective")).strip()
+        or "execution-focused perspective"
+    )
+    topic_tokens = re.findall(r"[A-Za-z0-9]+", user_query or "")
+    topic_summary = " ".join(topic_tokens[:8]).strip() or "requested topic"
+    hashtags_line = " ".join(hashtags[:4]).strip()
+
+    lines = [
+        "## Fallback LinkedIn Outline",
+        "",
+        (
+            "Text generation was unavailable, so this is a limited fallback "
+            "structure based on retrieved research."
+        ),
+        "",
+        f"- Topic: {topic_summary}",
+        f"- Audience: {audience}",
+        f"- Suggested angle: {angle}",
+        (
+            "- Suggested CTA: Ask the audience what criteria matter most when "
+            "evaluating this topic."
+        ),
+    ]
+    if objective:
+        lines.append(f"- {objective}")
+    if hashtags_line:
+        lines.append(f"- Placeholder hashtags: {hashtags_line}")
+    lines.append(
+        (
+            "- Next step: Regenerate this LinkedIn draft when provider availability "
+            "returns."
+        )
+    )
+    return "\n".join(lines).strip()
 
 
 def _compose_final_post(
@@ -252,14 +274,21 @@ def _compose_final_post(
     hashtags: List[str],
     user_query: str,
     linkedin_brief: Mapping[str, Any],
+    *,
+    fallback_generated: bool = False,
 ) -> str:
+    if fallback_generated:
+        return _fallback_post(
+            user_query=user_query,
+            linkedin_brief=linkedin_brief,
+            hashtags=hashtags,
+        )
+
     text = body.strip()
     if not text:
         text = _fallback_post(
             user_query=user_query,
             linkedin_brief=linkedin_brief,
-            hook=hook,
-            cta=cta,
             hashtags=hashtags,
         )
 
@@ -382,6 +411,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             hashtags=hashtags,
             user_query=user_query,
             linkedin_brief=linkedin_brief,
+            fallback_generated=True,
         )
         linkedin_update = {
             **existing_draft,
@@ -482,6 +512,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         hashtags=hashtags,
         user_query=user_query,
         linkedin_brief=linkedin_brief,
+        fallback_generated=fallback_generated,
     )
 
     # Re-extract after composition to keep metadata aligned with final body.

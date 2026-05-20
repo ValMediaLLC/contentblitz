@@ -438,7 +438,24 @@ def test_render_payload_marks_provider_degradation_for_fallback_drafts() -> None
     )
     assert payload["provider_status"]["text_generation"] == "degraded"
     assert payload["provider_status"]["image_generation"] == "degraded"
+    lowered_warnings = [warning.lower() for warning in payload["warnings"]]
     assert any(
-        "openai provider unavailable or quota-limited" in warning.lower()
-        for warning in payload["warnings"]
+        "openai provider unavailable or quota-limited" in warning
+        for warning in lowered_warnings
+    )
+    assert any(
+        "blog and linkedin outputs are fallback outlines" in warning
+        for warning in lowered_warnings
+    )
+    assert any(
+        "image generation encountered a recoverable issue" in warning
+        for warning in lowered_warnings
+    )
+    assert (
+        sum(
+            1
+            for warning in lowered_warnings
+            if "openai provider unavailable or quota-limited" in warning
+        )
+        == 1
     )
