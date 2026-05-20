@@ -976,6 +976,53 @@ def render_usage_summary(render_payload: Mapping[str, Any]) -> None:
     )
 
 
+def _render_provider_degradation_status(render_payload: Mapping[str, Any]) -> None:
+    degradation = render_payload.get("degradation_metadata", {})
+    if not isinstance(degradation, Mapping):
+        return
+    text_degraded = bool(degradation.get("text_generation_degraded", False))
+    image_degraded = bool(degradation.get("image_generation_degraded", False))
+    if not text_degraded and not image_degraded:
+        return
+
+    st.warning(
+        "OpenAI provider unavailable or quota-limited. "
+        "ContentBlitz generated limited fallback outputs."
+    )
+    provider_status = render_payload.get("provider_status", {})
+    if not isinstance(provider_status, Mapping):
+        provider_status = {}
+    _render_compact_cards(
+        [
+            (
+                "Text Generation",
+                _safe_text(provider_status.get("text_generation")) or "degraded",
+            ),
+            (
+                "Image Generation",
+                _safe_text(provider_status.get("image_generation")) or "completed",
+            ),
+            ("Search", _safe_text(provider_status.get("search")) or "completed"),
+            ("Export", _safe_text(provider_status.get("export")) or "completed"),
+        ],
+        max_value_length=24,
+        status_labels={"Text Generation", "Image Generation", "Search", "Export"},
+    )
+
+
+def _render_fallback_badges() -> None:
+    st.markdown(
+        (
+            '<div class="cbx-status-line">'
+            f"{_status_pill_html('degraded')}"
+            f"{_status_pill_html('limited')}"
+            f"{_status_pill_html('provider_degraded')}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_final_response(result: Mapping[str, Any]) -> None:
     final_response = _safe_text(result.get("final_response", ""))
     rendered = _build_rendered_output_sections(result)
@@ -1278,6 +1325,7 @@ def render_collapsible_output_sections(
         )
         render_node_execution_statuses(progress_events)
         render_observability_section()
+        _render_provider_degradation_status(render_payload)
         render_status_messages(status_messages)
         render_usage_summary(render_payload)
         render_result_header(
@@ -1288,6 +1336,13 @@ def render_collapsible_output_sections(
 
     if has_blog:
         with st.expander("Blog", expanded=True):
+            degradation_payload = render_payload.get("degradation_metadata", {})
+            if not isinstance(degradation_payload, Mapping):
+                degradation_payload = {}
+            if bool(
+                degradation_payload.get("text_generation_degraded", False)
+            ):
+                _render_fallback_badges()
             blog_body = _strip_sources_sections_for_display(
                 _strip_wrapping_markdown_fence(rendered.blog)
             )
@@ -1296,6 +1351,13 @@ def render_collapsible_output_sections(
 
     if has_linkedin:
         with st.expander("LinkedIn", expanded=False):
+            degradation_payload = render_payload.get("degradation_metadata", {})
+            if not isinstance(degradation_payload, Mapping):
+                degradation_payload = {}
+            if bool(
+                degradation_payload.get("text_generation_degraded", False)
+            ):
+                _render_fallback_badges()
             linkedin_body = _strip_sources_sections_for_display(
                 _strip_wrapping_markdown_fence(rendered.linkedin)
             )

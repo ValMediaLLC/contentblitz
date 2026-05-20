@@ -137,7 +137,7 @@ def test_image_failure_warning_included() -> None:
     updates = output_assembler_module.output_assembler_node(state)
 
     assert updates["workflow_status"] == "partial_success"
-    assert "recoverable failure" in updates["final_response"].lower()
+    assert "recoverable issue" in updates["final_response"].lower()
 
 
 def test_image_only_with_renderable_local_path_is_success() -> None:
@@ -264,3 +264,46 @@ def test_export_requested_set_when_formats_exist() -> None:
     )
     updates = output_assembler_module.output_assembler_node(state)
     assert updates["export_requested"] is True
+
+
+def test_fallback_text_content_sets_partial_success_and_warning() -> None:
+    state = _base_state(
+        requested_outputs=["blog", "linkedin"],
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited blog draft.",
+                "version": 1,
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+            "linkedin": {
+                "body": "Fallback LinkedIn draft.",
+                "version": 1,
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "research_report": {"body": ""},
+        },
+        best_drafts={"blog": None, "linkedin": None},
+        quality_scores={
+            "blog": {
+                "validation_status": "degraded",
+                "passed": False,
+                "composite": 0.6,
+            },
+            "linkedin": {
+                "validation_status": "degraded",
+                "passed": False,
+                "composite": 0.6,
+            },
+        },
+    )
+    updates = output_assembler_module.output_assembler_node(state)
+
+    assert updates["workflow_status"] == "partial_success"
+    assert "fallback draft content is limited" in updates["final_response"].lower()
+    assert updates["assembled_outputs"]["text_generation_degraded"] is True
+    assert updates["assembled_outputs"]["fallback_content_used"] is True
+    assert updates["assembled_outputs"]["real_generation_succeeded"] is False
+    assert updates["assembled_outputs"]["provider_failure_reason"] == "quota_exceeded"

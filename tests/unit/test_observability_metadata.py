@@ -412,3 +412,38 @@ def test_workflow_trace_inputs_ignore_unsupported_values() -> None:
     inputs = observability_module.safe_workflow_trace_inputs(metadata)
 
     assert inputs["intent"] == ["blog", "pdf"]
+
+
+def test_trace_metadata_includes_safe_fallback_degradation_flags() -> None:
+    state = {
+        "workflow_status": "partial_success",
+        "requested_outputs": ["blog", "linkedin", "image"],
+        "content_drafts": {
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited body.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+            "linkedin": {
+                "body": "Fallback LinkedIn draft.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+        },
+        "image_outputs": [
+            {"status": "failed", "error": {"message": "safe", "recoverable": True}}
+        ],
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+    serialized = repr(metadata).lower()
+
+    assert metadata["text_generation_degraded"] is True
+    assert metadata["image_generation_degraded"] is True
+    assert metadata["fallback_content_used"] is True
+    assert metadata["real_generation_succeeded"] is False
+    assert metadata["provider_failure_reason"] == "quota_exceeded"
+    assert "traceback" not in serialized
+    assert "openai_api_key" not in serialized

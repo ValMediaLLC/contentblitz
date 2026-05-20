@@ -1445,3 +1445,85 @@ def test_collapsible_renderer_does_not_mutate_inputs(monkeypatch) -> None:
         "raw_submission": raw_submission,
     }
     assert before == after
+
+
+def test_provider_degradation_banner_and_status_cards_render(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    payload = {
+        "workflow_status": "partial_success",
+        "final_response": "## Blog Draft\nFallback body.",
+        "usage_summary": {},
+        "image_prompts": [],
+        "image_outputs": [],
+        "sources": [],
+        "provider_status": {
+            "text_generation": "degraded",
+            "image_generation": "completed",
+            "search": "completed",
+            "export": "completed",
+        },
+        "degradation_metadata": {
+            "text_generation_degraded": True,
+            "image_generation_degraded": False,
+            "fallback_content_used": True,
+            "real_generation_succeeded": False,
+            "provider_failure_reason": "quota_exceeded",
+        },
+        "export_status": {"requested": False, "paths": {}, "errors": []},
+    }
+
+    result_view_module.render_collapsible_output_sections(
+        render_payload=payload,
+        status_messages=[],
+        execution_status="partial_success",
+        indicator_result={"workflow_status": "partial_success"},
+        node_statuses={"blog_writer_node": "completed"},
+        progress_events=[{"node_name": "blog_writer_node", "status": "completed"}],
+        raw_state={"requested_outputs": ["blog"]},
+        raw_submission={},
+    )
+
+    assert any(
+        "OpenAI provider unavailable or quota-limited. "
+        "ContentBlitz generated limited fallback outputs."
+        in call
+        for call in dummy_st.warning_calls
+    )
+    assert any("Text Generation" in call for call in dummy_st.markdown_calls)
+
+
+def test_blog_section_shows_fallback_badges_when_degraded(monkeypatch) -> None:
+    dummy_st = _DummyStreamlit()
+    monkeypatch.setattr(result_view_module, "st", dummy_st)
+
+    payload = {
+        "workflow_status": "partial_success",
+        "final_response": "## Blog Draft\nFallback body.",
+        "usage_summary": {},
+        "image_prompts": [],
+        "image_outputs": [],
+        "sources": [],
+        "degradation_metadata": {
+            "text_generation_degraded": True,
+            "image_generation_degraded": False,
+        },
+        "provider_status": {},
+        "export_status": {"requested": False, "paths": {}, "errors": []},
+    }
+
+    result_view_module.render_collapsible_output_sections(
+        render_payload=payload,
+        status_messages=[],
+        execution_status="partial_success",
+        indicator_result={"workflow_status": "partial_success"},
+        node_statuses={"blog_writer_node": "completed"},
+        progress_events=[{"node_name": "blog_writer_node", "status": "completed"}],
+        raw_state={"requested_outputs": ["blog"]},
+        raw_submission={},
+    )
+
+    rendered_markup = "\n".join(dummy_st.markdown_calls).lower()
+    assert "provider degraded" in rendered_markup
+    assert "limited" in rendered_markup

@@ -808,6 +808,43 @@ def _safe_error_summary(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     return summaries
 
 
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = _safe_text(draft.get("generation_status")).lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = _safe_text(draft.get("provider_status")).lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degradation(state: Mapping[str, Any]) -> bool:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return False
+    for channel in ("blog", "linkedin"):
+        draft = drafts.get(channel, {})
+        if isinstance(draft, Mapping) and _is_fallback_draft(draft):
+            return True
+    return False
+
+
+def _safe_provider_failure_reason(state: Mapping[str, Any]) -> str:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return ""
+    for channel in ("blog", "linkedin"):
+        draft = drafts.get(channel, {})
+        if not isinstance(draft, Mapping):
+            continue
+        reason = _safe_text(draft.get("provider_failure_reason")).lower()
+        if reason:
+            return reason
+    return ""
+
+
 def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
     errors = state.get("errors", [])
     if isinstance(errors, list):
@@ -854,6 +891,8 @@ def _is_degraded_workflow(state: Mapping[str, Any]) -> bool:
 
     if _has_recoverable_image_failure(state):
         return True
+    if _has_text_generation_degradation(state):
+        return True
     if _has_export_failure(state):
         return True
     return False
@@ -866,6 +905,10 @@ def _is_provider_degraded(state: Mapping[str, Any]) -> bool:
     if isinstance(research_data, Mapping) and bool(
         research_data.get("degraded", False)
     ):
+        return True
+    if _has_text_generation_degradation(state):
+        return True
+    if _has_recoverable_image_failure(state):
         return True
     return False
 
@@ -926,6 +969,11 @@ def safe_trace_metadata(
         "export_requested": _safe_bool(state.get("export_requested", False)),
         "research_required": _safe_bool(state.get("research_required", False)),
         "clarification_needed": _safe_bool(state.get("clarification_needed", False)),
+        "text_generation_degraded": _has_text_generation_degradation(state),
+        "image_generation_degraded": _has_recoverable_image_failure(state),
+        "fallback_content_used": _has_text_generation_degradation(state),
+        "real_generation_succeeded": not _has_text_generation_degradation(state),
+        "provider_failure_reason": _safe_provider_failure_reason(state),
         "provider_degraded": _is_provider_degraded(state),
         "degraded_workflow_status": _is_degraded_workflow(state),
         "recoverable_image_failure_status": _has_recoverable_image_failure(state),

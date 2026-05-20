@@ -63,4 +63,4 @@ def test_partial_success_possible_when_image_modality_is_blocked_by_cap() -> Non
     assembled = output_assembler_node(merged)
     assert assembled["workflow_status"] == "partial_success"
     assert "## Blog Draft" in assembled["final_response"]
-    assert "recoverable failure" in assembled["final_response"].lower()
+    assert "recoverable issue" in assembled["final_response"].lower()

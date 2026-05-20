@@ -29,7 +29,7 @@ def _assert_secret_safe(error_payload: object, *secrets: str) -> None:
 
 
 def test_generate_text_failure_is_normalized_without_secret_or_stacktrace(monkeypatch):
-    secret = "sk-live-super-secret-value"
+    secret = "sk-live-super-secret-value"  # pragma: allowlist secret
     monkeypatch.setenv("OPENAI_API_KEY", secret)
 
     def create(**kwargs):
@@ -51,13 +51,13 @@ def test_generate_text_failure_is_normalized_without_secret_or_stacktrace(monkey
     assert result.degraded is True
     assert result.text == ""
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     assert isinstance(result.error.get("last_error"), dict)
     _assert_secret_safe(result.error, secret)
 
 
 def test_search_web_failure_is_normalized_without_secret_or_raw_payload(monkeypatch):
-    secret = "serp-secret-token-123"
+    secret = "serp-secret-token-123"  # pragma: allowlist secret
     monkeypatch.setenv("SERP_API_KEY", secret)
 
     def bad_payload(_url):
@@ -74,7 +74,7 @@ def test_search_web_failure_is_normalized_without_secret_or_raw_payload(monkeypa
 
 
 def test_generate_image_failure_is_normalized_without_secret_or_stacktrace(monkeypatch):
-    secret = "sk-image-secret-value"
+    secret = "sk-image-secret-value"  # pragma: allowlist secret
     monkeypatch.setenv("OPENAI_API_KEY", secret)
 
     def generate(**kwargs):
@@ -89,7 +89,7 @@ def test_generate_image_failure_is_normalized_without_secret_or_stacktrace(monke
     result = generate_image_module.generate_image(prompt="failure image")
     assert result.degraded is True
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     _assert_secret_safe(result.error, secret)
 
 

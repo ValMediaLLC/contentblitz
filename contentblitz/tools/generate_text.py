@@ -26,6 +26,14 @@ from contentblitz.core.observability import safe_tool_metadata, start_tool_span
 _PROVIDER = "openai"
 _PRIMARY_MODEL = "gpt-4o"
 _FALLBACK_MODEL = "gpt-4o-mini"
+_SAFE_PROVIDER_ERROR_CODES = {
+    "quota_exceeded",
+    "authentication_failed",
+    "rate_limited",
+    "provider_unavailable",
+    "empty_provider_response",
+    "unknown_provider_error",
+}
 
 
 @dataclass(frozen=True)
@@ -110,19 +118,29 @@ def _extract_usage(response: Any) -> tuple[int, int, int]:
 def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
     status_code = getattr(exc, "status_code", None)
     status_value = status_code if isinstance(status_code, int) else None
+    message_text = str(exc).lower()
 
     if isinstance(exc, AuthenticationError):
         return {
-            "code": "authentication_error",
-            "message": "Authentication with the text provider failed.",
+            "code": "authentication_failed",
+            "message": "Text generation provider authentication failed.",
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": False,
         }
     if isinstance(exc, RateLimitError):
+        is_quota_error = (
+            "quota" in message_text
+            or "insufficient_quota" in message_text
+            or "billing" in message_text
+        )
         return {
-            "code": "rate_limited",
-            "message": "The text provider rate limit was reached.",
+            "code": "quota_exceeded" if is_quota_error else "rate_limited",
+            "message": (
+                "Text generation provider is unavailable or quota-limited."
+                if is_quota_error
+                else "Text generation provider is rate-limited."
+            ),
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
@@ -130,31 +148,40 @@ def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
     if isinstance(exc, APIConnectionError):
         return {
             "code": "provider_unavailable",
-            "message": "The text provider is temporarily unavailable.",
+            "message": "Text generation provider is temporarily unavailable.",
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
         }
     if isinstance(exc, BadRequestError):
         return {
-            "code": "bad_request",
-            "message": "The text provider rejected the request format.",
+            "code": "unknown_provider_error",
+            "message": "Text generation provider request failed safely.",
             "provider": _PROVIDER,
             "status_code": status_value,
-            "recoverable": False,
+            "recoverable": True,
         }
     if isinstance(exc, APIError):
+        is_unavailable = isinstance(status_value, int) and status_value >= 500
         return {
-            "code": "provider_error",
-            "message": "The text provider returned an internal error.",
+            "code": (
+                "provider_unavailable"
+                if is_unavailable
+                else "unknown_provider_error"
+            ),
+            "message": (
+                "Text generation provider is temporarily unavailable."
+                if is_unavailable
+                else "Text generation provider request failed safely."
+            ),
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
         }
 
     return {
-        "code": "provider_error",
-        "message": "The text provider request failed.",
+        "code": "unknown_provider_error",
+        "message": "Text generation provider request failed safely.",
         "provider": _PROVIDER,
         "status_code": status_value,
         "recoverable": True,
@@ -316,6 +343,18 @@ def _call_provider(
     model_used = (
         str(response_model).strip() if isinstance(response_model, str) else model
     )
+    if not text:
+        return _degraded_result(
+            model=model_used,
+            error={
+                "code": "empty_provider_response",
+                "message": (
+                    "Text generation provider returned no usable output."
+                ),
+                "provider": _PROVIDER,
+                "recoverable": True,
+            },
+        )
     return GenerateTextResult(
         text=text,
         model=model_used,
@@ -460,8 +499,16 @@ def generate_text(
             _degraded_result(
                 model=models_to_try[-1],
                 error={
-                    "code": "provider_failure",
-                    "message": "Text generation failed after retries and fallback.",
+                    "code": (
+                        str(last_error.get("code", "")).strip().lower()
+                        if isinstance(last_error, Mapping)
+                        and str(last_error.get("code", "")).strip().lower()
+                        in _SAFE_PROVIDER_ERROR_CODES
+                        else "unknown_provider_error"
+                    ),
+                    "message": (
+                        "Text generation provider is unavailable or quota-limited."
+                    ),
                     "provider": _PROVIDER,
                     "recoverable": True,
                     "attempts_per_model": attempts_per_model,

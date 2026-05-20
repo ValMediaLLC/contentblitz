@@ -32,6 +32,17 @@ def _has_recoverable_image_error(result: dict[str, Any]) -> bool:
     )
 
 
+def _assert_best_or_fallback(result: dict[str, Any], output_type: str) -> None:
+    best = (result.get("best_drafts") or {}).get(output_type)
+    if best:
+        return
+    draft = ((result.get("content_drafts") or {}).get(output_type) or {})
+    quality = ((result.get("quality_scores") or {}).get(output_type) or {})
+    assert bool(draft.get("fallback_generated", False)) is True
+    assert bool(draft.get("degraded_generation", False)) is True
+    assert str(quality.get("validation_status", "")).strip().lower() == "degraded"
+
+
 def test_blog_only_prompt_generates_blog_draft_and_quality_score() -> None:
     result = _run_prompt(
         "create a blog article about future AI workflows in marketing agencies"
@@ -42,7 +53,7 @@ def test_blog_only_prompt_generates_blog_draft_and_quality_score() -> None:
     assert result["content_brief"]["blog"]
     assert result["content_drafts"]["blog"]["version"] == 1
     assert result["quality_scores"].get("blog")
-    assert result["best_drafts"].get("blog")
+    _assert_best_or_fallback(result, "blog")
     assert _draft_body(result, "linkedin") == ""
     assert _errors_are_nonfatal(result)
 
@@ -54,13 +65,14 @@ def test_linkedin_prompt_generates_linkedin_draft_and_quality_score() -> None:
     assert result["content_brief"]["linkedin"]
     assert result["content_drafts"]["linkedin"]["version"] == 1
     assert result["quality_scores"].get("linkedin")
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "linkedin")
     assert _errors_are_nonfatal(result)
 
 
 def test_blog_and_linkedin_prompt_generates_both_drafts() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     assert "blog" in result["requested_outputs"]

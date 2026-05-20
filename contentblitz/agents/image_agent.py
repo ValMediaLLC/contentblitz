@@ -16,6 +16,10 @@ from contentblitz.tools.image import generate_image
 from contentblitz.tools.text import generate_text
 
 _IMAGE_FAILURE_MESSAGE = "No image assets returned."
+_SAFE_IMAGE_PROVIDER_WARNING = (
+    "Image generation encountered a recoverable issue. "
+    "Text/research/export outputs remain available."
+)
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -167,6 +171,18 @@ def _append_recoverable_image_error(
     return existing_errors
 
 
+def _safe_image_error_payload(raw_error: Any) -> Dict[str, Any]:
+    error = _safe_dict(raw_error)
+    code = _safe_text(error.get("code")).lower() or "unknown_provider_error"
+    message = _safe_text(error.get("message")) or _SAFE_IMAGE_PROVIDER_WARNING
+    recoverable = bool(error.get("recoverable", True))
+    return {
+        "code": code,
+        "message": message,
+        "recoverable": recoverable,
+    }
+
+
 # TODO(provider):
 # Replace recoverable image failure with a deterministic fallback image asset
 # when provider-specific fallback asset policy is finalized.
@@ -247,12 +263,16 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         image_response = _safe_dict(generate_image(prompt=enhanced_prompt, style=style))
-    except Exception as exc:  # pragma: no cover - defensive path
-        failure_message = _IMAGE_FAILURE_MESSAGE
+    except Exception:  # pragma: no cover - defensive path
+        failure_message = _SAFE_IMAGE_PROVIDER_WARNING
         failure_payload = {
             "status": "failed",
             "recoverable": True,
-            "error": str(exc),
+            "error": {
+                "code": "unknown_provider_error",
+                "message": _SAFE_IMAGE_PROVIDER_WARNING,
+                "recoverable": True,
+            },
             "prompt": enhanced_prompt,
             "provider": "dall-e-3",
         }
@@ -260,8 +280,9 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         tool_outputs["image_agent"] = {
             "status": "failed",
             "recoverable": True,
-            "reason": str(exc),
+            "reason": "unknown_provider_error",
             "attempted": True,
+            "provider_status": "degraded",
         }
         return {
             "image_prompts": image_prompts,
@@ -270,6 +291,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "draft_status": {"image": "failed"},
             "errors": _append_recoverable_image_error(state, failure_message),
             "cost_controls": cost_controls,
+            "status_messages": [_SAFE_IMAGE_PROVIDER_WARNING],
         }
 
     provider = _normalize_provider(image_response)
@@ -290,13 +312,14 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if not sanitized_images:
+        error_payload = _safe_image_error_payload(image_response.get("error", {}))
         failure_reason = (
-            str(image_response.get("error", "")).strip() or "No image assets returned."
+            _safe_text(error_payload.get("code")) or "empty_provider_response"
         )
         failure_payload = {
             "status": "failed",
             "recoverable": True,
-            "error": failure_reason,
+            "error": error_payload,
             "prompt": enhanced_prompt,
             "provider": provider,
         }
@@ -306,14 +329,20 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "recoverable": True,
             "reason": failure_reason,
             "attempted": True,
+            "provider_status": "degraded",
         }
         return {
             "image_prompts": image_prompts,
             "image_outputs": image_outputs,
             "tool_outputs": tool_outputs,
             "draft_status": {"image": "failed"},
-            "errors": _append_recoverable_image_error(state, _IMAGE_FAILURE_MESSAGE),
+            "errors": _append_recoverable_image_error(
+                state,
+                _safe_text(error_payload.get("message"))
+                or _SAFE_IMAGE_PROVIDER_WARNING,
+            ),
             "cost_controls": cost_controls,
+            "status_messages": [_SAFE_IMAGE_PROVIDER_WARNING],
         }
 
     renderable_count = 0
@@ -348,6 +377,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "reason": non_renderable_reason,
             "attempted": True,
             "provider": provider,
+            "provider_status": "degraded",
             "images_generated": len(sanitized_images),
             "renderable_images": renderable_count,
         }
@@ -358,6 +388,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "draft_status": {"image": "failed"},
             "errors": _append_recoverable_image_error(state, non_renderable_reason),
             "cost_controls": cost_controls,
+            "status_messages": [_SAFE_IMAGE_PROVIDER_WARNING],
         }
 
     tool_outputs["image_agent"] = {
@@ -365,6 +396,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "recoverable": False,
         "attempted": True,
         "provider": provider,
+        "provider_status": "ok",
         "images_generated": len(sanitized_images),
         "renderable_images": renderable_count,
     }

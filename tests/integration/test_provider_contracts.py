@@ -105,7 +105,8 @@ def test_generate_text_total_provider_failure_is_structured(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     def create(**kwargs):
-        raise RuntimeError("raw provider payload: {'secret':'sk-test-value'}")
+        payload = "{'secret':'sk-test-value'}"  # pragma: allowlist secret
+        raise RuntimeError(f"raw provider payload: {payload}")
 
     monkeypatch.setattr(
         generate_text_module,
@@ -121,7 +122,7 @@ def test_generate_text_total_provider_failure_is_structured(monkeypatch):
 
     assert result.degraded is True
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     assert "models_attempted" in result.error
     assert "last_error" in result.error
 
@@ -309,7 +310,7 @@ def test_generate_image_both_models_fail(monkeypatch):
     result = generate_image_module.generate_image(prompt="Both fail")
     assert result.degraded is True
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     assert result.error["models_attempted"] == ["dall-e-3", "dall-e-2"]
 
 

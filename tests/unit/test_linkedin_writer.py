@@ -24,8 +24,10 @@ def _base_state(**overrides):
 def _long_linkedin_post() -> str:
     paragraph = (
         "Most teams are not blocked by ideas. They are blocked by repeatability. "
-        "A single prompt can create momentum, but only systems create output you can trust week after week. "
-        "The strongest teams define ownership, sequence, and measurable quality thresholds. "
+        "A single prompt can create momentum, but only systems create output "
+        "you can trust week after week. "
+        "The strongest teams define ownership, sequence, and measurable "
+        "quality thresholds. "
     )
     body = (
         "If your AI content workflow still feels random, this is the fix.\n\n"
@@ -292,3 +294,34 @@ def test_linkedin_writer_sets_draft_status_complete(monkeypatch) -> None:
     monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
     updates = linkedin_writer_module.linkedin_writer_node(_base_state())
     assert updates["draft_status"]["linkedin"] == "complete"
+
+
+def test_degraded_generate_text_creates_marked_linkedin_fallback(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {
+            "output": "",
+            "degraded": True,
+            "error": {"code": "quota_exceeded", "recoverable": True},
+            "usage": {"total_tokens": 0},
+        }
+
+    monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
+    state = _base_state(
+        user_query="Compose a LinkedIn thought leadership post about EV trends."
+    )
+    updates = linkedin_writer_module.linkedin_writer_node(state)
+    linkedin = updates["content_drafts"]["linkedin"]
+
+    assert linkedin["fallback_generated"] is True
+    assert linkedin["degraded_generation"] is True
+    assert linkedin["generation_status"] == "fallback_degraded"
+    assert linkedin["provider_status"] == "degraded"
+    assert linkedin["provider_failure_reason"] == "quota_exceeded"
+    assert linkedin["real_generation_succeeded"] is False
+    assert linkedin["generation_tokens"] == 0
+    assert "limited fallback update" in linkedin["body"].lower()
+    assert state["user_query"] not in linkedin["body"]
+    assert updates["errors"][-1]["type"] == "text_generation_degraded"
+    assert updates["status_messages"][0].startswith(
+        "Draft unavailable because text generation is currently limited."
+    )

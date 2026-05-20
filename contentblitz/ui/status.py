@@ -138,6 +138,27 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
     return False
 
 
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = str(draft.get("generation_status", "")).strip().lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = str(draft.get("provider_status", "")).strip().lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degradation(state: Mapping[str, Any]) -> bool:
+    content_drafts = _safe_dict(state.get("content_drafts", {}))
+    for channel in ("blog", "linkedin"):
+        draft = _safe_dict(content_drafts.get(channel, {}))
+        if _is_fallback_draft(draft):
+            return True
+    return False
+
+
 def _has_terminal_failure(
     state: Mapping[str, Any], node_statuses: Mapping[str, str]
 ) -> bool:
@@ -321,6 +342,12 @@ def build_status_messages(
                 "Image generation encountered a recoverable issue. "
                 "Text outputs remain available."
             )
+        )
+
+    if _has_text_generation_degradation(state) or _has_recoverable_image_failure(state):
+        messages.append(
+            "OpenAI provider unavailable or quota-limited. "
+            "ContentBlitz generated limited fallback outputs."
         )
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))

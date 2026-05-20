@@ -300,6 +300,36 @@ def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(
     assert "a recoverable workflow issue was encountered." in lowered
 
 
+def test_markdown_export_includes_provider_degradation_warning(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        status_messages=[
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            )
+        ],
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited content.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+            "linkedin": {"body": "", "version": 0},
+            "research_report": {"body": ""},
+        },
+    )
+
+    markdown = build_markdown_export_document(state)
+
+    assert "## Warnings" in markdown
+    assert "OpenAI provider unavailable or quota-limited." in markdown
+
+
 def test_resolve_markdown_export_path_stays_inside_export_dir(
     tmp_path, monkeypatch
 ) -> None:

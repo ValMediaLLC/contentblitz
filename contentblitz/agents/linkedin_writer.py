@@ -16,6 +16,11 @@ from contentblitz.tools.text import generate_text
 
 _MIN_LINKEDIN_CHARS = 1300
 _MAX_LINKEDIN_CHARS = 1600
+_FALLBACK_PROVIDER_WARNING = (
+    "Draft unavailable because text generation is currently limited. "
+    "Research sources were collected successfully and can be used to regenerate "
+    "this section once the provider is available."
+)
 
 _CTA_HINTS = (
     "comment",
@@ -74,7 +79,8 @@ def _build_prompt(
         "- Include a strong opening hook.\n"
         "- Include one clear CTA near the end.\n"
         "- Include 3-6 relevant hashtags.\n"
-        f"- Keep total length between {_MIN_LINKEDIN_CHARS}-{_MAX_LINKEDIN_CHARS} characters when possible.\n"
+        f"- Keep total length between {_MIN_LINKEDIN_CHARS}-{_MAX_LINKEDIN_CHARS} "
+        "characters when possible.\n"
     )
     if previous_char_count > 0:
         prompt += (
@@ -136,8 +142,11 @@ def _extract_hook(text: str, user_query: str) -> str:
             continue
         return clean
 
-    fallback_query = user_query.strip() or "AI-driven content operations"
-    return f"{fallback_query} is changing faster than most teams can execute."
+    _ = user_query
+    return (
+        "AI-driven content operations are changing faster than most teams can "
+        "execute."
+    )
 
 
 def _extract_cta(text: str) -> str:
@@ -218,16 +227,19 @@ def _fallback_post(
     ).strip()
     audience = str(linkedin_brief.get("audience", "operators and leaders")).strip()
     angle = str(linkedin_brief.get("angle", "execution-focused perspective")).strip()
-    topic = user_query.strip() or "AI content execution"
-
     return (
         f"{hook}\n\n"
-        f"Most teams are still treating {topic} as a one-off experiment.\n\n"
-        f"Here is a better pattern: define a narrow outcome, assign clear ownership, and measure one weekly signal that proves progress.\n\n"
-        f"When your objective is {objective.lower()}, speed matters less than consistency. "
+        "Text generation was unavailable, so this is a limited fallback update.\n\n"
+        "Most teams still treat AI content operations as one-off experiments.\n\n"
+        "Here is a better pattern: define a narrow outcome, assign clear "
+        "ownership, and measure one weekly signal that proves progress.\n\n"
+        f"When your objective is {objective.lower()}, speed matters less than "
+        "consistency. "
         f"Audience fit ({audience}) and message clarity should drive every draft.\n\n"
-        f"My view: strong systems outperform isolated prompts. Build a repeatable loop, keep it simple, and improve from live feedback.\n\n"
-        f"This angle works best when you optimize for {angle.lower()} and keep roles explicit.\n\n"
+        "My view: strong systems outperform isolated prompts. Build a repeatable "
+        "loop, keep it simple, and improve from live feedback.\n\n"
+        f"This angle works best when you optimize for {angle.lower()} and keep "
+        "roles explicit.\n\n"
         f"{cta}\n"
         f"{' '.join(hashtags)}"
     ).strip()
@@ -270,13 +282,17 @@ def _compose_final_post(
 
     # Deterministically expand if still too short.
     if len(text) < _MIN_LINKEDIN_CHARS:
-        topic = user_query.strip() or "AI workflow execution"
+        topic = (
+            str(linkedin_brief.get("angle", "")).strip()
+            or "AI workflow execution"
+        )
         objective = str(
             linkedin_brief.get("objective", "operational consistency")
         ).strip()
         expansion = (
-            f" Practical detail: align your team around one weekly priority tied to {topic}. "
-            f"Then turn that into a repeatable operating step, and evaluate outcomes against {objective.lower()}."
+            " Practical detail: align your team around one weekly priority tied to "
+            f"{topic}. Then turn that into a repeatable operating step, and "
+            f"evaluate outcomes against {objective.lower()}."
         )
         while len(text) < _MIN_LINKEDIN_CHARS:
             text = f"{text}\n\n{expansion}".strip()
@@ -293,11 +309,44 @@ def _append_budget_error(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         {
             "agent": "linkedin_writer",
             "type": "budget_exceeded",
-            "message": "LinkedIn generation used deterministic fallback due to token budget limits.",
+            "message": (
+                "LinkedIn generation used deterministic fallback due to token "
+                "budget limits."
+            ),
             "recoverable": True,
         }
     )
     return errors
+
+
+def _append_text_provider_degraded_error(
+    state: Dict[str, Any],
+    *,
+    reason: str,
+) -> List[Dict[str, Any]]:
+    errors = deepcopy(_safe_list(state.get("errors", [])))
+    errors.append(
+        {
+            "agent": "linkedin_writer",
+            "type": "text_generation_degraded",
+            "code": reason or "unknown_provider_error",
+            "message": _FALLBACK_PROVIDER_WARNING,
+            "recoverable": True,
+        }
+    )
+    return errors
+
+
+def _response_total_tokens(llm_response: Mapping[str, Any]) -> int:
+    usage = _safe_dict(llm_response.get("usage", {}))
+    total = usage.get("total_tokens", 0)
+    if isinstance(total, bool):
+        return 0
+    if isinstance(total, int):
+        return max(0, total)
+    if isinstance(total, float):
+        return max(0, int(total))
+    return 0
 
 
 def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -343,6 +392,13 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "cta": _extract_cta(final_body),
             "hashtags": _extract_hashtags(final_body, user_query),
             "model_used": "budget_fallback",
+            "fallback_generated": True,
+            "degraded_generation": True,
+            "generation_status": "fallback_degraded",
+            "provider_status": "degraded",
+            "provider_failure_reason": "quota_exceeded",
+            "real_generation_succeeded": False,
+            "generation_tokens": 0,
         }
         return {
             "content_drafts": {"linkedin": linkedin_update},
@@ -352,6 +408,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             },
             "cost_controls": cost_controls,
             "errors": _append_budget_error(state),
+            "status_messages": [_FALLBACK_PROVIDER_WARNING],
         }
 
     model = preferred_text_model(cost_controls)
@@ -369,8 +426,18 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     cost_controls = apply_text_tokens(cost_controls, first_response)
     body = str(first_response.get("output", "")).strip()
+    fallback_generated = bool(first_response.get("degraded", False))
+    provider_failure_reason = str(
+        _safe_dict(first_response.get("error", {})).get("code", "")
+    ).strip().lower()
+    if fallback_generated:
+        body = ""
 
-    if len(body) < _MIN_LINKEDIN_CHARS and not token_budget_exceeded(cost_controls):
+    if (
+        not fallback_generated
+        and len(body) < _MIN_LINKEDIN_CHARS
+        and not token_budget_exceeded(cost_controls)
+    ):
         retry_model = preferred_text_model(cost_controls)
         retry_prompt = _build_prompt(
             user_query=user_query,
@@ -387,11 +454,22 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         cost_controls = apply_text_tokens(cost_controls, retry_response)
         retry_body = str(retry_response.get("output", "")).strip()
-        if len(retry_body) >= len(body):
+        retry_degraded = bool(retry_response.get("degraded", False))
+        if retry_degraded:
+            fallback_generated = True
+            body = ""
+            provider_failure_reason = (
+                str(_safe_dict(retry_response.get("error", {})).get("code", ""))
+                .strip()
+                .lower()
+            ) or provider_failure_reason
+        elif len(retry_body) >= len(body):
             body = retry_body
-        model = retry_model
+            model = retry_model
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
+    if not body:
+        fallback_generated = True
 
     hook = _extract_hook(body, user_query)
     cta = _extract_cta(body)
@@ -419,7 +497,21 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "hook": hook,
         "cta": cta,
         "hashtags": hashtags,
-        "model_used": model,
+        "model_used": (
+            str(first_response.get("model", "")).strip()
+            or ("deterministic_fallback" if fallback_generated else model)
+        ),
+        "fallback_generated": fallback_generated,
+        "degraded_generation": fallback_generated,
+        "generation_status": (
+            "fallback_degraded" if fallback_generated else "generated"
+        ),
+        "provider_status": "degraded" if fallback_generated else "ok",
+        "provider_failure_reason": (
+            provider_failure_reason if fallback_generated else ""
+        ),
+        "real_generation_succeeded": not fallback_generated,
+        "generation_tokens": _response_total_tokens(first_response),
     }
 
     updates: Dict[str, Any] = {
@@ -434,4 +526,10 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     if errors:
         updates["errors"] = errors
+    if fallback_generated:
+        updates["errors"] = _append_text_provider_degraded_error(
+            state,
+            reason=provider_failure_reason or "unknown_provider_error",
+        )
+        updates["status_messages"] = [_FALLBACK_PROVIDER_WARNING]
     return updates

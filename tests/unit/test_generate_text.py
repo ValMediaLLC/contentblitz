@@ -152,7 +152,7 @@ def test_all_provider_failures_return_degraded_result(monkeypatch) -> None:
     assert result.degraded is True
     assert result.text == ""
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     assert result.error["attempts_per_model"] == attempts
     assert result.error["models_attempted"] == ["gpt-4o", "gpt-4o-mini"]
     assert len(completions.calls) == total_calls
@@ -252,7 +252,9 @@ def test_live_calls_disabled_fails_safely_without_building_client(monkeypatch) -
         client_built["value"] = True
         raise AssertionError("Client should not be built when live calls are disabled.")
 
-    monkeypatch.setattr(generate_text_module, "_build_openai_client", _fake_client_builder)
+    monkeypatch.setattr(
+        generate_text_module, "_build_openai_client", _fake_client_builder
+    )
 
     result = generate_text_module.generate_text(
         prompt="Generate text",
@@ -285,11 +287,10 @@ def test_malformed_provider_response_is_handled_safely(monkeypatch) -> None:
         agent_key="query_handler",
     )
 
-    assert result.degraded is False
+    assert result.degraded is True
     assert result.text == ""
-    assert result.input_tokens == 0
-    assert result.output_tokens == 0
-    assert result.total_tokens == 0
+    assert result.error is not None
+    assert result.error["code"] == "empty_provider_response"
 
 
 def test_provider_authentication_failure_is_normalized_without_secret_leak(
@@ -313,7 +314,28 @@ def test_provider_authentication_failure_is_normalized_without_secret_leak(
 
     assert result.degraded is True
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
-    assert result.error["last_error"]["code"] == "authentication_error"
+    assert result.error["code"] == "authentication_failed"
+    assert result.error["last_error"]["code"] == "authentication_failed"
     assert "sk-live-secret-value" not in str(result.error)
     assert "traceback" not in str(result.error).lower()
+
+
+def test_rate_limit_quota_error_maps_to_quota_exceeded(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    rate_limit_exc = generate_text_module.RateLimitError.__new__(
+        generate_text_module.RateLimitError
+    )
+    Exception.__init__(rate_limit_exc, "insufficient_quota for this request")
+    setattr(rate_limit_exc, "status_code", 429)
+    attempts = RETRY_POLICY["blog_writer"] + 1
+    total_calls = attempts * 2
+    _install_fake_client(monkeypatch, [rate_limit_exc for _ in range(total_calls)])
+
+    result = generate_text_module.generate_text(
+        prompt="Generate text with quota error.",
+        agent_key="blog_writer",
+    )
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "quota_exceeded"

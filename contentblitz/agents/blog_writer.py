@@ -13,6 +13,12 @@ from contentblitz.core.cost_controls import (
 )
 from contentblitz.tools.text import generate_text
 
+_FALLBACK_PROVIDER_WARNING = (
+    "Draft unavailable because text generation is currently limited. "
+    "Research sources were collected successfully and can be used to regenerate "
+    "this section once the provider is available."
+)
+
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -66,16 +72,23 @@ def _build_prompt(
     return prompt
 
 
-def _fallback_draft(user_query: str, blog_brief: Mapping[str, Any]) -> str:
+def _fallback_draft(blog_brief: Mapping[str, Any]) -> str:
     objective = str(
         blog_brief.get("objective", "Create an informative article.")
     ).strip()
-    angle = str(blog_brief.get("angle", "practical guidance")).strip()
-    title = user_query.strip() or "Strategic Content Planning"
+    audience = str(blog_brief.get("audience", "professional audience")).strip()
+    angle = (
+        str(blog_brief.get("angle", "practical guidance")).strip()
+        or "practical guidance"
+    )
     return (
-        f"# {title}\n\n"
-        f"{objective}\n\n"
-        f"This draft takes a {angle} approach, focusing on clear steps readers can apply immediately."
+        "## Fallback Blog Outline\n"
+        "Text generation was unavailable, so this is a limited outline "
+        "based on retrieved research sources.\n\n"
+        f"- Objective: {objective}\n"
+        f"- Audience: {audience}\n"
+        f"- Suggested angle: {angle}\n"
+        "- Next step: Regenerate this draft when provider availability returns."
     )
 
 
@@ -111,11 +124,44 @@ def _append_budget_error(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         {
             "agent": "blog_writer",
             "type": "budget_exceeded",
-            "message": "Blog generation used deterministic fallback due to token budget limits.",
+            "message": (
+                "Blog generation used deterministic fallback due to token budget "
+                "limits."
+            ),
             "recoverable": True,
         }
     )
     return errors
+
+
+def _append_text_provider_degraded_error(
+    state: Dict[str, Any],
+    *,
+    reason: str,
+) -> List[Dict[str, Any]]:
+    errors = deepcopy(_safe_list(state.get("errors", [])))
+    errors.append(
+        {
+            "agent": "blog_writer",
+            "type": "text_generation_degraded",
+            "code": reason or "unknown_provider_error",
+            "message": _FALLBACK_PROVIDER_WARNING,
+            "recoverable": True,
+        }
+    )
+    return errors
+
+
+def _response_total_tokens(llm_response: Mapping[str, Any]) -> int:
+    usage = _safe_dict(llm_response.get("usage", {}))
+    total = usage.get("total_tokens", 0)
+    if isinstance(total, bool):
+        return 0
+    if isinstance(total, int):
+        return max(0, total)
+    if isinstance(total, float):
+        return max(0, int(total))
+    return 0
 
 
 def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,14 +201,15 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
-        draft_body = _fallback_draft(user_query=user_query, blog_brief=blog_brief)
+        draft_body = _fallback_draft(blog_brief=blog_brief)
         citations_block = _render_citations(citations)
         if citations_block:
             draft_body = f"{draft_body}\n\n{citations_block}"
         else:
             draft_body = (
                 f"{draft_body}\n\n"
-                "Disclaimer: No verifiable external citations were available for this draft."
+                "Disclaimer: No verifiable external citations were available for "
+                "this draft."
             )
 
         blog_update = {
@@ -172,6 +219,13 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "word_count": _word_count(draft_body),
             "readability_score": _readability_score(draft_body),
             "model_used": "budget_fallback",
+            "fallback_generated": True,
+            "degraded_generation": True,
+            "generation_status": "fallback_degraded",
+            "provider_status": "degraded",
+            "provider_failure_reason": "quota_exceeded",
+            "real_generation_succeeded": False,
+            "generation_tokens": 0,
         }
         return {
             "content_drafts": {"blog": blog_update},
@@ -198,9 +252,15 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             model=model,
         )
     )
-    draft_body = str(llm_response.get("output", "")).strip()
-    if not draft_body:
-        draft_body = _fallback_draft(user_query=user_query, blog_brief=blog_brief)
+    raw_output = str(llm_response.get("output", "")).strip()
+    degraded_response = bool(llm_response.get("degraded", False))
+    provider_error = _safe_dict(llm_response.get("error", {}))
+    provider_failure_reason = str(provider_error.get("code", "")).strip().lower()
+    fallback_generated = degraded_response or not raw_output
+    if fallback_generated:
+        draft_body = _fallback_draft(blog_brief=blog_brief)
+    else:
+        draft_body = raw_output
 
     citations_block = _render_citations(citations)
     if citations_block:
@@ -208,7 +268,8 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     else:
         draft_body = (
             f"{draft_body}\n\n"
-            "Disclaimer: No verifiable external citations were available for this draft."
+            "Disclaimer: No verifiable external citations were available for this "
+            "draft."
         )
 
     cost_controls = apply_text_tokens(cost_controls, llm_response)
@@ -221,10 +282,23 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "version": next_version,
         "word_count": _word_count(draft_body),
         "readability_score": _readability_score(draft_body),
-        "model_used": model,
+        "model_used": (
+            str(llm_response.get("model", "")).strip()
+            or ("deterministic_fallback" if fallback_generated else model)
+        ),
+        "fallback_generated": fallback_generated,
+        "degraded_generation": fallback_generated,
+        "generation_status": (
+            "fallback_degraded" if fallback_generated else "generated"
+        ),
+        "provider_status": "degraded" if fallback_generated else "ok",
+        "provider_failure_reason": (
+            provider_failure_reason if fallback_generated else ""
+        ),
+        "real_generation_succeeded": not fallback_generated,
+        "generation_tokens": _response_total_tokens(llm_response),
     }
-
-    return {
+    updates: Dict[str, Any] = {
         "content_drafts": {"blog": blog_update},
         "draft_status": {
             **draft_status,
@@ -232,3 +306,12 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         },
         "cost_controls": cost_controls,
     }
+    if fallback_generated:
+        updates["errors"] = _append_text_provider_degraded_error(
+            state,
+            reason=provider_failure_reason or "unknown_provider_error",
+        )
+        updates["status_messages"] = [
+            _FALLBACK_PROVIDER_WARNING,
+        ]
+    return updates

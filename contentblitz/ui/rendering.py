@@ -348,11 +348,30 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> list[str]:
     for output_type in ("blog", "linkedin"):
         score = _safe_dict(quality_scores.get(output_type, {}))
         validation_status = _safe_text(score.get("validation_status")).lower()
-        if validation_status in {"failed", "retry_needed", "unverified"}:
+        if validation_status in {"failed", "retry_needed", "unverified", "degraded"}:
             warnings.append(
                 f"{output_type.title()} quality status: {validation_status}."
             )
     return warnings
+
+
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = _safe_text(draft.get("generation_status")).lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = _safe_text(draft.get("provider_status")).lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degraded(content_drafts: Mapping[str, Any]) -> bool:
+    for channel in ("blog", "linkedin"):
+        if _is_fallback_draft(_safe_dict(content_drafts.get(channel, {}))):
+            return True
+    return False
 
 
 def _derive_usage_summary(
@@ -584,6 +603,7 @@ def build_render_payload(
     )
 
     content_drafts = _safe_dict(state_snapshot.get("content_drafts", {}))
+    text_generation_degraded = _has_text_generation_degraded(content_drafts)
     unsafe_content_removed = False
     blog_draft, blog_changed = sanitize_markdown_output(
         _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
@@ -636,6 +656,15 @@ def build_render_payload(
     ):
         warnings.append(
             "Image generation failed in this run, but text outputs may still be usable."
+        )
+    image_generation_degraded = any(
+        _safe_text(_safe_dict(item).get("status")).lower() in {"failed", "degraded"}
+        for item in _safe_list(state_snapshot.get("image_outputs", []))
+    )
+    if text_generation_degraded or image_generation_degraded:
+        warnings.append(
+            "OpenAI provider unavailable or quota-limited. "
+            "ContentBlitz generated limited fallback outputs."
         )
 
     export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
@@ -790,5 +819,39 @@ def build_render_payload(
             "export_warning_count": export_warning_count,
             "export_error_count": export_error_count,
             "non_blocking_failure": export_error_count > 0 and bool(final_response),
+        },
+        "provider_status": {
+            "text_generation": "degraded" if text_generation_degraded else "completed",
+            "image_generation": (
+                "degraded" if image_generation_degraded else "completed"
+            ),
+            "search": (
+                "degraded"
+                if bool(
+                    _safe_dict(state_snapshot.get("research_data", {})).get(
+                        "degraded", False
+                    )
+                )
+                else "completed"
+            ),
+            "export": "degraded" if export_error_count > 0 else "completed",
+        },
+        "degradation_metadata": {
+            "text_generation_degraded": text_generation_degraded,
+            "image_generation_degraded": image_generation_degraded,
+            "fallback_content_used": text_generation_degraded,
+            "real_generation_succeeded": not text_generation_degraded,
+            "provider_failure_reason": (
+                _safe_text(
+                    _safe_dict(content_drafts.get("blog", {})).get(
+                        "provider_failure_reason"
+                    )
+                )
+                or _safe_text(
+                    _safe_dict(content_drafts.get("linkedin", {})).get(
+                        "provider_failure_reason"
+                    )
+                )
+            ),
         },
     }

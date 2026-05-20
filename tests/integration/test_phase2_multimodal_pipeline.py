@@ -74,13 +74,17 @@ def _text_payload_for_prompt(prompt: str) -> str:
     if "Write an SEO-friendly blog draft in markdown." in prompt:
         return (
             "# AI Workflow Playbook\n\n"
-            "Teams that define repeatable content workflows outperform teams that chase one-off prompts. "
-            "This draft explains the structure, checkpoints, and ownership model needed for predictable output."
+            "Teams that define repeatable content workflows outperform teams "
+            "that chase one-off prompts. This draft explains the structure, "
+            "checkpoints, and ownership model needed for predictable output."
         )
     if "Write a LinkedIn post in plain text." in prompt:
         return _long_linkedin_post()
     if "Enhance this image generation prompt for clarity and visual detail." in prompt:
-        return "Create a high-detail futuristic marketing command center with rich cinematic lighting."
+        return (
+            "Create a high-detail futuristic marketing command center with rich "
+            "cinematic lighting."
+        )
     return "Generic mocked provider response."
 
 
@@ -292,7 +296,7 @@ def test_image_cap_reached_produces_partial_success(monkeypatch) -> None:
     assert result["workflow_status"] == "partial_success"
     assert result["final_response"].strip()
     assert "## Blog Draft" in result["final_response"]
-    assert "recoverable failure" in result["final_response"].lower()
+    assert "recoverable issue" in result["final_response"].lower()
 
 
 def test_token_budget_exceeded_safe_failure(monkeypatch) -> None:

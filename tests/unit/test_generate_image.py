@@ -86,7 +86,7 @@ def test_both_models_fail_returns_degraded_result(monkeypatch) -> None:
     assert result.degraded is True
     assert result.image_url is None
     assert result.error is not None
-    assert result.error["code"] == "provider_failure"
+    assert result.error["code"] == "unknown_provider_error"
     assert result.error["models_attempted"] == ["dall-e-3", "dall-e-2"]
 
 
@@ -183,11 +183,11 @@ def test_model_not_found_falls_back_to_modern_image_model(
         generate_image_module,
         "_normalize_provider_error",
         lambda exc: {
-            "code": "bad_request",
-            "message": "The image provider rejected the request format.",
+            "code": "unknown_provider_error",
+            "message": "Image generation provider request failed safely.",
             "provider": "openai",
             "status_code": 400,
-            "recoverable": False,
+            "recoverable": True,
         },
     )
 
@@ -199,6 +199,20 @@ def test_model_not_found_falls_back_to_modern_image_model(
     assert result.image_url is None
     called_models = [call["model"] for call in images.calls]
     assert called_models == ["dall-e-3", "dall-e-2", "gpt-image-1"]
+
+
+def test_empty_provider_payload_maps_to_empty_provider_response(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _install_fake_client(
+        monkeypatch,
+        [SimpleNamespace(data=[]), SimpleNamespace(data=[])],
+    )
+
+    result = generate_image_module.generate_image(prompt="Empty payload case.")
+
+    assert result.degraded is True
+    assert result.error is not None
+    assert result.error["code"] == "empty_provider_response"
 
 
 def test_id_only_payload_is_non_renderable(monkeypatch) -> None:

@@ -60,3 +60,6 @@ exports/**
 Thumbs.db
 *.swp
 *.swo
+
+# Pre-Commit Cache
+.pre-commit-cache-local/*
