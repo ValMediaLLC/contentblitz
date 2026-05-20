@@ -30,6 +30,11 @@ def test_markdown_export_writes_path() -> None:
     updates = export_node_module.export_node(state)
     metadata = updates["export_metadata"]
     assert metadata["export_paths"]["markdown"].endswith(".md")
+    assert metadata["export_status"]["markdown"] == "completed"
+    assert metadata["requested_export_formats"] == ["markdown"]
+    assert metadata["completed_export_formats"] == ["markdown"]
+    assert metadata["failed_export_formats"] == []
+    assert metadata["export_error_count"] == 0
     assert metadata["exported_at"]
 
 
@@ -71,6 +76,9 @@ def test_pdf_failure_marks_pdf_failed_safely(monkeypatch) -> None:
     assert "markdown" not in metadata["export_paths"]
     assert metadata["error_log"]
     assert metadata["error_log"][0]["format"] == "pdf"
+    assert metadata["failed_export_formats"] == ["pdf"]
+    assert metadata["export_error_count"] == 1
+    assert updates["workflow_status"] in {"degraded", "failed"}
 
 
 def test_all_exports_fail_but_exported_at_is_still_set(monkeypatch) -> None:
@@ -165,6 +173,9 @@ def test_validation_failure_marks_only_invalid_format_failed(monkeypatch) -> Non
     assert "markdown" not in metadata["export_paths"]
     assert metadata["export_paths"]["html"].endswith(".html")
     assert metadata["export_error_count"] == 1
+    assert metadata["failed_export_formats"] == ["markdown"]
+    assert metadata["completed_export_formats"] == ["html"]
+    assert updates["workflow_status"] == "partial_success"
 
 
 def test_unsafe_export_path_is_rejected(monkeypatch) -> None:
@@ -216,3 +227,56 @@ def test_validation_failure_adds_safe_status_message(monkeypatch) -> None:
     assert metadata["export_status"]["markdown"] == "failed"
     assert isinstance(messages, list)
     assert any("failed validation" in str(message).lower() for message in messages)
+
+
+def test_validation_warning_does_not_mark_export_failed(monkeypatch) -> None:
+    def fake_validate_pdf(*args, **kwargs):
+        return {"valid": True, "warnings": ["safe warning"], "errors": []}
+
+    monkeypatch.setattr(export_node_module, "validate_pdf_export", fake_validate_pdf)
+    state = _base_state(
+        workflow_status="success",
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["pdf"],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+            "export_status": {},
+        },
+    )
+
+    updates = export_node_module.export_node(state)
+    metadata = updates["export_metadata"]
+
+    assert metadata["export_status"]["pdf"] == "completed"
+    assert metadata["export_error_count"] == 0
+    assert metadata["export_warning_count"] >= 1
+    assert metadata["failed_export_formats"] == []
+    assert updates["workflow_status"] == "success"
+
+
+def test_stale_failed_export_state_is_cleared_when_requested_format_succeeds() -> None:
+    state = _base_state(
+        workflow_status="success",
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["pdf"],
+            "export_paths": {"html": "exports/stale.html"},
+            "exported_at": None,
+            "error_log": [{"format": "html", "code": "html_export_failed"}],
+            "export_status": {"html": "failed"},
+            "failed_export_formats": ["html"],
+            "export_error_count": 1,
+        },
+    )
+
+    updates = export_node_module.export_node(state)
+    metadata = updates["export_metadata"]
+
+    assert list(metadata["export_status"].keys()) == ["pdf"]
+    assert metadata["export_status"]["pdf"] == "completed"
+    assert list(metadata["export_paths"].keys()) == ["pdf"]
+    assert metadata["failed_export_formats"] == []
+    assert metadata["export_error_count"] == 0
+    assert updates["workflow_status"] == "success"

@@ -9,6 +9,15 @@ from contentblitz.tools.exports.markdown import build_markdown_export_document
 
 export_node_module = importlib.import_module("contentblitz.agents.export_node")
 
+_PROVIDER_WARNING = (
+    "OpenAI provider unavailable or quota-limited. "
+    "ContentBlitz generated limited fallback outputs."
+)
+_TEXT_FALLBACK_WARNING = (
+    "Text generation was unavailable. "
+    "Blog and LinkedIn outputs are fallback outlines."
+)
+
 
 def _base_state(tmp_path: Path, **overrides):
     state = create_initial_state(
@@ -298,6 +307,88 @@ def test_markdown_export_sanitizes_raw_provider_payloads_in_warnings(
     assert "provider': 'openai'" not in lowered
     assert "{'code':" not in lowered
     assert "a recoverable workflow issue was encountered." in lowered
+
+
+def test_markdown_export_includes_provider_degradation_warning(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        status_messages=[
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            )
+        ],
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited content.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+            "linkedin": {"body": "", "version": 0},
+            "research_report": {"body": ""},
+        },
+    )
+
+    markdown = build_markdown_export_document(state)
+
+    assert "## Warnings" in markdown
+    assert "OpenAI provider unavailable or quota-limited." in markdown
+    assert _TEXT_FALLBACK_WARNING in markdown
+    assert "## Fallback Blog Outline" in markdown
+    assert "content_creation" not in markdown.lower()
+
+
+def test_markdown_export_dedupes_semantically_overlapping_provider_warnings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    state = _base_state(
+        tmp_path,
+        warnings=[
+            _PROVIDER_WARNING,
+            (
+                "Image generation failed in this run, but text outputs may still be "
+                "usable."
+            ),
+        ],
+        status_messages=[
+            (
+                "Draft unavailable because text generation is currently limited. "
+                "Research sources were collected successfully and can be used to "
+                "regenerate this section once the provider is available."
+            ),
+            _PROVIDER_WARNING,
+            (
+                "Image generation encountered a recoverable issue. "
+                "Text outputs remain available."
+            ),
+        ],
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited content.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "linkedin": {
+                "body": "## Fallback LinkedIn Outline\nLimited structure.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "research_report": {"body": ""},
+        },
+        image_outputs=[{"status": "failed"}],
+    )
+
+    markdown = build_markdown_export_document(state)
+
+    assert markdown.count("OpenAI provider unavailable or quota-limited.") == 1
+    assert markdown.count("Blog and LinkedIn outputs are fallback outlines.") == 1
+    assert markdown.count("Image generation encountered a recoverable issue.") == 1
 
 
 def test_resolve_markdown_export_path_stays_inside_export_dir(

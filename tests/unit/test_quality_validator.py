@@ -236,3 +236,35 @@ def test_citation_validation_does_not_add_warning_for_valid_sources(
     citation_meta = updates["quality_scores"]["citation_validation"]
     assert citation_meta["status"] == "passed"
     assert "status_messages" not in updates
+
+
+def test_fallback_blog_draft_is_degraded_and_not_passed(monkeypatch) -> None:
+    def fake_validate_content(content_type, draft_body, context=None):
+        raise AssertionError(
+            "validate_content should not be called for fallback drafts"
+        )
+
+    monkeypatch.setattr(
+        quality_validator_module, "validate_content", fake_validate_content
+    )
+    state = _base_state(
+        content_drafts={
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited content.",
+                "version": 2,
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "linkedin": {"body": "", "version": 0},
+            "research_report": {"body": ""},
+        },
+        best_drafts={"blog": None, "linkedin": None},
+    )
+    updates = quality_validator_module.quality_validator_node(state)
+
+    assert updates["quality_scores"]["blog"]["validation_status"] == "degraded"
+    assert updates["quality_scores"]["blog"]["passed"] is False
+    assert updates["quality_scores"]["blog"]["fallback_generated"] is True
+    assert updates["retry_requested"] is False
+    assert updates["retry_target"] == ""
+    assert updates["best_drafts"]["blog"] is None

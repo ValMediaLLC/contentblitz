@@ -5,6 +5,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Tuple
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
+
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -176,11 +183,35 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> Tuple[List[str], boo
         status = str(score.get("validation_status", "")).strip().lower()
         if not status:
             continue
-        if status in {"failed", "unverified", "retry_needed"}:
+        if status in {"failed", "unverified", "retry_needed", "degraded"}:
             warnings.append(f"{output_type.title()} quality status: {status}.")
-        if status in {"failed", "unverified"}:
+        if status in {"failed", "unverified", "degraded"}:
             partial = True
     return warnings, partial
+
+
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = str(draft.get("generation_status", "")).strip().lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = str(draft.get("provider_status", "")).strip().lower()
+    return provider_status == "degraded"
+
+
+def _fallback_reasons(content_drafts: Mapping[str, Any]) -> List[str]:
+    reasons: List[str] = []
+    for key in ("blog", "linkedin"):
+        draft = _safe_dict(content_drafts.get(key, {}))
+        if not _is_fallback_draft(draft):
+            continue
+        reason = str(draft.get("provider_failure_reason", "")).strip().lower()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    return reasons
 
 
 def _image_summary(
@@ -323,6 +354,8 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     assembled_outputs: Dict[str, Any] = {}
     usable_content = False
     partial_success = False
+    status_messages = deepcopy(_safe_list(state.get("status_messages", [])))
+    warning_candidates: List[str] = []
 
     research_data = _safe_dict(state.get("research_data", {}))
     if "research" in outputs and bool(research_data.get("degraded", False)):
@@ -362,6 +395,43 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 assembled_outputs["research"] = report_body
                 usable_content = True
 
+    text_requested = any(output in {"blog", "linkedin"} for output in outputs)
+    blog_fallback_used = bool(
+        "blog" in outputs
+        and _is_fallback_draft(_safe_dict(content_drafts.get("blog", {})))
+    )
+    linkedin_fallback_used = bool(
+        "linkedin" in outputs
+        and _is_fallback_draft(_safe_dict(content_drafts.get("linkedin", {})))
+    )
+    text_degraded = False
+    if text_requested:
+        for channel in ("blog", "linkedin"):
+            if channel not in outputs:
+                continue
+            draft = _safe_dict(content_drafts.get(channel, {}))
+            if _is_fallback_draft(draft):
+                text_degraded = True
+                break
+    if text_degraded:
+        warning_candidates.append(TEXT_FALLBACK_WARNING)
+        warning_candidates.append(TOP_LEVEL_PROVIDER_WARNING)
+        partial_success = True
+        reasons = _fallback_reasons(content_drafts)
+        if reasons:
+            assembled_outputs["provider_failure_reason"] = reasons[0]
+        assembled_outputs["text_generation_degraded"] = True
+        assembled_outputs["fallback_content_used"] = True
+        assembled_outputs["real_generation_succeeded"] = False
+        assembled_outputs["fallback_blog_used"] = blog_fallback_used
+        assembled_outputs["fallback_linkedin_used"] = linkedin_fallback_used
+    else:
+        assembled_outputs["text_generation_degraded"] = False
+        assembled_outputs["fallback_content_used"] = False
+        assembled_outputs["real_generation_succeeded"] = text_requested
+        assembled_outputs["fallback_blog_used"] = blog_fallback_used
+        assembled_outputs["fallback_linkedin_used"] = linkedin_fallback_used
+
     image_section, image_failed = _image_summary(
         image_outputs=image_outputs,
         errors=[dict(item) for item in errors if isinstance(item, Mapping)],
@@ -377,10 +447,20 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         sections.append(image_section)
         usable_content = True
     if image_failed:
-        sections.append("Warning: Image generation encountered a recoverable failure.")
+        warning_candidates.append(IMAGE_RECOVERABLE_WARNING)
+        warning_candidates.append(TOP_LEVEL_PROVIDER_WARNING)
         partial_success = True
+        assembled_outputs["image_generation_degraded"] = True
         if "image" in outputs:
             usable_content = True
+    else:
+        assembled_outputs["image_generation_degraded"] = False
+
+    assembled_outputs["deterministic_research_fallback_used"] = bool(
+        _safe_dict(state.get("research_data", {})).get(
+            "deterministic_summary_used", False
+        )
+    )
 
     quality_warnings, quality_partial = _quality_warnings(quality_scores)
     if quality_warnings:
@@ -394,6 +474,11 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if bool(cost_controls.get("budget_exceeded", False)):
         sections.append("Notice: Session budget was exceeded during generation.")
         partial_success = True
+
+    if warning_candidates:
+        deduped_warnings = dedupe_user_warnings(warning_candidates)
+        sections.extend(deduped_warnings)
+        status_messages = dedupe_user_warnings([*status_messages, *deduped_warnings])
 
     sources_block = _render_sources_section(deduped_sources)
     if sources_block and outputs != ["research"]:
@@ -426,4 +511,5 @@ def output_assembler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "assembled_outputs": assembled_outputs,
         "workflow_status": workflow_status,
         "export_requested": export_requested,
+        "status_messages": dedupe_user_warnings(status_messages),
     }

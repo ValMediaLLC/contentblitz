@@ -16,10 +16,12 @@ from contentblitz.workflow.routing import (
     CLARIFICATION_NODE,
     IMAGE_AGENT_NODE,
     LINKEDIN_WRITER_NODE,
-    OUTPUT_ASSEMBLER_NODE as OUTPUT_ASSEMBLER_ROUTE_NODE,
     RESEARCH_AGENT_NODE,
     route_from_query_handler,
     route_from_research_agent,
+)
+from contentblitz.workflow.routing import (
+    OUTPUT_ASSEMBLER_NODE as OUTPUT_ASSEMBLER_ROUTE_NODE,
 )
 
 pytestmark = pytest.mark.filterwarnings(
@@ -83,14 +85,29 @@ def test_retry_router_routes_only_to_writers_or_output_assembler(monkeypatch) ->
     }
     assert set(GRAPH_STRUCTURE[RETRY_ROUTER_NODE]).issubset(allowed)
 
+    from contentblitz.agents import blog_writer as blog_writer_module
     from contentblitz.agents import quality_validator as quality_validator_module
 
     def fake_validate_content(content_type, draft_body, context=None):
         return {"composite": 0.60}
 
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {
+            "output": (
+                "# Blog Draft\n\n"
+                "Deterministic mocked blog body used for retry router route tests."
+            ),
+            "degraded": False,
+            "error": None,
+            "usage": {"prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12},
+            "model": model,
+            "provider": "mock",
+        }
+
     monkeypatch.setattr(
         quality_validator_module, "validate_content", fake_validate_content
     )
+    monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
 
     state = create_initial_state(requested_outputs=["blog"])
     compiled = build_langgraph()

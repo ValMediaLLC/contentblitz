@@ -24,6 +24,12 @@ from contentblitz.core.redaction import (
     sanitize_trace_value,
     summarize_text_content,
 )
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 
 _STATUS_VALUES = {"pending", "running", "completed", "degraded", "failed", "skipped"}
 _WORKFLOW_FAILURE_STATUSES = {
@@ -96,6 +102,16 @@ _MAX_SOURCE_DOMAINS = 8
 _MAX_EXPORT_FORMATS = 8
 _MAX_RETRY_TARGETS = 6
 _MAX_TOOL_INPUT_KEYS = 8
+_TRACE_INPUT_INTENT_OPTIONS = ("blog", "linkedin", "image", "pdf", "md", "html", "docx")
+_TRACE_INPUT_OUTPUT_INTENTS = {"blog", "linkedin", "image"}
+_TRACE_INPUT_EXPORT_INTENT_MAP = {
+    "markdown": "md",
+    "md": "md",
+    "html": "html",
+    "pdf": "pdf",
+    "docx": "docx",
+    "word": "docx",
+}
 _ENV_STYLE_METADATA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _FORBIDDEN_ENV_METADATA_KEYS = {
     "LANGSMITH_TRACING",
@@ -384,6 +400,40 @@ def _safe_content_preview(value: Any) -> str:
     return _safe_text(preview.get("preview"))
 
 
+def _safe_workflow_trace_intent(metadata: Mapping[str, Any]) -> list[str]:
+    requested_outputs = _safe_string_list(metadata.get("requested_outputs", []))
+    export_formats = _safe_string_list(metadata.get("export_formats_requested", []))
+    if not export_formats:
+        export_metadata = metadata.get("export_metadata", {})
+        if isinstance(export_metadata, Mapping):
+            export_formats = _safe_string_list(
+                export_metadata.get("formats_requested", [])
+            )
+    seen: set[str] = set()
+
+    for output in requested_outputs:
+        if output not in _TRACE_INPUT_OUTPUT_INTENTS or output in seen:
+            continue
+        seen.add(output)
+
+    for export_format in export_formats:
+        normalized = _TRACE_INPUT_EXPORT_INTENT_MAP.get(export_format, "")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+
+    ordered_intent = [token for token in _TRACE_INPUT_INTENT_OPTIONS if token in seen]
+    return ordered_intent
+
+
+def safe_workflow_trace_inputs(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Build safe workflow span inputs for LangSmith root traces."""
+    intent = _safe_workflow_trace_intent(metadata)
+    if not intent:
+        return {}
+    return {"intent": intent}
+
+
 def _safe_draft_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     drafts = state.get("content_drafts", {})
     if not isinstance(drafts, Mapping):
@@ -626,6 +676,120 @@ def _safe_export_formats(state: Mapping[str, Any]) -> list[str]:
     return formats[:_MAX_EXPORT_FORMATS]
 
 
+def _safe_format_list(value: Any, *, max_items: int = _MAX_EXPORT_FORMATS) -> list[str]:
+    return _safe_string_list(value)[:max_items]
+
+
+def _failed_export_formats(state: Mapping[str, Any]) -> list[str]:
+    export_metadata = state.get("export_metadata", {})
+    if not isinstance(export_metadata, Mapping):
+        return []
+    explicit_failed = _safe_format_list(
+        export_metadata.get("failed_export_formats", [])
+    )
+    if explicit_failed:
+        return explicit_failed
+    export_status = export_metadata.get("export_status", {})
+    if not isinstance(export_status, Mapping):
+        return []
+    failed: list[str] = []
+    for fmt, status in export_status.items():
+        safe_fmt = _safe_text(fmt).lower()
+        safe_status = _safe_text(status).lower()
+        if not safe_fmt or safe_status != "failed":
+            continue
+        if safe_fmt not in failed:
+            failed.append(safe_fmt)
+    return failed[:_MAX_EXPORT_FORMATS]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = _safe_text(entry.get("code")).lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = _safe_text(entry.get("message")).lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_error_count_from_log(export_metadata: Mapping[str, Any]) -> int:
+    error_log = export_metadata.get("error_log", [])
+    if not isinstance(error_log, list):
+        return 0
+    return sum(
+        1
+        for entry in error_log
+        if isinstance(entry, Mapping) and not _is_warning_export_log_entry(entry)
+    )
+
+
+def _export_warning_count_from_log(export_metadata: Mapping[str, Any]) -> int:
+    error_log = export_metadata.get("error_log", [])
+    if not isinstance(error_log, list):
+        return 0
+    return sum(
+        1
+        for entry in error_log
+        if isinstance(entry, Mapping) and _is_warning_export_log_entry(entry)
+    )
+
+
+def _safe_export_outcome_summary(state: Mapping[str, Any]) -> dict[str, Any]:
+    export_metadata = state.get("export_metadata", {})
+    if not isinstance(export_metadata, Mapping):
+        return {
+            "requested_export_formats": [],
+            "completed_export_formats": [],
+            "failed_export_formats": [],
+            "export_warning_count": 0,
+            "export_error_count": 0,
+        }
+
+    requested_export_formats = _safe_format_list(
+        export_metadata.get("requested_export_formats")
+        or export_metadata.get("formats_requested", [])
+    )
+    completed_export_formats = _safe_format_list(
+        export_metadata.get("completed_export_formats", [])
+    )
+    if not completed_export_formats:
+        export_status = export_metadata.get("export_status", {})
+        if isinstance(export_status, Mapping):
+            completed_export_formats = [
+                safe_fmt
+                for fmt, status in export_status.items()
+                for safe_fmt in [_safe_text(fmt).lower()]
+                if safe_fmt and _safe_text(status).lower() == "completed"
+            ][: _MAX_EXPORT_FORMATS]
+    failed_export_formats = _failed_export_formats(state)
+
+    raw_error_count = _safe_non_negative_int(export_metadata.get("export_error_count"))
+    export_error_count = (
+        raw_error_count
+        if raw_error_count is not None
+        else (
+            len(failed_export_formats)
+            if failed_export_formats
+            else _export_error_count_from_log(export_metadata)
+        )
+    )
+    raw_warning_count = _safe_non_negative_int(
+        export_metadata.get("export_warning_count")
+    )
+    export_warning_count = (
+        raw_warning_count
+        if raw_warning_count is not None
+        else _export_warning_count_from_log(export_metadata)
+    )
+
+    return {
+        "requested_export_formats": requested_export_formats,
+        "completed_export_formats": completed_export_formats,
+        "failed_export_formats": failed_export_formats,
+        "export_warning_count": export_warning_count,
+        "export_error_count": export_error_count,
+    }
+
+
 def _safe_source_count(state: Mapping[str, Any]) -> int:
     sources = state.get("sources", [])
     if not isinstance(sources, list):
@@ -648,6 +812,56 @@ def _safe_error_summary(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     for item in errors[:3]:
         summaries.append(normalize_trace_error(item))
     return summaries
+
+
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = _safe_text(draft.get("generation_status")).lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = _safe_text(draft.get("provider_status")).lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degradation(state: Mapping[str, Any]) -> bool:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return False
+    for channel in ("blog", "linkedin"):
+        draft = drafts.get(channel, {})
+        if isinstance(draft, Mapping) and _is_fallback_draft(draft):
+            return True
+    return False
+
+
+def _safe_provider_failure_reason(state: Mapping[str, Any]) -> str:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return ""
+    for channel in ("blog", "linkedin"):
+        draft = drafts.get(channel, {})
+        if not isinstance(draft, Mapping):
+            continue
+        reason = _safe_text(draft.get("provider_failure_reason")).lower()
+        if reason:
+            return reason
+    return ""
+
+
+def _fallback_channel_usage(state: Mapping[str, Any]) -> tuple[bool, bool]:
+    drafts = state.get("content_drafts", {})
+    if not isinstance(drafts, Mapping):
+        return False, False
+    blog_fallback = _is_fallback_draft(_safe_mapping_value(drafts.get("blog")))
+    linkedin_fallback = _is_fallback_draft(_safe_mapping_value(drafts.get("linkedin")))
+    return blog_fallback, linkedin_fallback
+
+
+def _safe_mapping_value(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
@@ -678,21 +892,26 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
     return False
 
 
+def _deduped_user_warning_count(state: Mapping[str, Any]) -> int:
+    messages: list[str] = []
+    for key in ("warnings", "status_messages"):
+        for item in _safe_string_list(state.get(key, [])):
+            messages.append(item)
+
+    text_degraded = _has_text_generation_degradation(state)
+    image_degraded = _has_recoverable_image_failure(state)
+    if text_degraded:
+        messages.append(TEXT_FALLBACK_WARNING)
+    if image_degraded:
+        messages.append(IMAGE_RECOVERABLE_WARNING)
+    if text_degraded or image_degraded:
+        messages.append(TOP_LEVEL_PROVIDER_WARNING)
+    return len(dedupe_user_warnings(messages))
+
+
 def _has_export_failure(state: Mapping[str, Any]) -> bool:
-    export_metadata = state.get("export_metadata", {})
-    if not isinstance(export_metadata, Mapping):
-        return False
-    error_log = export_metadata.get("error_log", [])
-    if isinstance(error_log, list) and any(
-        isinstance(item, Mapping) for item in error_log
-    ):
-        return True
-    export_status = export_metadata.get("export_status", {})
-    if isinstance(export_status, Mapping):
-        for value in export_status.values():
-            if _safe_text(value).lower() == "failed":
-                return True
-    return False
+    summary = _safe_export_outcome_summary(state)
+    return int(summary.get("export_error_count", 0)) > 0
 
 
 def _is_degraded_workflow(state: Mapping[str, Any]) -> bool:
@@ -708,6 +927,8 @@ def _is_degraded_workflow(state: Mapping[str, Any]) -> bool:
 
     if _has_recoverable_image_failure(state):
         return True
+    if _has_text_generation_degradation(state):
+        return True
     if _has_export_failure(state):
         return True
     return False
@@ -721,7 +942,22 @@ def _is_provider_degraded(state: Mapping[str, Any]) -> bool:
         research_data.get("degraded", False)
     ):
         return True
+    if _has_text_generation_degradation(state):
+        return True
+    if _has_recoverable_image_failure(state):
+        return True
     return False
+
+
+def _effective_trace_workflow_status(state: Mapping[str, Any]) -> str:
+    workflow_status = _safe_text(state.get("workflow_status")).lower()
+    if not workflow_status:
+        return ""
+    if workflow_status in {"success", "research_complete"} and _is_degraded_workflow(
+        state
+    ):
+        return "partial_success"
+    return workflow_status
 
 
 def _merged_state_view(
@@ -754,7 +990,7 @@ def safe_trace_metadata(
     """Build safe trace metadata that excludes secrets and raw payloads."""
     requested_outputs = _safe_string_list(state.get("requested_outputs", []))
     routing_decision = _safe_text(state.get("routing_decision"))
-    workflow_status = _safe_text(state.get("workflow_status"))
+    workflow_status = _effective_trace_workflow_status(state)
     session_id = _safe_text(state.get("session_id"))
     retry_metadata = _safe_retry_metadata(state)
     sources_summary = _safe_sources_summary(state)
@@ -762,16 +998,45 @@ def safe_trace_metadata(
     research_summary = _safe_research_summary(state)
     draft_summary = _safe_draft_summary(state)
     final_response_summary = _safe_final_response_summary(state)
+    export_outcome_summary = _safe_export_outcome_summary(state)
+    blog_fallback_used, linkedin_fallback_used = _fallback_channel_usage(state)
+    deterministic_research_fallback_used = bool(
+        _safe_mapping_value(state.get("research_data", {})).get(
+            "deterministic_summary_used",
+            False,
+        )
+    )
+
+    safe_node_name = _safe_text(node_name)
+    safe_node_status = _safe_text(node_status).lower()
 
     metadata: dict[str, Any] = {
         "requested_outputs": requested_outputs,
         "export_requested": _safe_bool(state.get("export_requested", False)),
         "research_required": _safe_bool(state.get("research_required", False)),
         "clarification_needed": _safe_bool(state.get("clarification_needed", False)),
+        "text_generation_degraded": _has_text_generation_degradation(state),
+        "image_generation_degraded": _has_recoverable_image_failure(state),
+        "fallback_content_used": _has_text_generation_degradation(state),
+        "fallback_blog_used": blog_fallback_used,
+        "fallback_linkedin_used": linkedin_fallback_used,
+        "deterministic_research_fallback_used": deterministic_research_fallback_used,
+        "real_generation_succeeded": not _has_text_generation_degradation(state),
+        "provider_failure_reason": _safe_provider_failure_reason(state),
         "provider_degraded": _is_provider_degraded(state),
         "degraded_workflow_status": _is_degraded_workflow(state),
         "recoverable_image_failure_status": _has_recoverable_image_failure(state),
         "export_failure_status": _has_export_failure(state),
+        "requested_export_formats": export_outcome_summary[
+            "requested_export_formats"
+        ],
+        "completed_export_formats": export_outcome_summary[
+            "completed_export_formats"
+        ],
+        "failed_export_formats": export_outcome_summary["failed_export_formats"],
+        "export_warning_count": export_outcome_summary["export_warning_count"],
+        "export_error_count": export_outcome_summary["export_error_count"],
+        "user_warning_count": _deduped_user_warning_count(state),
         "source_count": _safe_source_count(state),
         "image_output_count": _safe_image_output_count(state),
         "retry_attempt": retry_metadata.get("retry_attempt", 0),
@@ -779,6 +1044,10 @@ def safe_trace_metadata(
         "budget_exceeded": _safe_bool(retry_metadata.get("budget_exceeded", False)),
         "observability_summary": _safe_observability_summary_metadata(),
     }
+    if safe_node_name in _AUTHORITATIVE_NODE_SET:
+        metadata["node_name"] = safe_node_name
+    if safe_node_status in _STATUS_VALUES:
+        metadata["node_status"] = safe_node_status
 
     if session_id:
         metadata["session_id"] = session_id
@@ -815,14 +1084,6 @@ def safe_trace_metadata(
         metadata["final_response_summary"] = final_response_summary
     if retry_metadata:
         metadata["retry_metadata"] = retry_metadata
-
-    safe_node_name = _safe_text(node_name)
-    if safe_node_name in _AUTHORITATIVE_NODE_SET:
-        metadata["node_name"] = safe_node_name
-
-    safe_node_status = _safe_text(node_status).lower()
-    if safe_node_status in _STATUS_VALUES:
-        metadata["node_status"] = safe_node_status
 
     sanitized = sanitize_trace_value(metadata)
     sanitized = _strip_unsafe_env_metadata(sanitized)
@@ -1152,6 +1413,10 @@ class _LangSmithTraceSpanHandle:
             if isinstance(stripped_metadata_any, Mapping)
             else {}
         )
+        safe_workflow_inputs = safe_workflow_trace_inputs(safe_metadata)
+        metadata_workflow_status = _safe_text(safe_metadata.get("workflow_status"))
+        if metadata_workflow_status:
+            safe_outputs["workflow_status"] = metadata_workflow_status
 
         def _scrub_run_metadata() -> None:
             if self._run is None:
@@ -1176,8 +1441,22 @@ class _LangSmithTraceSpanHandle:
                     )
                     extra_metadata.update(safe_metadata)
 
+        def _scrub_run_inputs() -> None:
+            if self._run is None or not safe_workflow_inputs:
+                return
+            existing_inputs = getattr(self._run, "inputs", None)
+            if isinstance(existing_inputs, dict):
+                existing_inputs.clear()
+                existing_inputs.update(safe_workflow_inputs)
+                return
+            try:
+                setattr(self._run, "inputs", dict(safe_workflow_inputs))
+            except Exception:
+                return
+
         try:
             _scrub_run_metadata()
+            _scrub_run_inputs()
         except Exception:
             # Tracing must never fail workflow execution.
             pass
@@ -1197,6 +1476,7 @@ class _LangSmithTraceSpanHandle:
         finally:
             try:
                 _scrub_run_metadata()
+                _scrub_run_inputs()
             except Exception:
                 pass
             try:
@@ -1237,13 +1517,10 @@ class _LangSmithWorkflowTracer:
             if isinstance(stripped_metadata_any, Mapping)
             else {}
         )
-        requested_outputs = safe_metadata.get("requested_outputs", [])
-        if not isinstance(requested_outputs, list):
-            requested_outputs = []
         trace_ctx = self._trace_ctor(
             "contentblitz_workflow",
             run_type="chain",
-            inputs={"requested_outputs": list(requested_outputs)},
+            inputs=safe_workflow_trace_inputs(safe_metadata),
             metadata=safe_metadata,
             project_name=self._project,
             client=self._client,

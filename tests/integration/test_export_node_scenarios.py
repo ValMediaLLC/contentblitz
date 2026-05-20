@@ -19,6 +19,17 @@ def _exports(result: dict[str, Any]) -> dict[str, Any]:
     return result.get("export_outputs") or {}
 
 
+def _assert_best_or_fallback(result: dict[str, Any], output_type: str) -> None:
+    best = (result.get("best_drafts") or {}).get(output_type)
+    if best:
+        return
+    draft = ((result.get("content_drafts") or {}).get(output_type) or {})
+    quality = ((result.get("quality_scores") or {}).get(output_type) or {})
+    assert bool(draft.get("fallback_generated", False)) is True
+    assert bool(draft.get("degraded_generation", False)) is True
+    assert str(quality.get("validation_status", "")).strip().lower() == "degraded"
+
+
 def test_blog_export_is_generated() -> None:
     result = _run_prompt(
         "create a blog article about future AI workflows in marketing agencies"
@@ -36,7 +47,7 @@ def test_blog_export_is_generated() -> None:
     assert blog_export.get("filename")
 
     assert result["assembled_outputs"].get("blog")
-    assert result["best_drafts"].get("blog")
+    _assert_best_or_fallback(result, "blog")
 
     assert result["retry_counts"]["blog_writer"] == 0
     assert result["retry_counts"]["linkedin_writer"] == 0
@@ -58,14 +69,15 @@ def test_linkedin_export_is_generated() -> None:
     assert linkedin_export.get("filename")
 
     assert result["assembled_outputs"].get("linkedin")
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "linkedin")
 
     assert _errors_are_nonfatal(result)
 
 
 def test_blog_and_linkedin_exports_are_generated() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     exports = _exports(result)
@@ -76,8 +88,8 @@ def test_blog_and_linkedin_exports_are_generated() -> None:
     assert result["assembled_outputs"].get("blog")
     assert result["assembled_outputs"].get("linkedin")
 
-    assert result["best_drafts"].get("blog")
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "blog")
+    _assert_best_or_fallback(result, "linkedin")
 
     assert _errors_are_nonfatal(result)
 
@@ -140,38 +152,44 @@ def test_blog_and_image_exports_are_generated() -> None:
     assert result["assembled_outputs"].get("blog")
     assert result["assembled_outputs"].get("image")
 
-    assert result["best_drafts"].get("blog")
+    _assert_best_or_fallback(result, "blog")
 
     assert _errors_are_nonfatal(result)
 
 
 def test_export_node_does_not_mutate_best_drafts() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     best_drafts = result.get("best_drafts") or {}
     exports = _exports(result)
 
-    assert best_drafts.get("blog")
-    assert best_drafts.get("linkedin")
-
     assert exports.get("blog")
     assert exports.get("linkedin")
+    _assert_best_or_fallback(result, "blog")
+    _assert_best_or_fallback(result, "linkedin")
 
-    assert best_drafts["blog"]["version"] == result["content_drafts"]["blog"]["version"]
+    if best_drafts.get("blog"):
+        assert (
+            best_drafts["blog"]["version"]
+            == result["content_drafts"]["blog"]["version"]
+        )
 
-    assert (
-        best_drafts["linkedin"]["version"]
-        == result["content_drafts"]["linkedin"]["version"]
-    )
+    if best_drafts.get("linkedin"):
+        assert (
+            best_drafts["linkedin"]["version"]
+            == result["content_drafts"]["linkedin"]["version"]
+        )
 
     assert _errors_are_nonfatal(result)
 
 
 def test_export_node_does_not_increment_retry_counters() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
@@ -183,7 +201,8 @@ def test_export_node_does_not_increment_retry_counters() -> None:
 
 def test_export_node_preserves_assembled_outputs() -> None:
     result = _run_prompt(
-        "create a blog article, linkedin post, and image concept about AI marketing automation"
+        "create a blog article, linkedin post, and image concept about AI "
+        "marketing automation"
     )
 
     assembled = result.get("assembled_outputs") or {}

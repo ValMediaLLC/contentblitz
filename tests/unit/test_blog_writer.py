@@ -186,3 +186,37 @@ def test_blog_writer_sets_draft_status_complete(monkeypatch) -> None:
     monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
     updates = blog_writer_module.blog_writer_node(_base_state())
     assert updates["draft_status"]["blog"] == "complete"
+
+
+def test_degraded_generate_text_creates_marked_fallback_draft(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        return {
+            "output": "",
+            "degraded": True,
+            "error": {"code": "quota_exceeded", "recoverable": True},
+            "usage": {"total_tokens": 0},
+        }
+
+    monkeypatch.setattr(blog_writer_module, "generate_text", fake_generate_text)
+    state = _base_state(
+        user_query=(
+            "Create a long research-backed blog post about electric vehicles in 2026."
+        )
+    )
+    updates = blog_writer_module.blog_writer_node(state)
+    blog = updates["content_drafts"]["blog"]
+
+    assert blog["fallback_generated"] is True
+    assert blog["degraded_generation"] is True
+    assert blog["generation_status"] == "fallback_degraded"
+    assert blog["provider_status"] == "degraded"
+    assert blog["provider_failure_reason"] == "quota_exceeded"
+    assert blog["real_generation_succeeded"] is False
+    assert blog["generation_tokens"] == 0
+    assert "Fallback Blog Outline" in blog["body"]
+    assert "content_creation" not in blog["body"].lower()
+    assert state["user_query"] not in blog["body"]
+    assert updates["errors"][-1]["type"] == "text_generation_degraded"
+    assert updates["status_messages"][0].startswith(
+        "Draft unavailable because text generation is currently limited."
+    )

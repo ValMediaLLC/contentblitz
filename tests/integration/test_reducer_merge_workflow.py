@@ -34,7 +34,8 @@ def _long_linkedin_post() -> str:
         "clear ownership, and bounded retries with visible recovery paths. "
     )
     return (
-        "If your content workflow still feels unpredictable, start by stabilizing merge semantics.\n\n"
+        "If your content workflow still feels unpredictable, start by "
+        "stabilizing merge semantics.\n\n"
         + (paragraph * 9)
         + "\n\nWhat merge edge case did your team fix most recently?\n"
         "#AI #ContentOps #Engineering"
@@ -43,11 +44,20 @@ def _long_linkedin_post() -> str:
 
 def _text_payload_for_prompt(prompt: str) -> str:
     if "Create a JSON content brief for 'blog'" in prompt:
-        return '{"format":"blog","objective":"educate","audience":"marketers","tone":"practical","angle":"systems"}'
+        return (
+            '{"format":"blog","objective":"educate","audience":"marketers",'
+            '"tone":"practical","angle":"systems"}'
+        )
     if "Create a JSON content brief for 'linkedin'" in prompt:
-        return '{"format":"linkedin","objective":"engage","audience":"operators","tone":"direct","angle":"insight"}'
+        return (
+            '{"format":"linkedin","objective":"engage","audience":"operators",'
+            '"tone":"direct","angle":"insight"}'
+        )
     if "Create a JSON content brief for 'image'" in prompt:
-        return '{"format":"image","prompt_focus":"workflow orchestration dashboard","visual_direction":"clean, high contrast"}'
+        return (
+            '{"format":"image","prompt_focus":"workflow orchestration dashboard",'
+            '"visual_direction":"clean, high contrast"}'
+        )
     if "Write an SEO-friendly blog draft in markdown." in prompt:
         return (
             "# Deterministic Merge Strategies\n\n"
@@ -139,7 +149,7 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     assert result["cost_controls"]["tokens_used_this_session"] > 0
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
     assert calls == ["dall-e-3", "dall-e-2"]
-    assert "recoverable failure" in result.get("final_response", "").lower()
+    assert "recoverable issue" in result.get("final_response", "").lower()
     assert result.get("final_response", "").strip()
 
 

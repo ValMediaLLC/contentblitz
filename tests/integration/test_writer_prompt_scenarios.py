@@ -23,6 +23,17 @@ def _errors_are_nonfatal(result: dict[str, Any]) -> bool:
     return all(error.get("recoverable") is True for error in errors)
 
 
+def _assert_best_or_fallback(result: dict[str, Any], output_type: str) -> None:
+    best = (result.get("best_drafts") or {}).get(output_type)
+    if best:
+        return
+    draft = _draft(result, output_type)
+    quality = (result.get("quality_scores") or {}).get(output_type) or {}
+    assert bool(draft.get("fallback_generated", False)) is True
+    assert bool(draft.get("degraded_generation", False)) is True
+    assert str(quality.get("validation_status", "")).strip().lower() == "degraded"
+
+
 def _assert_blog_generated(result: dict[str, Any]) -> None:
     blog = _draft(result, "blog")
 
@@ -33,7 +44,7 @@ def _assert_blog_generated(result: dict[str, Any]) -> None:
     assert blog.get("word_count", 0) > 0
     assert blog.get("readability_score") is not None
     assert result["quality_scores"].get("blog")
-    assert result["best_drafts"].get("blog")
+    _assert_best_or_fallback(result, "blog")
     assert result["draft_status"].get("blog") == "complete"
 
 
@@ -49,7 +60,7 @@ def _assert_linkedin_generated(result: dict[str, Any]) -> None:
     assert linkedin.get("cta")
     assert linkedin.get("hashtags")
     assert result["quality_scores"].get("linkedin")
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "linkedin")
     assert result["draft_status"].get("linkedin") == "complete"
 
 

@@ -23,6 +23,17 @@ def _assembled_outputs(result: dict[str, Any]) -> dict[str, Any]:
     return result.get("assembled_outputs") or {}
 
 
+def _assert_best_or_fallback(result: dict[str, Any], output_type: str) -> None:
+    best = (result.get("best_drafts") or {}).get(output_type)
+    if best:
+        return
+    draft = ((result.get("content_drafts") or {}).get(output_type) or {})
+    quality = ((result.get("quality_scores") or {}).get(output_type) or {})
+    assert bool(draft.get("fallback_generated", False)) is True
+    assert bool(draft.get("degraded_generation", False)) is True
+    assert str(quality.get("validation_status", "")).strip().lower() == "degraded"
+
+
 def test_blog_only_output_is_assembled() -> None:
     result = _run_prompt(
         "create a blog article about future AI workflows in marketing agencies"
@@ -34,14 +45,15 @@ def test_blog_only_output_is_assembled() -> None:
     assert assembled.get("blog")
     assert "linkedin" not in assembled or not assembled.get("linkedin")
     assert result["content_drafts"]["blog"]["version"] == 1
-    assert result["best_drafts"].get("blog")
+    _assert_best_or_fallback(result, "blog")
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
     assert _errors_are_nonfatal(result)
 
 
 def test_blog_and_linkedin_outputs_are_assembled() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     assembled = _assembled_outputs(result)
@@ -51,8 +63,8 @@ def test_blog_and_linkedin_outputs_are_assembled() -> None:
     assert assembled.get("linkedin")
     assert result["content_drafts"]["blog"]["version"] == 1
     assert result["content_drafts"]["linkedin"]["version"] == 1
-    assert result["best_drafts"].get("blog")
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "blog")
+    _assert_best_or_fallback(result, "linkedin")
     assert _errors_are_nonfatal(result)
 
 
@@ -64,7 +76,7 @@ def test_linkedin_included_output_is_assembled() -> None:
     assert _final_response(result)
     assert assembled.get("linkedin")
     assert result["content_drafts"]["linkedin"]["version"] == 1
-    assert result["best_drafts"].get("linkedin")
+    _assert_best_or_fallback(result, "linkedin")
     assert _errors_are_nonfatal(result)
 
 
@@ -123,7 +135,8 @@ def test_blog_and_image_outputs_are_assembled() -> None:
 
 def test_output_assembler_does_not_mutate_retry_counters_on_normal_path() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
@@ -134,18 +147,24 @@ def test_output_assembler_does_not_mutate_retry_counters_on_normal_path() -> Non
 
 def test_output_assembler_preserves_best_drafts() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     best_drafts = result.get("best_drafts") or {}
 
-    assert best_drafts.get("blog")
-    assert best_drafts.get("linkedin")
-    assert best_drafts["blog"]["version"] == result["content_drafts"]["blog"]["version"]
-    assert (
-        best_drafts["linkedin"]["version"]
-        == result["content_drafts"]["linkedin"]["version"]
-    )
+    _assert_best_or_fallback(result, "blog")
+    _assert_best_or_fallback(result, "linkedin")
+    if best_drafts.get("blog"):
+        assert (
+            best_drafts["blog"]["version"]
+            == result["content_drafts"]["blog"]["version"]
+        )
+    if best_drafts.get("linkedin"):
+        assert (
+            best_drafts["linkedin"]["version"]
+            == result["content_drafts"]["linkedin"]["version"]
+        )
     assert _errors_are_nonfatal(result)
 
 

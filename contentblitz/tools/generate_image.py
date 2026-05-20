@@ -28,6 +28,14 @@ _PRIMARY_MODEL = "dall-e-3"
 _FALLBACK_MODEL = "dall-e-2"
 _MODERN_IMAGE_MODEL = "gpt-image-1"
 _DEFAULT_SIZE = "1024x1024"
+_SAFE_PROVIDER_ERROR_CODES = {
+    "quota_exceeded",
+    "authentication_failed",
+    "rate_limited",
+    "provider_unavailable",
+    "empty_provider_response",
+    "unknown_provider_error",
+}
 
 
 @dataclass(frozen=True)
@@ -146,19 +154,29 @@ def _write_image_bytes_to_local_path(
 def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
     status_code = getattr(exc, "status_code", None)
     status_value = status_code if isinstance(status_code, int) else None
+    message_text = str(exc).lower()
 
     if isinstance(exc, AuthenticationError):
         return {
-            "code": "authentication_error",
-            "message": "Authentication with the image provider failed.",
+            "code": "authentication_failed",
+            "message": "Image generation provider authentication failed.",
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": False,
         }
     if isinstance(exc, RateLimitError):
+        is_quota_error = (
+            "quota" in message_text
+            or "insufficient_quota" in message_text
+            or "billing" in message_text
+        )
         return {
-            "code": "rate_limited",
-            "message": "The image provider rate limit was reached.",
+            "code": "quota_exceeded" if is_quota_error else "rate_limited",
+            "message": (
+                "Image generation provider is unavailable or quota-limited."
+                if is_quota_error
+                else "Image generation provider is rate-limited."
+            ),
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
@@ -166,30 +184,39 @@ def _normalize_provider_error(exc: Exception) -> Dict[str, Any]:
     if isinstance(exc, APIConnectionError):
         return {
             "code": "provider_unavailable",
-            "message": "The image provider is temporarily unavailable.",
+            "message": "Image generation provider is temporarily unavailable.",
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
         }
     if isinstance(exc, BadRequestError):
         return {
-            "code": "bad_request",
-            "message": "The image provider rejected the request format.",
+            "code": "unknown_provider_error",
+            "message": "Image generation provider request failed safely.",
             "provider": _PROVIDER,
             "status_code": status_value,
-            "recoverable": False,
+            "recoverable": True,
         }
     if isinstance(exc, APIError):
+        is_unavailable = isinstance(status_value, int) and status_value >= 500
         return {
-            "code": "provider_error",
-            "message": "The image provider returned an internal error.",
+            "code": (
+                "provider_unavailable"
+                if is_unavailable
+                else "unknown_provider_error"
+            ),
+            "message": (
+                "Image generation provider is temporarily unavailable."
+                if is_unavailable
+                else "Image generation provider request failed safely."
+            ),
             "provider": _PROVIDER,
             "status_code": status_value,
             "recoverable": True,
         }
     return {
-        "code": "provider_error",
-        "message": "The image provider request failed.",
+        "code": "unknown_provider_error",
+        "message": "Image generation provider request failed safely.",
         "provider": _PROVIDER,
         "status_code": status_value,
         "recoverable": True,
@@ -205,7 +232,7 @@ def _should_try_modern_image_model(
     if _MODERN_IMAGE_MODEL in models_already_scheduled:
         return False
     code = _safe_text((normalized_error or {}).get("code")).lower()
-    if code != "bad_request":
+    if code not in {"unknown_provider_error", "provider_unavailable"}:
         return False
     message = _safe_text(str(exc)).lower()
     return "model" in message and "does not exist" in message
@@ -392,8 +419,8 @@ def _call_provider(
             prompt=prompt,
             model=model,
             error={
-                "code": "provider_payload_unusable",
-                "message": "Image provider returned no usable image payload.",
+                "code": "empty_provider_response",
+                "message": "Image generation provider returned no usable output.",
                 "provider": _PROVIDER,
                 "recoverable": True,
             },
@@ -441,8 +468,8 @@ def _call_provider(
             prompt=prompt,
             model=model,
             error={
-                "code": "provider_payload_unusable",
-                "message": "Image provider returned no renderable image artifact.",
+                "code": "empty_provider_response",
+                "message": "Image generation provider returned no renderable output.",
                 "provider": _PROVIDER,
                 "recoverable": True,
             },
@@ -643,9 +670,15 @@ def generate_image(
                 prompt=safe_prompt,
                 model=models_to_try[-1],
                 error={
-                    "code": "provider_failure",
+                    "code": (
+                        str(last_error.get("code", "")).strip().lower()
+                        if isinstance(last_error, Mapping)
+                        and str(last_error.get("code", "")).strip().lower()
+                        in _SAFE_PROVIDER_ERROR_CODES
+                        else "unknown_provider_error"
+                    ),
                     "message": (
-                        "Image generation failed after primary and fallback models."
+                        "Image generation provider is unavailable or quota-limited."
                     ),
                     "provider": _PROVIDER,
                     "recoverable": True,

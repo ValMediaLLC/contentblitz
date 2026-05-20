@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from contentblitz.core import observability as observability_module
 from contentblitz.ui.rendering import build_render_payload
 from contentblitz.ui.status import apply_optional_node_skips, derive_node_statuses
 from tests.integration._ui_export_test_helpers import (
@@ -46,7 +47,8 @@ def test_export_pipeline_integrates_markdown_html_pdf_docx(
     events, result = collect_stream_result(
         user_query=(
             "create a detailed blog article, linkedin campaign, research report, and "
-            "futuristic apparel image concepts about AI-native marketing agencies in 2030"
+            "futuristic apparel image concepts about AI-native marketing agencies "
+            "in 2030"
         ),
         requested_outputs=["blog", "linkedin", "research", "image"],
         export_requested=True,
@@ -139,3 +141,59 @@ def test_export_validation_failure_marks_only_failing_format(
     ).lower()
     assert "traceback" not in flattened
     assert "openai_api_key" not in flattened
+
+
+def test_pdf_export_with_image_success_keeps_consistent_success_state(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERP_API_KEY", "serp-test")
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    install_mock_text_client(monkeypatch)
+    install_mock_search(monkeypatch, weak_serp=False)
+    install_mock_image_client(monkeypatch, fail_all=False)
+
+    events, result = collect_stream_result(
+        user_query=(
+            "Create a long research-backed blog post, LinkedIn post, and image "
+            "about the best electric cars to buy in 2026, include sources, then "
+            "export everything as a PDF with the image embedded."
+        ),
+        requested_outputs=["blog", "linkedin", "research", "image"],
+        export_requested=True,
+        export_formats=["pdf"],
+    )
+
+    metadata = result.get("export_metadata", {})
+    assert isinstance(metadata, dict)
+    assert metadata.get("export_status", {}).get("pdf") == "completed"
+    assert metadata.get("export_error_count") == 0
+    assert metadata.get("failed_export_formats", []) == []
+    assert metadata.get("completed_export_formats", []) == ["pdf"]
+    export_terminal_events = [
+        event
+        for event in events
+        if str(event.get("node_name", "")).strip() == "export_node"
+        and str(event.get("status", "")).strip() in {"completed", "degraded", "failed"}
+    ]
+    assert export_terminal_events
+    latest_export_event = export_terminal_events[-1]
+    assert latest_export_event["status"] == "completed"
+    assert (
+        latest_export_event.get("safe_metadata", {}).get("export_error_count", 0) == 0
+    )
+
+    node_statuses = apply_optional_node_skips(
+        state=result,
+        node_statuses=derive_node_statuses(events),
+    )
+    assert node_statuses.get("export_node") == "completed"
+    assert str(result.get("workflow_status", "")).strip().lower() == "success"
+
+    payload = _render_payload(result, events)
+    assert payload["export_status"]["export_error_count"] == 0
+    assert payload["export_status"]["non_blocking_failure"] is False
+
+    trace_metadata = observability_module.safe_trace_metadata(result)
+    assert trace_metadata["workflow_status"] == "success"
+    assert trace_metadata["export_failure_status"] is False

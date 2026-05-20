@@ -6,8 +6,10 @@ from typing import Any
 
 import pytest
 
+from contentblitz.agents import query_handler as query_handler_module
 from contentblitz.core import observability as observability_module
 from contentblitz.core.redaction import REDACTED_STACK_TRACE
+from contentblitz.state import create_initial_state
 
 
 def _collect_metadata_keys(value: Any) -> set[str]:
@@ -27,6 +29,7 @@ def test_trace_metadata_excludes_raw_user_query_and_final_response() -> None:
     state = {
         "session_id": "session-xyz",
         "user_query": "full raw user query that should never appear",
+        "sanitized_user_query": "sanitized prompt preview should also not appear",
         "final_response": "full generated content that should not be traced",
         "workflow_status": "success",
         "requested_outputs": ["blog"],
@@ -34,9 +37,26 @@ def test_trace_metadata_excludes_raw_user_query_and_final_response() -> None:
     }
 
     metadata = observability_module.safe_trace_metadata(state)
+    payload = repr(metadata).lower()
 
     assert "user_query" not in metadata
+    assert "sanitized_user_query" not in metadata
+    assert "query_preview" not in metadata
     assert "final_response" not in metadata
+    assert "full raw user query" not in payload
+    assert "sanitized prompt preview" not in payload
+
+
+def test_trace_metadata_never_uses_query_preview_keys() -> None:
+    state = {
+        "sanitized_user_query": "Create a blog and LinkedIn post about AI workflows.",
+        "workflow_status": "running",
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert "query_preview" not in metadata
+    assert "request_preview" not in metadata
 
 
 def test_trace_metadata_preserves_safe_schema_fields() -> None:
@@ -136,6 +156,69 @@ def test_trace_metadata_is_json_serializable() -> None:
 
     assert isinstance(encoded, str)
     assert '"workflow_status": "success"' in encoded
+
+
+def test_trace_metadata_degraded_success_normalizes_to_partial_success() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [{"format": "pdf", "message": "safe export warning"}],
+            "export_status": {"pdf": "failed"},
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "partial_success"
+    assert metadata["degraded_workflow_status"] is True
+    assert metadata["export_failure_status"] is True
+
+
+def test_trace_metadata_success_without_degradation_stays_success() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "error_log": [],
+            "export_status": {"pdf": "completed"},
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "success"
+    assert metadata["degraded_workflow_status"] is False
+    assert metadata["export_failure_status"] is False
+
+
+def test_trace_metadata_export_warning_without_failed_formats_is_not_failure() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "export_status": {"pdf": "completed"},
+            "error_log": [
+                {"code": "pdf_validation_warning", "message": "safe warning"}
+            ],
+            "export_warning_count": 1,
+            "export_error_count": 0,
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "success"
+    assert metadata["export_failure_status"] is False
+    assert metadata["degraded_workflow_status"] is False
+    assert metadata["requested_export_formats"] == ["pdf"]
+    assert metadata["completed_export_formats"] == ["pdf"]
+    assert metadata["failed_export_formats"] == []
+    assert metadata["export_warning_count"] == 1
+    assert metadata["export_error_count"] == 0
 
 
 def test_safe_node_end_metadata_does_not_mutate_state() -> None:
@@ -238,3 +321,189 @@ def test_research_summary_preview_is_not_misclassified_as_stack_trace() -> None:
 
     assert preview != REDACTED_STACK_TRACE
     assert "Research summary line one." in preview
+
+
+def test_deterministic_prompt_resolved_outputs_appear_in_trace_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _mock_query_handler_llm(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"output": "not-json"}
+
+    monkeypatch.setattr(query_handler_module, "generate_text", _mock_query_handler_llm)
+
+    query = "Create a blog article, LinkedIn post, and image concept about AI."
+    initial_state = create_initial_state(user_query=query)
+    updates = query_handler_module.query_handler_node(initial_state)
+    merged_state = dict(initial_state)
+    merged_state.update(updates)
+
+    metadata = observability_module.safe_trace_metadata(merged_state)
+
+    assert metadata["requested_outputs"] == ["blog", "linkedin", "image"]
+    assert metadata["export_requested"] is False
+    assert metadata["clarification_needed"] is False
+
+
+def test_workflow_trace_inputs_omit_empty_intent() -> None:
+    metadata = {
+        "requested_outputs": [],
+        "export_formats_requested": [],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs == {}
+
+
+def test_workflow_trace_inputs_include_intent_when_present() -> None:
+    metadata = {
+        "requested_outputs": ["blog", "linkedin"],
+        "export_formats_requested": ["pdf", "markdown"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "linkedin", "pdf", "md"]
+
+
+def test_workflow_trace_inputs_support_export_metadata_format_fallback() -> None:
+    metadata = {
+        "requested_outputs": ["blog", "image"],
+        "export_metadata": {"formats_requested": ["word", "markdown", "unknown"]},
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "image", "md", "docx"]
+
+
+def test_workflow_trace_inputs_keep_supported_intent_subset_only() -> None:
+    metadata = {
+        "requested_outputs": ["blog", "research", "image", "linkedin"],
+        "export_formats_requested": ["docx", "html", "word", "unknown"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "linkedin", "image", "html", "docx"]
+
+
+def test_workflow_trace_inputs_do_not_infer_intent_from_prompt_text() -> None:
+    metadata = {
+        "user_query": "Create a blog article, LinkedIn post, image, and export as PDF.",
+        "sanitized_user_query": (
+            "Create a blog article, LinkedIn post, image, and export as PDF."
+        ),
+        "requested_outputs": [],
+        "export_formats_requested": [],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs == {}
+
+
+def test_workflow_trace_inputs_ignore_unsupported_values() -> None:
+    metadata = {
+        "requested_outputs": ["research", "unknown", "", "blog"],
+        "export_formats_requested": ["csv", "pptx", "", "pdf"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "pdf"]
+
+
+def test_trace_metadata_includes_safe_fallback_degradation_flags() -> None:
+    state = {
+        "workflow_status": "partial_success",
+        "requested_outputs": ["blog", "linkedin", "image"],
+        "content_drafts": {
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited body.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+            "linkedin": {
+                "body": "Fallback LinkedIn draft.",
+                "fallback_generated": True,
+                "degraded_generation": True,
+                "provider_failure_reason": "quota_exceeded",
+            },
+        },
+        "image_outputs": [
+            {"status": "failed", "error": {"message": "safe", "recoverable": True}}
+        ],
+        "status_messages": [
+            (
+                "Draft unavailable because text generation is currently limited. "
+                "Research sources were collected successfully and can be used to "
+                "regenerate this section once the provider is available."
+            ),
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            ),
+        ],
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+    serialized = repr(metadata).lower()
+
+    assert metadata["text_generation_degraded"] is True
+    assert metadata["image_generation_degraded"] is True
+    assert metadata["fallback_content_used"] is True
+    assert metadata["fallback_blog_used"] is True
+    assert metadata["fallback_linkedin_used"] is True
+    assert metadata["deterministic_research_fallback_used"] is False
+    assert metadata["real_generation_succeeded"] is False
+    assert metadata["provider_failure_reason"] == "quota_exceeded"
+    assert metadata["user_warning_count"] >= 1
+    assert "traceback" not in serialized
+    assert "openai_api_key" not in serialized
+
+
+def test_trace_metadata_warning_count_uses_deduped_user_facing_warnings() -> None:
+    state = {
+        "workflow_status": "partial_success",
+        "requested_outputs": ["blog", "linkedin", "image"],
+        "content_drafts": {
+            "blog": {
+                "body": "## Fallback Blog Outline",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+            "linkedin": {
+                "body": "## Fallback LinkedIn Outline",
+                "fallback_generated": True,
+                "degraded_generation": True,
+            },
+        },
+        "image_outputs": [{"status": "failed"}],
+        "status_messages": [
+            (
+                "Draft unavailable because text generation is currently limited. "
+                "Research sources were collected successfully and can be used to "
+                "regenerate this section once the provider is available."
+            ),
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            ),
+            (
+                "Image generation failed in this run, but text outputs may still be "
+                "usable."
+            ),
+        ],
+        "warnings": [
+            (
+                "OpenAI provider unavailable or quota-limited. "
+                "ContentBlitz generated limited fallback outputs."
+            )
+        ],
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["user_warning_count"] == 3

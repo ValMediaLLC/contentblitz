@@ -159,7 +159,8 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
 
     assert updates["image_outputs"][-1]["status"] == "failed"
     assert updates["image_outputs"][-1]["recoverable"] is True
-    assert "provider timeout" in updates["image_outputs"][-1]["error"]
+    assert updates["image_outputs"][-1]["error"]["code"] == "unknown_provider_error"
+    assert "traceback" not in str(updates["image_outputs"][-1]["error"]).lower()
     assert updates["tool_outputs"]["image_agent"]["status"] == "failed"
     assert updates["draft_status"]["image"] == "failed"
     assert len(updates["image_prompts"]) >= 1
@@ -169,7 +170,10 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
     assert updates["errors"][0] == {
         "agent": "image_agent",
         "type": "image_generation_failed",
-        "message": "No image assets returned.",
+        "message": (
+            "Image generation encountered a recoverable issue. "
+            "Text/research/export outputs remain available."
+        ),
         "recoverable": True,
     }
 
@@ -278,5 +282,8 @@ def test_no_assets_failure_writes_expected_error_message(monkeypatch) -> None:
     monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image)
     updates = image_agent_module.image_agent_node(_base_state())
 
-    assert updates["errors"][0]["message"] == "No image assets returned."
+    assert updates["errors"][0]["message"] == (
+        "Image generation encountered a recoverable issue. "
+        "Text/research/export outputs remain available."
+    )
     assert updates["errors"][0]["recoverable"] is True

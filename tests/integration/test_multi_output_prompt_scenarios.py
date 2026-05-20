@@ -30,9 +30,21 @@ def _has_recoverable_image_error(result: dict[str, Any]) -> bool:
     )
 
 
+def _assert_best_or_fallback(result: dict[str, Any], output_type: str) -> None:
+    best = (result.get("best_drafts") or {}).get(output_type)
+    if best:
+        return
+    draft = ((result.get("content_drafts") or {}).get(output_type) or {})
+    quality = ((result.get("quality_scores") or {}).get(output_type) or {})
+    assert bool(draft.get("fallback_generated", False)) is True
+    assert bool(draft.get("degraded_generation", False)) is True
+    assert str(quality.get("validation_status", "")).strip().lower() == "degraded"
+
+
 def test_blog_linkedin_image_prompt_routes_all_requested_outputs() -> None:
     result = _run_prompt(
-        "create a blog article, linkedin post, and image concept about AI-powered content strategy systems"
+        "create a blog article, linkedin post, and image concept about "
+        "AI-powered content strategy systems"
     )
 
     assert "blog" in result["requested_outputs"]
@@ -83,7 +95,8 @@ def test_blog_and_image_prompt_does_not_create_linkedin_output() -> None:
 
 def test_blog_and_linkedin_prompt_does_not_create_image_output() -> None:
     result = _run_prompt(
-        "write a blog article and linkedin post about AI-powered content strategy systems"
+        "write a blog article and linkedin post about AI-powered content "
+        "strategy systems"
     )
 
     assert "blog" in result["requested_outputs"]
@@ -158,7 +171,8 @@ def test_research_plus_image_prompt_runs_image_path_safely() -> None:
 
 def test_all_output_prompt_preserves_independent_state_sections() -> None:
     result = _run_prompt(
-        "create a blog article, linkedin post, and image concept about AI marketing automation"
+        "create a blog article, linkedin post, and image concept about AI "
+        "marketing automation"
     )
 
     assert "blog" in result["requested_outputs"]
@@ -171,8 +185,8 @@ def test_all_output_prompt_preserves_independent_state_sections() -> None:
     assert result["attempt_history"]["blog"]
     assert result["attempt_history"]["linkedin"]
 
-    assert result["best_drafts"]["blog"]
-    assert result["best_drafts"]["linkedin"]
+    _assert_best_or_fallback(result, "blog")
+    _assert_best_or_fallback(result, "linkedin")
 
     assert len(result.get("image_prompts") or []) >= 1
     assert len(result.get("image_outputs") or []) >= 1
@@ -184,7 +198,8 @@ def test_multi_output_prompt_does_not_increment_retry_counter_on_passed_quality(
     None
 ):
     result = _run_prompt(
-        "create a blog article, linkedin post, and image concept about AI marketing automation"
+        "create a blog article, linkedin post, and image concept about AI "
+        "marketing automation"
     )
 
     assert result["cost_controls"]["total_retries_used_this_session"] == 0

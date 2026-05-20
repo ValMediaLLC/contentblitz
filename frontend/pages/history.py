@@ -19,9 +19,21 @@ from frontend.session import (
 )
 
 
+def _normalize_history_status(value: object) -> str:
+    normalized = str(value).strip().lower()
+    aliases = {
+        "sucess": "success",
+        "success": "success",
+        "partial success": "partial_success",
+        "partial-success": "partial_success",
+        "completed_with_warnings": "partial_success",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _summary_label(summary: dict[str, object]) -> str:
     timestamp = str(summary.get("updated_at", "")).strip() or "unknown-time"
-    status = str(summary.get("workflow_status", "")).strip() or "unknown"
+    status = _normalize_history_status(summary.get("workflow_status", "")) or "unknown"
     outputs = summary.get("requested_outputs", [])
     query_preview = str(summary.get("user_query_preview", "")).strip()
     return f"{timestamp} | {status} | outputs={outputs} | {query_preview}"
@@ -128,7 +140,7 @@ def render() -> None:
         timestamp = str(item.get("timestamp_utc", "")).strip()
         query = str(item.get("user_query", "")).strip()
         outputs = item.get("requested_outputs", [])
-        status = str(item.get("workflow_status", "")).strip()
+        status = _normalize_history_status(item.get("workflow_status", ""))
         st.markdown(
             f"- `{timestamp}` | status: `{status or 'unknown'}` | "
             f"outputs: `{outputs}` | query: {query}"

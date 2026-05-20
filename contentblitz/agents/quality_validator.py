@@ -44,6 +44,24 @@ def _status_for_score(composite: float) -> Tuple[str, bool]:
     return "failed", False
 
 
+def _is_fallback_generated_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = str(draft.get("generation_status", "")).strip().lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = str(draft.get("provider_status", "")).strip().lower()
+    if provider_status == "degraded":
+        return True
+    tokens = draft.get("generation_tokens")
+    if isinstance(tokens, (int, float)) and not isinstance(tokens, bool):
+        if int(tokens) <= 0 and str(draft.get("body", "")).strip():
+            return True
+    return False
+
+
 def validate_content(
     content_type: str, draft_body: str, context: Mapping[str, Any] | None = None
 ) -> Dict[str, Any]:
@@ -104,6 +122,7 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
         draft = _safe_dict(content_drafts.get(content_type, {}))
         body = str(draft.get("body", "")).strip()
         version = int(draft.get("version", 0))
+        fallback_draft = _is_fallback_generated_draft(draft)
 
         should_validate = (
             content_type in requested_outputs
@@ -125,27 +144,34 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
             )
             continue
 
-        try:
-            raw_result = validate_content(
-                content_type=content_type,
-                draft_body=body,
-                context=state,
-            )
-            result = _safe_dict(raw_result)
-            composite = round(_extract_composite(result), 2)
-            validation_status, passed = _status_for_score(composite)
-        except Exception as exc:
+        if fallback_draft:
             composite = 0.60
             passed = False
-            validation_status = "unverified"
-            result = {
-                "error": str(exc),
-            }
+            validation_status = "degraded"
+            result = {"degraded": True}
+        else:
+            try:
+                raw_result = validate_content(
+                    content_type=content_type,
+                    draft_body=body,
+                    context=state,
+                )
+                result = _safe_dict(raw_result)
+                composite = round(_extract_composite(result), 2)
+                validation_status, passed = _status_for_score(composite)
+            except Exception as exc:
+                composite = 0.60
+                passed = False
+                validation_status = "unverified"
+                result = {
+                    "error": str(exc),
+                }
 
         quality_scores[content_type] = {
             "composite": composite,
             "passed": passed,
             "validation_status": validation_status,
+            "fallback_generated": fallback_draft,
         }
 
         attempt_history[content_type].append(
@@ -164,7 +190,7 @@ def quality_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(previous_composite, (int, float))
             else float("-inf")
         )
-        if composite > previous_numeric:
+        if not fallback_draft and composite > previous_numeric:
             best_drafts[content_type] = {
                 "version": version,
                 "body": body,

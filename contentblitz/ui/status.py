@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 from contentblitz.ui.error_display import normalize_errors_for_display
 from contentblitz.ui.progress import (
     UIProgressEvent,
@@ -30,6 +36,72 @@ def _safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _normalize_format_list(value: Any) -> list[str]:
+    normalized: list[str] = []
+    for item in _safe_list(value):
+        token = str(item).strip().lower()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _failed_export_formats(export_metadata: Mapping[str, Any]) -> list[str]:
+    explicit_failed = _normalize_format_list(
+        export_metadata.get("failed_export_formats")
+    )
+    if explicit_failed:
+        return explicit_failed
+    status = _safe_dict(export_metadata.get("export_status", {}))
+    return [
+        str(fmt).strip().lower()
+        for fmt, value in status.items()
+        if str(fmt).strip() and str(value).strip().lower() == "failed"
+    ]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = str(entry.get("code", "")).strip().lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = str(entry.get("message", "")).strip().lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_failure_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_error_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    failed_formats = _failed_export_formats(export_metadata)
+    if failed_formats:
+        return len(failed_formats)
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
+    )
+
+
+def _export_warning_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_warning_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and _is_warning_export_log_entry(item)
+    )
+
+
 def normalize_observability_status(status: Any) -> str:
     """Normalize observability status to a safe bounded set."""
     normalized = str(status).strip().lower()
@@ -45,15 +117,7 @@ def observability_status_label(status: Any) -> str:
 
 
 def _dedupe_messages(messages: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for message in messages:
-        cleaned = str(message).strip()
-        if not cleaned or cleaned.lower() in {"none", "null"} or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        deduped.append(cleaned)
-    return deduped
+    return dedupe_user_warnings(messages)
 
 
 def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
@@ -68,6 +132,27 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
         if str(error.get("agent", "")).strip().lower() == "image_agent" and bool(
             error.get("recoverable", False)
         ):
+            return True
+    return False
+
+
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = str(draft.get("generation_status", "")).strip().lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = str(draft.get("provider_status", "")).strip().lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degradation(state: Mapping[str, Any]) -> bool:
+    content_drafts = _safe_dict(state.get("content_drafts", {}))
+    for channel in ("blog", "linkedin"):
+        draft = _safe_dict(content_drafts.get(channel, {}))
+        if _is_fallback_draft(draft):
             return True
     return False
 
@@ -250,20 +335,23 @@ def build_status_messages(
         )
 
     if _has_recoverable_image_failure(state):
-        messages.append(
-            (
-                "Image generation encountered a recoverable issue. "
-                "Text outputs remain available."
-            )
-        )
+        messages.append(IMAGE_RECOVERABLE_WARNING)
+
+    if _has_text_generation_degradation(state):
+        messages.append(TEXT_FALLBACK_WARNING)
+    if _has_text_generation_degradation(state) or _has_recoverable_image_failure(state):
+        messages.append(TOP_LEVEL_PROVIDER_WARNING)
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))
-    export_errors = _safe_list(export_metadata.get("error_log", []))
+    export_failures = _export_failure_count(export_metadata)
+    export_warnings = _export_warning_count(export_metadata)
     final_response = str(state.get("final_response", "")).strip()
-    if export_errors and final_response:
+    if export_failures > 0 and final_response:
         messages.append(
             "One or more exports failed, but the final response is still available."
         )
+    elif export_warnings > 0:
+        messages.append("Export completed with non-blocking warnings.")
 
     cost_controls = _safe_dict(state.get("cost_controls", {}))
     if bool(cost_controls.get("budget_exceeded", False)):

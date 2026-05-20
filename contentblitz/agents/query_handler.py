@@ -26,11 +26,46 @@ _DEFAULT_CLARIFICATION_MESSAGE = (
 _INJECTION_WARNING_MESSAGE = (
     "Suspicious instruction patterns were detected and neutralized."
 )
+_UNSUPPORTED_EXPORT_WARNING = (
+    "Requested export format is unsupported. "
+    "Supported formats: markdown, html, pdf, docx."
+)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _LINKEDIN_PATTERN = re.compile(r"\blinked[\s-]*in\b")
 _BLOG_PATTERN = re.compile(r"\bblog\b")
 _ARTICLE_PATTERN = re.compile(r"\barticle\b")
-_POST_PATTERN = re.compile(r"\bpost\b")
+_BLOG_POST_PATTERN = re.compile(r"\bblog\s+post\b")
+_IMAGE_PATTERN = re.compile(
+    r"\b(image|images|visual|visuals|graphic|graphics|concept art|"
+    r"image prompt|image prompts|image concept|image concepts|design prompt|"
+    r"illustration|illustrations|futuristic design)\b"
+)
+_RESEARCH_HARD_PATTERN = re.compile(
+    r"\b(research|report|market analysis|summarize findings|"
+    r"sources|citations)\b"
+)
+_RESEARCH_SOFT_PATTERN = re.compile(r"\btrends\b")
+_LINKEDIN_OUTPUT_PATTERN = re.compile(
+    r"\b(social post|professional post|linkedin caption|linkedin update|"
+    r"linkedin announcement|thought leadership)\b"
+)
+_EXPORT_SIGNAL_PATTERN = re.compile(r"\b(export|download|save)\b")
+_EXPORT_FORMAT_PATTERNS = {
+    "markdown": re.compile(r"\b(markdown|md)\b"),
+    "html": re.compile(r"\bhtml\b"),
+    "pdf": re.compile(r"\bpdf\b"),
+    "docx": re.compile(r"\b(docx|word)\b"),
+}
+_UNSUPPORTED_EXPORT_PATTERNS = (
+    re.compile(r"\b(powerpoint|ppt|pptx|slides|keynote)\b"),
+    re.compile(r"\b(csv|xlsx?|excel)\b"),
+)
+_AMBIGUOUS_SINGLE_OUTPUT_QUERIES = {
+    "blog",
+    "linkedin",
+    "post",
+    "content",
+}
 _UNSAFE_INJECTION_TOKENS = {
     "ignore",
     "all",
@@ -90,6 +125,23 @@ def _normalize_outputs(value: Any) -> list[str]:
     return found
 
 
+def _normalize_export_formats(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        token = str(item).strip().lower()
+        if token in {"md", "markdown"}:
+            token = "markdown"
+        elif token == "word":
+            token = "docx"
+        if token not in {"markdown", "html", "pdf", "docx"}:
+            continue
+        if token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
 def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -117,35 +169,229 @@ def _has_linkedin_intent(query: str) -> bool:
     return bool(_LINKEDIN_PATTERN.search(_normalize_query_text(query)))
 
 
-def _has_explicit_blog_intent(query: str) -> bool:
-    return bool(_BLOG_PATTERN.search(_normalize_query_text(query)))
+def _build_export_metadata(formats_requested: list[str]) -> Dict[str, Any]:
+    return {
+        "formats_requested": list(formats_requested),
+        "export_paths": {},
+        "exported_at": None,
+        "error_log": [],
+    }
 
 
-def _apply_linkedin_output_precision(
-    query: str, classified: Dict[str, Any]
-) -> Dict[str, Any]:
-    updates = dict(classified)
-    if updates.get("clarification_needed", False):
-        return updates
+def _existing_export_metadata(state: Dict[str, Any]) -> Dict[str, Any]:
+    export_requested = bool(state.get("export_requested", False))
+    raw_metadata = _safe_dict(state.get("export_metadata", {}))
+    raw_formats = _normalize_export_formats(raw_metadata.get("formats_requested", []))
+    if export_requested and not raw_formats:
+        raw_formats = ["markdown"]
+    if not export_requested:
+        raw_formats = []
+    return _build_export_metadata(raw_formats)
 
-    if not _has_linkedin_intent(query) or _has_explicit_blog_intent(query):
-        updates["requested_outputs"] = _normalize_outputs(
-            updates.get("requested_outputs", [])
+
+def _match_export_formats(query: str) -> list[str]:
+    matched: list[tuple[int, str]] = []
+    for canonical, pattern in _EXPORT_FORMAT_PATTERNS.items():
+        hits = [match.start() for match in pattern.finditer(query)]
+        if not hits:
+            continue
+        matched.append((min(hits), canonical))
+    matched.sort(key=lambda item: item[0])
+    ordered: list[str] = []
+    for _, format_name in matched:
+        if format_name not in ordered:
+            ordered.append(format_name)
+    return ordered
+
+
+def _match_unsupported_export_terms(query: str) -> list[str]:
+    matches: list[tuple[int, str]] = []
+    for pattern in _UNSUPPORTED_EXPORT_PATTERNS:
+        for hit in pattern.finditer(query):
+            matches.append((hit.start(), hit.group(0).lower()))
+    matches.sort(key=lambda item: item[0])
+    ordered: list[str] = []
+    for _, token in matches:
+        if token not in ordered:
+            ordered.append(token)
+    return ordered
+
+
+def _merge_status_messages(existing: Any, additions: list[str]) -> list[str]:
+    merged: list[str] = []
+    for raw in [*_safe_list(existing), *additions]:
+        item = str(raw).strip()
+        if not item:
+            continue
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _detect_export_preferences(
+    query: str,
+) -> tuple[bool, list[str], list[str]]:
+    normalized_query = _normalize_query_text(query)
+    supported_formats = _match_export_formats(normalized_query)
+    unsupported_formats = _match_unsupported_export_terms(normalized_query)
+    export_signaled = bool(
+        _EXPORT_SIGNAL_PATTERN.search(normalized_query) or supported_formats
+    )
+    if not export_signaled:
+        return False, [], []
+    if supported_formats:
+        return True, supported_formats, unsupported_formats
+    if unsupported_formats:
+        return False, [], unsupported_formats
+    return True, ["markdown"], []
+
+
+def _deterministic_from_prompt(query: str) -> Dict[str, Any]:
+    normalized_query = _normalize_query_text(query)
+    words = [word for word in normalized_query.split() if word]
+
+    linkedin_requested = bool(
+        _has_linkedin_intent(normalized_query)
+        or _LINKEDIN_OUTPUT_PATTERN.search(normalized_query)
+    )
+    blog_requested = bool(
+        _BLOG_PATTERN.search(normalized_query)
+        or _BLOG_POST_PATTERN.search(normalized_query)
+        or (
+            _ARTICLE_PATTERN.search(normalized_query)
+            and not linkedin_requested
         )
+    )
+    image_requested = bool(_IMAGE_PATTERN.search(normalized_query))
+    research_hard_requested = bool(_RESEARCH_HARD_PATTERN.search(normalized_query))
+    research_soft_requested = bool(_RESEARCH_SOFT_PATTERN.search(normalized_query))
+    research_requested = bool(
+        research_hard_requested
+        or (
+            research_soft_requested
+            and not any((blog_requested, linkedin_requested, image_requested))
+        )
+    )
+    export_requested, export_formats, unsupported_formats = _detect_export_preferences(
+        normalized_query
+    )
+
+    meaningful_output_requested = bool(
+        blog_requested
+        or linkedin_requested
+        or image_requested
+        or research_hard_requested
+    )
+    vague_query = (
+        not normalized_query
+        or normalized_query in _AMBIGUOUS_SINGLE_OUTPUT_QUERIES
+        or (
+            len(words) <= 2
+            and not meaningful_output_requested
+        )
+        or normalized_query in {"help", "not sure", "something", "anything"}
+        or (
+            "help" in normalized_query
+            and not meaningful_output_requested
+        )
+    )
+
+    if vague_query:
+        updates: Dict[str, Any] = {
+            "intent": "clarification",
+            "requested_outputs": [],
+            "research_required": False,
+            "clarification_needed": True,
+            "clarification_message": _DEFAULT_CLARIFICATION_MESSAGE,
+            "export_requested": export_requested,
+            "export_metadata": _build_export_metadata(export_formats),
+        }
+        if unsupported_formats:
+            updates["status_messages"] = [_UNSUPPORTED_EXPORT_WARNING]
         return updates
 
-    requested_outputs = _normalize_outputs(updates.get("requested_outputs", []))
+    requested_outputs: list[str] = []
+    if blog_requested:
+        requested_outputs.append("blog")
+    if linkedin_requested:
+        requested_outputs.append("linkedin")
+    if image_requested:
+        requested_outputs.append("image")
+    if research_requested:
+        requested_outputs.append("research")
+    if not requested_outputs:
+        requested_outputs = ["blog"]
 
-    if "linkedin" in requested_outputs and "blog" in requested_outputs:
-        requested_outputs = [item for item in requested_outputs if item != "blog"]
-    elif requested_outputs == ["blog"] or not requested_outputs:
-        requested_outputs = ["linkedin"]
+    requested_outputs = _normalize_outputs(requested_outputs)
+    if any(item not in _ALLOWED_OUTPUTS for item in requested_outputs):
+        requested_outputs = ["blog"]
 
-    updates["requested_outputs"] = requested_outputs
     if requested_outputs == ["image"]:
-        updates["research_required"] = False
-    elif requested_outputs:
-        updates["research_required"] = bool(updates.get("research_required", True))
+        research_required = False
+        intent = "image_generation"
+    elif requested_outputs == ["research"]:
+        research_required = True
+        intent = "research"
+    else:
+        research_required = True
+        intent = "content_creation"
+
+    updates = {
+        "intent": intent,
+        "requested_outputs": requested_outputs,
+        "research_required": research_required,
+        "clarification_needed": False,
+        "clarification_message": None,
+        "export_requested": export_requested,
+        "export_metadata": _build_export_metadata(export_formats),
+    }
+    if unsupported_formats:
+        updates["status_messages"] = [_UNSUPPORTED_EXPORT_WARNING]
+    return updates
+
+
+def _merge_with_deterministic_prompt_detection(
+    query: str,
+    classified: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    deterministic = _deterministic_from_prompt(query)
+    if classified is None:
+        return deterministic
+
+    updates = dict(classified)
+    if deterministic.get("clarification_needed", False):
+        updates.update(deterministic)
+        return updates
+
+    updates["requested_outputs"] = _normalize_outputs(
+        deterministic.get("requested_outputs", [])
+    )
+    updates["research_required"] = bool(deterministic.get("research_required", False))
+    updates["clarification_needed"] = False
+    updates["clarification_message"] = None
+    updates["export_requested"] = bool(deterministic.get("export_requested", False))
+    updates["export_metadata"] = _build_export_metadata(
+        _normalize_export_formats(
+            _safe_dict(deterministic.get("export_metadata", {})).get(
+                "formats_requested", []
+            )
+        )
+    )
+    updates["intent"] = (
+        str(updates.get("intent", "")).strip().lower()
+        or str(deterministic.get("intent", "")).strip().lower()
+        or "content_creation"
+    )
+    deterministic_messages = [
+        str(item).strip()
+        for item in _safe_list(deterministic.get("status_messages", []))
+        if str(item).strip()
+    ]
+    if deterministic_messages:
+        updates["status_messages"] = _merge_status_messages(
+            updates.get("status_messages", []),
+            deterministic_messages,
+        )
     return updates
 
 
@@ -200,6 +446,14 @@ def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, An
     intent = str(payload.get("intent", "")).strip().lower() or "general"
     research_required = bool(payload.get("research_required", False))
     export_requested = bool(payload.get("export_requested", False))
+    export_metadata = _safe_dict(payload.get("export_metadata", {}))
+    export_formats = _normalize_export_formats(export_metadata.get("formats_requested"))
+    if not export_formats:
+        export_formats = _normalize_export_formats(payload.get("export_formats", []))
+    if export_requested and not export_formats:
+        export_formats = ["markdown"]
+    if not export_requested:
+        export_formats = []
 
     if requested_outputs == ["image"]:
         research_required = False
@@ -218,93 +472,7 @@ def _parse_llm_classification(response: Dict[str, Any]) -> Optional[Dict[str, An
         "clarification_needed": clarification_needed,
         "clarification_message": clarification_message,
         "export_requested": export_requested,
-    }
-
-
-def _deterministic_fallback(query: str) -> Dict[str, Any]:
-    q = _normalize_query_text(query)
-    words = [w for w in q.split() if w]
-
-    export_requested = any(token in q for token in ("export", "pdf", "download"))
-    image_requested = any(
-        token in q for token in ("image", "poster", "illustration", "graphic", "visual")
-    )
-    research_requested = any(
-        token in q
-        for token in ("research", "analyze", "analysis", "investigate", "sources")
-    )
-    linkedin_requested = _has_linkedin_intent(q)
-    blog_requested = bool(
-        _BLOG_PATTERN.search(q)
-        or (
-            not linkedin_requested
-            and (_ARTICLE_PATTERN.search(q) or _POST_PATTERN.search(q))
-        )
-    )
-
-    vague_query = (
-        not q
-        or len(words) <= 2
-        or q in {"help", "not sure", "something", "anything"}
-        or (
-            "help" in q
-            and not any(
-                (
-                    image_requested,
-                    research_requested,
-                    blog_requested,
-                    linkedin_requested,
-                )
-            )
-        )
-    )
-
-    if vague_query:
-        return {
-            "intent": "clarification",
-            "requested_outputs": [],
-            "research_required": False,
-            "clarification_needed": True,
-            "clarification_message": _DEFAULT_CLARIFICATION_MESSAGE,
-            "export_requested": export_requested,
-        }
-
-    requested_outputs: list[str] = []
-    if blog_requested:
-        requested_outputs.append("blog")
-    if linkedin_requested:
-        requested_outputs.append("linkedin")
-    if image_requested:
-        requested_outputs.append("image")
-    if research_requested and not requested_outputs:
-        requested_outputs.append("research")
-    if not requested_outputs:
-        requested_outputs = ["blog"]
-
-    if "research" in requested_outputs and requested_outputs != ["research"]:
-        requested_outputs = [item for item in requested_outputs if item != "research"]
-
-    if any(item not in _ALLOWED_OUTPUTS for item in requested_outputs):
-        requested_outputs = ["blog"]
-
-    research_required = requested_outputs != ["image"]
-    if requested_outputs == ["research"]:
-        research_required = True
-
-    if requested_outputs == ["image"]:
-        intent = "image_generation"
-    elif requested_outputs == ["research"]:
-        intent = "research"
-    else:
-        intent = "content_creation"
-
-    return {
-        "intent": intent,
-        "requested_outputs": requested_outputs,
-        "research_required": research_required,
-        "clarification_needed": False,
-        "clarification_message": None,
-        "export_requested": export_requested,
+        "export_metadata": _build_export_metadata(export_formats),
     }
 
 
@@ -409,6 +577,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "clarification_needed": True,
             "clarification_message": _DEFAULT_CLARIFICATION_MESSAGE,
             "export_requested": bool(state.get("export_requested", False)),
+            "export_metadata": _existing_export_metadata(state),
             "routing_decision": "clarification_node",
             "cost_controls": cost_controls,
         }
@@ -428,6 +597,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "clarification_needed": False,
             "clarification_message": None,
             "export_requested": bool(state.get("export_requested", False)),
+            "export_metadata": _existing_export_metadata(state),
         }
         image_only["routing_decision"] = _determine_routing_decision(image_only)
         image_only["cost_controls"] = cost_controls
@@ -446,6 +616,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "clarification_needed": bool(state.get("clarification_needed", False)),
             "clarification_message": state.get("clarification_message"),
             "export_requested": bool(state.get("export_requested", False)),
+            "export_metadata": _existing_export_metadata(state),
         }
         if preclassified["requested_outputs"] == ["image"]:
             preclassified["research_required"] = False
@@ -462,7 +633,8 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
     prompt = (
         "Classify the user request for ContentBlitz. "
         "Return strict JSON with keys: intent, requested_outputs, research_required, "
-        "clarification_needed, clarification_message, export_requested.\n\n"
+        "clarification_needed, clarification_message, export_requested, "
+        "export_formats.\n\n"
         f"User query: {effective_query}"
     )
     model = preferred_text_model(cost_controls)
@@ -485,9 +657,10 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
     classified = _parse_llm_classification(llm_response)
-    if classified is None:
-        classified = _deterministic_fallback(effective_query)
-    classified = _apply_linkedin_output_precision(effective_query, classified)
+    classified = _merge_with_deterministic_prompt_detection(
+        effective_query,
+        classified,
+    )
 
     classified["routing_decision"] = _determine_routing_decision(classified)
     classified["cost_controls"] = cost_controls

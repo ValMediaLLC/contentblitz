@@ -77,6 +77,9 @@ Safe, compact metadata is included for:
 - workflow start/end status
 - routing decision
 - requested outputs
+- root-trace `intent` derived only from resolved backend state:
+  - `requested_outputs`
+  - `export_formats_requested`
 - node name and node status
 - retry count and retry exhaustion summaries
 - cost counter summaries
@@ -91,6 +94,17 @@ Safe, compact metadata is included for:
   - `project_name`
   - `endpoint_host` (hostname only)
 
+LangSmith root trace `Input` intentionally contains only safe resolved intent labels:
+
+```json
+{"intent": ["blog", "linkedin", "image", "pdf"]}
+```
+
+Intent labels are derived only from:
+
+- `requested_outputs`
+- `export_formats_requested` (or normalized export format metadata)
+
 ## What Is Never Traced
 
 - API key values (`LANGSMITH_API_KEY`, `OPENAI_API_KEY`, `SERP_API_KEY`, `PERPLEXITY_API_KEY`)
@@ -100,6 +114,7 @@ Safe, compact metadata is included for:
 - raw stack traces
 - base64 image data
 - raw user query text
+- query previews (`query_preview`, `sanitized_user_query`, `user_query`)
 
 ## Redaction and Safe Metadata Policy
 
@@ -143,6 +158,16 @@ Provider tools emit child spans when tracing is enabled:
 - cache spans (`cache_lookup`, `cache_write`)
 
 Tool metadata is sanitized through safe metadata builders and redaction before emission.
+
+## Export Metadata Ownership Boundary
+
+- `query_handler_node` may initialize/normalize export intent metadata:
+  - `export_requested`
+  - `export_metadata.formats_requested`
+- `export_node` is the only node that writes execution-result export fields:
+  - `export_metadata.export_paths`
+  - `export_metadata.exported_at`
+  - `export_metadata.error_log` entries from export execution
 
 ## Validation and Testing
 

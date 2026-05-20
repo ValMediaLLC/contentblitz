@@ -48,6 +48,7 @@ _MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _ORDERED_LIST_RE = re.compile(r"^\d+\.\s+")
 _UNORDERED_LIST_RE = re.compile(r"^[-*]\s+")
+_MARKDOWN_FENCE_RE = re.compile(r"^```(?:[a-z0-9_-]+)?$", flags=re.IGNORECASE)
 _GENERIC_RECOVERABLE_WARNING = "A recoverable workflow issue was encountered."
 _MAX_LINE_WIDTH = 96
 _MAX_LINES_PER_PAGE = 44
@@ -345,6 +346,8 @@ def _append_warning_lines(text: str, warnings: Sequence[str]) -> str:
 def _normalize_markdown_line(line: str) -> str:
     stripped = line.strip()
     if not stripped:
+        return ""
+    if _MARKDOWN_FENCE_RE.match(stripped):
         return ""
     stripped = _MARKDOWN_HEADING_RE.sub("", stripped)
     stripped = _MARKDOWN_LINK_RE.sub(r"\1 (\2)", stripped)

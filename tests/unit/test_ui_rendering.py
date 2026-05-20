@@ -249,6 +249,29 @@ def test_render_payload_does_not_mutate_workflow_state() -> None:
     assert state == before
 
 
+def test_export_warning_without_failed_formats_is_not_non_blocking_failure() -> None:
+    state = _base_state()
+    state["workflow_status"] = "success"
+    state["export_requested"] = True
+    state["export_metadata"] = {
+        "formats_requested": ["pdf"],
+        "export_paths": {"pdf": "exports/content.pdf"},
+        "export_status": {"pdf": "completed"},
+        "error_log": [{"code": "pdf_validation_warning", "message": "safe warning"}],
+        "export_warning_count": 1,
+        "export_error_count": 0,
+    }
+    payload = build_render_payload(
+        state=state,
+        node_statuses=build_initial_node_statuses(),
+    )
+
+    assert payload["export_status"]["export_error_count"] == 0
+    assert payload["export_status"]["export_warning_count"] == 1
+    assert payload["export_status"]["failed_formats"] == []
+    assert payload["export_status"]["non_blocking_failure"] is False
+
+
 def test_export_off_marks_export_node_skipped_in_payload_statuses() -> None:
     state = _base_state()
     state["export_requested"] = False
@@ -376,4 +399,63 @@ def test_usage_summary_marks_budget_exceeded_and_surfaces_warning() -> None:
     assert any(
         "usage limits were reached" in warning.lower()
         for warning in payload["warnings"]
+    )
+
+
+def test_render_payload_marks_provider_degradation_for_fallback_drafts() -> None:
+    state = _base_state()
+    state["requested_outputs"] = ["blog", "linkedin", "image"]
+    state["content_drafts"]["blog"] = {
+        "body": "## Fallback Blog Outline\nLimited body.",
+        "fallback_generated": True,
+        "degraded_generation": True,
+        "provider_failure_reason": "quota_exceeded",
+        "generation_tokens": 0,
+    }
+    state["content_drafts"]["linkedin"] = {
+        "body": "Fallback LinkedIn draft.",
+        "fallback_generated": True,
+        "degraded_generation": True,
+        "provider_failure_reason": "quota_exceeded",
+        "generation_tokens": 0,
+    }
+    state["image_outputs"] = [
+        {"status": "failed", "error": {"message": "safe", "recoverable": True}}
+    ]
+
+    payload = build_render_payload(
+        state=state,
+        node_statuses=build_initial_node_statuses(),
+    )
+
+    assert payload["degradation_metadata"]["text_generation_degraded"] is True
+    assert payload["degradation_metadata"]["image_generation_degraded"] is True
+    assert payload["degradation_metadata"]["fallback_content_used"] is True
+    assert payload["degradation_metadata"]["real_generation_succeeded"] is False
+    assert (
+        payload["degradation_metadata"]["provider_failure_reason"]
+        == "quota_exceeded"
+    )
+    assert payload["provider_status"]["text_generation"] == "degraded"
+    assert payload["provider_status"]["image_generation"] == "degraded"
+    lowered_warnings = [warning.lower() for warning in payload["warnings"]]
+    assert any(
+        "openai provider unavailable or quota-limited" in warning
+        for warning in lowered_warnings
+    )
+    assert any(
+        "blog and linkedin outputs are fallback outlines" in warning
+        for warning in lowered_warnings
+    )
+    assert any(
+        "image generation encountered a recoverable issue" in warning
+        for warning in lowered_warnings
+    )
+    assert (
+        sum(
+            1
+            for warning in lowered_warnings
+            if "openai provider unavailable or quota-limited" in warning
+        )
+        == 1
     )

@@ -6,6 +6,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
+from contentblitz.core.warnings import (
+    IMAGE_RECOVERABLE_WARNING,
+    TEXT_FALLBACK_WARNING,
+    TOP_LEVEL_PROVIDER_WARNING,
+    dedupe_user_warnings,
+)
 from contentblitz.safety.output_sanitizer import (
     sanitize_markdown_output,
     sanitize_plain_output,
@@ -87,6 +93,62 @@ def _safe_int(value: Any, default: int = 0) -> int:
     if isinstance(value, float):
         return int(value)
     return default
+
+
+def _normalize_format_list(value: Any) -> list[str]:
+    normalized: list[str] = []
+    for item in _safe_list(value):
+        token = _safe_text(item).lower()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _failed_export_formats(export_metadata: Mapping[str, Any]) -> list[str]:
+    explicit_failed = _normalize_format_list(
+        export_metadata.get("failed_export_formats")
+    )
+    if explicit_failed:
+        return explicit_failed
+    export_status = _safe_dict(export_metadata.get("export_status", {}))
+    return [
+        _safe_text(fmt).lower()
+        for fmt, status in export_status.items()
+        if _safe_text(fmt) and _safe_text(status).lower() == "failed"
+    ]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = _safe_text(entry.get("code")).lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = _safe_text(entry.get("message")).lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_failure_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_error_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    failed_formats = _failed_export_formats(export_metadata)
+    if failed_formats:
+        return len(failed_formats)
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
+    )
+
+
+def _export_warning_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_warning_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and _is_warning_export_log_entry(item)
+    )
 
 
 def _sanitized_plain(value: Any) -> str:
@@ -292,11 +354,30 @@ def _quality_warnings(quality_scores: Mapping[str, Any]) -> list[str]:
     for output_type in ("blog", "linkedin"):
         score = _safe_dict(quality_scores.get(output_type, {}))
         validation_status = _safe_text(score.get("validation_status")).lower()
-        if validation_status in {"failed", "retry_needed", "unverified"}:
+        if validation_status in {"failed", "retry_needed", "unverified", "degraded"}:
             warnings.append(
                 f"{output_type.title()} quality status: {validation_status}."
             )
     return warnings
+
+
+def _is_fallback_draft(draft: Mapping[str, Any]) -> bool:
+    if bool(draft.get("fallback_generated", False)):
+        return True
+    if bool(draft.get("degraded_generation", False)):
+        return True
+    generation_status = _safe_text(draft.get("generation_status")).lower()
+    if generation_status in {"fallback_degraded", "fallback_generated"}:
+        return True
+    provider_status = _safe_text(draft.get("provider_status")).lower()
+    return provider_status == "degraded"
+
+
+def _has_text_generation_degraded(content_drafts: Mapping[str, Any]) -> bool:
+    for channel in ("blog", "linkedin"):
+        if _is_fallback_draft(_safe_dict(content_drafts.get(channel, {}))):
+            return True
+    return False
 
 
 def _derive_usage_summary(
@@ -528,6 +609,7 @@ def build_render_payload(
     )
 
     content_drafts = _safe_dict(state_snapshot.get("content_drafts", {}))
+    text_generation_degraded = _has_text_generation_degraded(content_drafts)
     unsafe_content_removed = False
     blog_draft, blog_changed = sanitize_markdown_output(
         _safe_text(_safe_dict(content_drafts.get("blog", {})).get("body"))
@@ -578,12 +660,36 @@ def build_render_payload(
         _safe_text(_safe_dict(item).get("status")).lower() == "failed"
         for item in _safe_list(state_snapshot.get("image_outputs", []))
     ):
-        warnings.append(
-            "Image generation failed in this run, but text outputs may still be usable."
-        )
+        warnings.append(IMAGE_RECOVERABLE_WARNING)
+    image_generation_degraded = any(
+        _safe_text(_safe_dict(item).get("status")).lower() in {"failed", "degraded"}
+        for item in _safe_list(state_snapshot.get("image_outputs", []))
+    )
+    if text_generation_degraded:
+        warnings.append(TEXT_FALLBACK_WARNING)
+    if text_generation_degraded or image_generation_degraded:
+        warnings.append(TOP_LEVEL_PROVIDER_WARNING)
 
     export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
     export_errors = _safe_list(export_metadata.get("error_log", []))
+    export_warning_count = _export_warning_count(export_metadata)
+    export_error_count = _export_failure_count(export_metadata)
+    failed_export_formats = _failed_export_formats(export_metadata)
+    requested_export_formats = _normalize_format_list(
+        export_metadata.get("requested_export_formats")
+        or export_metadata.get("formats_requested", [])
+    )
+    completed_export_formats = _normalize_format_list(
+        export_metadata.get("completed_export_formats", [])
+    )
+    if not completed_export_formats:
+        completed_export_formats = [
+            _safe_text(fmt).lower()
+            for fmt, status in _safe_dict(
+                export_metadata.get("export_status", {})
+            ).items()
+            if _safe_text(fmt) and _safe_text(status).lower() == "completed"
+        ]
     raw_export_paths = _safe_dict(export_metadata.get("export_paths", {}))
     export_paths: dict[str, str] = {}
     missing_export_formats: list[str] = []
@@ -626,11 +732,13 @@ def build_render_payload(
     final_response = _safe_text(state_snapshot.get("final_response"))
     final_response, final_changed = sanitize_markdown_output(final_response)
     unsafe_content_removed = unsafe_content_removed or final_changed
-    if export_errors and final_response:
+    if export_error_count > 0 and final_response:
         warnings.append(
             "Export encountered a non-blocking failure; "
             "the final response is still available."
         )
+    elif export_warning_count > 0:
+        warnings.append("Export completed with non-blocking warnings.")
 
     warnings.extend(
         _quality_warnings(_safe_dict(state_snapshot.get("quality_scores", {})))
@@ -698,8 +806,8 @@ def build_render_payload(
         "image_outputs": image_outputs,
         "sources": display_sources,
         "errors": normalize_errors_for_display(state_snapshot.get("errors", [])),
-        "warnings": list(
-            dict.fromkeys([item for item in warnings if _safe_text(item)])
+        "warnings": dedupe_user_warnings(
+            [item for item in warnings if _safe_text(item)]
         ),
         "node_statuses": merged_statuses,
         "usage_summary": usage_summary,
@@ -708,6 +816,45 @@ def build_render_payload(
             or bool(_safe_list(export_metadata.get("formats_requested", []))),
             "paths": export_paths,
             "errors": normalize_errors_for_display(export_errors),
-            "non_blocking_failure": bool(export_errors) and bool(final_response),
+            "requested_formats": requested_export_formats,
+            "completed_formats": completed_export_formats,
+            "failed_formats": failed_export_formats,
+            "export_warning_count": export_warning_count,
+            "export_error_count": export_error_count,
+            "non_blocking_failure": export_error_count > 0 and bool(final_response),
+        },
+        "provider_status": {
+            "text_generation": "degraded" if text_generation_degraded else "completed",
+            "image_generation": (
+                "degraded" if image_generation_degraded else "completed"
+            ),
+            "search": (
+                "degraded"
+                if bool(
+                    _safe_dict(state_snapshot.get("research_data", {})).get(
+                        "degraded", False
+                    )
+                )
+                else "completed"
+            ),
+            "export": "degraded" if export_error_count > 0 else "completed",
+        },
+        "degradation_metadata": {
+            "text_generation_degraded": text_generation_degraded,
+            "image_generation_degraded": image_generation_degraded,
+            "fallback_content_used": text_generation_degraded,
+            "real_generation_succeeded": not text_generation_degraded,
+            "provider_failure_reason": (
+                _safe_text(
+                    _safe_dict(content_drafts.get("blog", {})).get(
+                        "provider_failure_reason"
+                    )
+                )
+                or _safe_text(
+                    _safe_dict(content_drafts.get("linkedin", {})).get(
+                        "provider_failure_reason"
+                    )
+                )
+            ),
         },
     }

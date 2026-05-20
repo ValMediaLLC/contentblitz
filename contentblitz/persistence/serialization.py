@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
@@ -234,10 +234,50 @@ def _sanitize_export_metadata(export_metadata: Any) -> Dict[str, Any]:
         if not fmt or not status_value:
             continue
         status[fmt] = status_value
+    requested_export_formats = [
+        token
+        for token in [
+            _safe_text(item).lower()
+            for item in _safe_list(
+                meta.get("requested_export_formats", []) or formats
+            )
+        ]
+        if token
+    ]
+    completed_export_formats = [
+        token
+        for token in [
+            _safe_text(item).lower()
+            for item in _safe_list(meta.get("completed_export_formats", []))
+        ]
+        if token
+    ]
+    if not completed_export_formats:
+        completed_export_formats = [
+            fmt for fmt, status_value in status.items() if status_value == "completed"
+        ]
+    failed_export_formats = [
+        token
+        for token in [
+            _safe_text(item).lower()
+            for item in _safe_list(meta.get("failed_export_formats", []))
+        ]
+        if token
+    ]
+    if not failed_export_formats:
+        failed_export_formats = [
+            fmt for fmt, status_value in status.items() if status_value == "failed"
+        ]
     raw_error_count = meta.get("export_error_count", 0)
     export_error_count = (
         raw_error_count
         if isinstance(raw_error_count, int) and raw_error_count >= 0
+        else len(failed_export_formats)
+    )
+    raw_warning_count = meta.get("export_warning_count", 0)
+    export_warning_count = (
+        raw_warning_count
+        if isinstance(raw_warning_count, int) and raw_warning_count >= 0
         else 0
     )
     status_messages = [
@@ -249,6 +289,10 @@ def _sanitize_export_metadata(export_metadata: Any) -> Dict[str, Any]:
         "formats_requested": formats,
         "export_paths": paths,
         "export_status": status,
+        "requested_export_formats": requested_export_formats,
+        "completed_export_formats": completed_export_formats,
+        "failed_export_formats": failed_export_formats,
+        "export_warning_count": export_warning_count,
         "export_error_count": export_error_count,
         "status_messages": status_messages,
     }

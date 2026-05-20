@@ -35,13 +35,13 @@ def _get_graph():
 def _build_initial_state(
     *,
     user_query: str,
-    requested_outputs: List[str],
-    export_requested: bool,
+    requested_outputs: List[str] | None,
+    export_requested: bool = False,
     export_formats: List[str] | None,
 ) -> Dict[str, Any]:
     safe_query = str(user_query).strip()
     safe_outputs = [
-        str(item).strip() for item in requested_outputs if str(item).strip()
+        str(item).strip() for item in (requested_outputs or []) if str(item).strip()
     ]
     safe_export_formats = [
         str(item).strip().lower()
@@ -49,18 +49,18 @@ def _build_initial_state(
         if str(item).strip()
     ]
 
-    export_metadata = {
-        "formats_requested": safe_export_formats if export_requested else [],
-        "export_paths": {},
-        "exported_at": None,
-        "error_log": [],
-    }
-    return create_initial_state(
-        user_query=safe_query,
-        requested_outputs=safe_outputs,
-        export_requested=bool(export_requested),
-        export_metadata=export_metadata,
-    )
+    initial_state_overrides: Dict[str, Any] = {"user_query": safe_query}
+    if safe_outputs:
+        initial_state_overrides["requested_outputs"] = safe_outputs
+    if export_requested or safe_export_formats:
+        initial_state_overrides["export_requested"] = bool(export_requested)
+        initial_state_overrides["export_metadata"] = {
+            "formats_requested": safe_export_formats if export_requested else [],
+            "export_paths": {},
+            "exported_at": None,
+            "error_log": [],
+        }
+    return create_initial_state(**initial_state_overrides)
 
 
 def _safe_dict(value: Any) -> Dict[str, Any]:
@@ -69,6 +69,62 @@ def _safe_dict(value: Any) -> Dict[str, Any]:
 
 def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _normalize_format_list(value: Any) -> List[str]:
+    normalized: List[str] = []
+    for item in _safe_list(value):
+        token = str(item).strip().lower()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = str(entry.get("code", "")).strip().lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = str(entry.get("message", "")).strip().lower()
+    return "warning" in message and "failed" not in message
+
+
+def _derive_failed_export_formats(export_metadata: Mapping[str, Any]) -> List[str]:
+    explicit_failed = _normalize_format_list(
+        export_metadata.get("failed_export_formats")
+    )
+    if explicit_failed:
+        return explicit_failed
+    export_status = _safe_dict(export_metadata.get("export_status", {}))
+    return [
+        str(fmt).strip().lower()
+        for fmt, status in export_status.items()
+        if str(fmt).strip() and str(status).strip().lower() == "failed"
+    ]
+
+
+def _derive_export_error_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit_count = _safe_int(export_metadata.get("export_error_count"), default=-1)
+    if explicit_count >= 0:
+        return explicit_count
+    failed_formats = _derive_failed_export_formats(export_metadata)
+    if failed_formats:
+        return len(failed_formats)
+    error_log = _safe_list(export_metadata.get("error_log", []))
+    return sum(
+        1
+        for item in error_log
+        if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
+    )
 
 
 def _is_recoverable_error(error: Any) -> bool:
@@ -106,11 +162,12 @@ def _status_from_node_update(node_name: str, updates: Mapping[str, Any]) -> str:
 
     if node_name == EXPORT_NODE:
         export_metadata = _safe_dict(updates.get("export_metadata", {}))
-        formats_requested = _safe_list(export_metadata.get("formats_requested", []))
+        formats_requested = _normalize_format_list(
+            export_metadata.get("formats_requested", [])
+        )
         if not formats_requested:
             return "skipped"
-        error_log = _safe_list(export_metadata.get("error_log", []))
-        if error_log:
+        if _derive_export_error_count(export_metadata) > 0:
             return "degraded"
         return "completed"
 
@@ -152,10 +209,22 @@ def _event_metadata(updates: Mapping[str, Any]) -> Dict[str, Any]:
             _safe_dict(updates.get("research_data", {})).get("degraded", False)
         )
     if "export_metadata" in updates:
-        export_errors = _safe_list(
-            _safe_dict(updates.get("export_metadata", {})).get("error_log", [])
+        export_metadata = _safe_dict(updates.get("export_metadata", {}))
+        metadata["export_error_count"] = _derive_export_error_count(export_metadata)
+        metadata["export_warning_count"] = _safe_int(
+            export_metadata.get("export_warning_count"),
+            default=0,
         )
-        metadata["export_error_count"] = len(export_errors)
+        metadata["requested_export_formats"] = _normalize_format_list(
+            export_metadata.get("requested_export_formats")
+            or export_metadata.get("formats_requested", [])
+        )
+        metadata["completed_export_formats"] = _normalize_format_list(
+            export_metadata.get("completed_export_formats", [])
+        )
+        metadata["failed_export_formats"] = _derive_failed_export_formats(
+            export_metadata
+        )
     return metadata
 
 
@@ -166,7 +235,7 @@ def _ordered_event_dicts(events: Iterable[UIProgressEvent]) -> List[Dict[str, An
 def stream_workflow_progress(
     *,
     user_query: str,
-    requested_outputs: List[str],
+    requested_outputs: List[str] | None = None,
     export_requested: bool = False,
     export_formats: List[str] | None = None,
 ) -> Iterator[Dict[str, Any]]:
@@ -251,7 +320,7 @@ def stream_workflow_progress(
 def run_workflow(
     *,
     user_query: str,
-    requested_outputs: List[str],
+    requested_outputs: List[str] | None = None,
     export_requested: bool = False,
     export_formats: List[str] | None = None,
 ) -> Dict[str, Any]:
