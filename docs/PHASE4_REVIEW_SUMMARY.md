@@ -1,97 +1,72 @@
-# ContentBlitz Phase 4 Review Summary
+# ContentBlitz Phase 4 Production Readiness Review
 
-## Executive Summary
+## 1. Files Changed
 
-Phase 4 observability was reviewed for production readiness with required validation and safety checks.
+- No files were changed in this review run.
+- Pre-existing local modification detected: `docs/ContentBlitz_Execution_Spec.md`.
 
-## Final Classification
+## 2. Bugs Fixed
+
+- None in this pass (audit/validation-only run).
+
+## 3. Observability Integration Summary
+
+- Phase 4 validation passed (`6/6` checks).
+- Tracing remains optional and credential-gated.
+- Tracing-disabled path is verified safe.
+- Graph/node tracing behavior is covered by unit/integration observability suites.
+- Frontend does not directly call LangSmith/provider tooling (spot-checked via repo search in `frontend` and `contentblitz/ui`).
+
+## 4. Redaction and Security Summary
+
+- Redaction and safe metadata tests passed.
+- No raw key patterns detected in code/tests/docs scan.
+- Dry-run smoke output only reports env var presence booleans (no secrets).
+- Observability docs explicitly state no raw prompt/provider payload/base64/stack trace exposure.
+
+## 5. Test Commands Run
+
+```bash
+.\.venv-x64\Scripts\python.exe scripts/validate_phase4.py
+.\.venv-x64\Scripts\python.exe -m pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
+.\.venv-x64\Scripts\python.exe scripts/dev/smoke_langsmith.py --dry-run
+$env:PYTHONIOENCODING='utf-8'; .\.venv-x64\Scripts\python.exe scripts/validate_phase3.py
+```
+
+## 6. Test Results
+
+- `validate_phase4.py`: **PASS** (`6` passed, `0` failed)
+- `pytest tests/unit tests/integration ...`: **PASS** (`767` passed)
+- `smoke_langsmith.py --dry-run`: **PASS** (no external LangSmith calls made)
+- `validate_phase3.py`: **PASS**
+
+## 7. Coverage Summary
+
+- Total coverage: **88%** (`contentblitz` target)
+
+## 8. Failing Tests
+
+- None.
+
+## 9. Remaining Technical Debt
+
+- Classification bias edge cases in deterministic prompt handling.
+- Local file-based persistence constraints.
+- Sampling can reduce trace coverage visibility for some runs.
+- Optional live observability validation remains manual.
+
+## 10. Known Limitations
+
+- Live LangSmith smoke was **not** run in this review (dry-run only).
+- LangGraph deprecation warning still appears in test output (non-blocking).
+- Observability is best-effort telemetry and intentionally degrades to no-op on failures.
+
+## 11. Release Readiness Classification
 
 **READY WITH KNOWN LIMITATIONS**
 
-Reasoning:
+## 12. Recommended Next Priorities
 
-- required validation passed
-- unit/integration tests passed
-- coverage remains acceptable for current baseline
-- tracing is optional and safe by design
-- no secret exposure blockers were found
-- optional live LangSmith smoke was not run in this review (dry-run only)
-
-## Validation Commands Run
-
-```bash
-python scripts/validate_phase4.py
-pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
-python scripts/dev/smoke_langsmith.py --dry-run
-python scripts/validate_phase3.py
-```
-
-## Validation Results
-
-- `validate_phase4.py`: 6/6 checks passed
-- `pytest tests/unit tests/integration`: 700 passed, 0 failed
-- `smoke_langsmith.py --dry-run`: passed; no LangSmith calls made
-- `validate_phase3.py`: passed
-
-## Coverage Summary
-
-- total coverage: **88%**
-- observability modules:
-  - `contentblitz/core/observability.py`: 89%
-  - `contentblitz/core/redaction.py`: 93%
-
-## Files Changed (This Review Pass)
-
-- no repository files were modified during the final validation-only pass
-
-## Bugs Fixed (This Review Pass)
-
-- none; this pass was audit/validation only
-
-## Observability Integration Summary
-
-- tracing is optional and environment-gated
-- tracing is disabled by default unless explicitly enabled
-- tracing failure degrades safely and does not fail workflows
-- tracing does not alter routing, retry behavior, or cost counters
-- tracing wrappers preserve LangGraph architecture
-- frontend observability UI is diagnostics-only and does not call LangSmith directly
-
-## Redaction and Security Summary
-
-- API-key-like values are redacted
-- bearer tokens are redacted
-- raw stack traces are normalized/redacted
-- base64 image payloads are redacted
-- raw provider payloads are excluded from safe metadata
-- raw user input is excluded or summarized safely
-- metadata is sanitized and JSON-serializable
-- env-style unsafe metadata keys are stripped in favor of safe `observability_summary`
-
-## Failing Tests
-
-- none
-
-## Remaining Technical Debt
-
-- optional live LangSmith smoke remains manual and was not executed in this review
-- LangGraph serializer deprecation warning (`allowed_objects`) still appears in test output
-- some non-observability modules remain lower-coverage areas
-
-## Known Limitations
-
-- observability is best-effort telemetry, not a compliance boundary
-- sampling can reduce trace coverage by design
-- CI/default validation does not run live LangSmith calls
-- tracing degrades to no-op if setup/runtime tracing fails
-
-## Recommended Next Priorities
-
-1. Run optional live LangSmith smoke in controlled environment and capture evidence.
-2. Resolve or suppress the LangGraph serializer deprecation warning safely.
-3. Continue raising coverage in lower-coverage non-observability modules.
-
-## Live Tracing Claim Status
-
-- no claim is made that live LangSmith tracing was validated in this review
-- only `--dry-run` smoke validation was executed
+1. Run optional live smoke once per release candidate: `CONTENTBLITZ_RUN_LANGSMITH_SMOKE=1 ...`.
+2. Add a CI-safe observability snapshot assertion (mocked tracer payload contract) to catch metadata drift early.
+3. Address the LangGraph serializer deprecation warning to reduce future upgrade risk.

@@ -535,7 +535,29 @@ Add production-safe observability to ContentBlitz using LangSmith tracing while 
 
 Phase 4 must be additive only. Do NOT rewrite graph architecture, agent responsibilities, provider tools, or UI orchestration behavior.
 
-## PHASE 5+: TRUST + SAFETY SYSTEMS
+# CONTENTBLITZ PHASE 5 — PERFORMANCE OPTIMIZATION
+
+Scope:
+- async research fan-out
+- model policy modernization
+- image provider registry
+- Stability AI/OpenAI fallback strategy
+- cache efficiency review
+- node duration benchmarking
+- performance regression tests
+
+Assumption:
+Phase 4 observability is complete and provides timing metadata needed to measure improvements.
+
+Do NOT:
+- change the 12-node architecture
+- weaken observability
+- bypass cost controls
+- move counters into tools
+- introduce real provider calls into normal tests
+
+
+## FUTURE PHASES: TRUST + SAFETY SYSTEMS
 
 Goal: Improve trustworthiness, observability, governance, and advanced safety
 
