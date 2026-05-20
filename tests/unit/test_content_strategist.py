@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 import time
@@ -256,6 +257,39 @@ def test_failed_output_falls_back_without_blocking_other_briefs(monkeypatch) -> 
     linkedin = updates["content_brief"]["linkedin"]
     assert linkedin["format"] == "linkedin"
     assert linkedin["objective"].startswith("Requested deliverable:")
+
+
+def test_content_strategist_fanout_handles_running_event_loop(monkeypatch) -> None:
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "content_strategist"
+        output_type = _output_type_from_prompt(prompt)
+        return {"output": json.dumps({"format": output_type, "angle": output_type})}
+
+    def fail_asyncio_run(*args, **kwargs):
+        raise AssertionError("asyncio.run should not be called inside a running loop")
+
+    monkeypatch.setattr(strategist_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(strategist_module.asyncio, "run", fail_asyncio_run)
+
+    state = create_initial_state(
+        requested_outputs=["blog", "linkedin", "image"],
+        user_query="async loop compatibility",
+        intent="content_creation",
+    )
+
+    async def _invoke_node():
+        return strategist_module.content_strategist_node(state)
+
+    event_loop = asyncio.new_event_loop()
+    try:
+        updates = event_loop.run_until_complete(_invoke_node())
+    finally:
+        event_loop.close()
+
+    assert updates["content_brief"]["blog"]["format"] == "blog"
+    assert updates["content_brief"]["linkedin"]["format"] == "linkedin"
+    assert updates["content_brief"]["image"]["format"] == "image"
 
 
 def test_provider_latency_metadata_recorded_for_content_strategist_calls(

@@ -276,12 +276,36 @@ def _fanout_brief_generation(
 ) -> Dict[str, _BriefGenerationResult]:
     if not prompts_by_output:
         return {}
-    return asyncio.run(
-        _fanout_brief_generation_async(
-            prompts_by_output=prompts_by_output,
-            model=model,
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _fanout_brief_generation_async(
+                prompts_by_output=prompts_by_output,
+                model=model,
+            )
         )
-    )
+
+    results: Dict[str, _BriefGenerationResult] = {}
+    for output_type in _BRIEF_OUTPUT_ORDER:
+        prompt = str(prompts_by_output.get(output_type, "")).strip()
+        if not prompt:
+            continue
+        started_at = perf_counter()
+        failed = False
+        try:
+            llm_response = _invoke_generate_text(prompt=prompt, model=model)
+        except Exception:
+            llm_response = {}
+            failed = True
+        latency_ms = max(0, int((perf_counter() - started_at) * 1000))
+        results[output_type] = _BriefGenerationResult(
+            output_type=output_type,
+            llm_response=_safe_dict(llm_response),
+            latency_ms=latency_ms,
+            failed=failed,
+        )
+    return results
 
 
 def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 import time
@@ -320,6 +321,51 @@ def test_per_query_timeout_marks_serp_call_as_timed_out(monkeypatch) -> None:
     assert research_data["provider_timeout_count"] >= 1
     assert research_data["provider_timeout_count_by_provider"]["serp_api"] >= 1
     assert research_data["search_provider_wall_timeout_triggered"] is False
+
+
+def test_research_fanout_handles_running_event_loop(monkeypatch) -> None:
+    state = create_initial_state(user_query="event loop compatible fanout")
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        return {"output": "Synthesis summary."}
+
+    def fake_search_web(query, depth="standard", timeout_seconds=None):
+        _ = timeout_seconds
+        return {
+            "results": [
+                {
+                    "title": f"{query} title",
+                    "url": f"https://example.com/{query}",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    def fail_asyncio_run(*args, **kwargs):
+        raise AssertionError("asyncio.run should not be called inside a running loop")
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+    monkeypatch.setattr(research_agent_module.asyncio, "run", fail_asyncio_run)
+
+    async def _invoke_node():
+        return research_agent_module.research_agent_node(state)
+
+    event_loop = asyncio.new_event_loop()
+    try:
+        updates = event_loop.run_until_complete(_invoke_node())
+    finally:
+        event_loop.close()
+
+    assert updates["workflow_status"] == "research_complete"
+    assert updates["research_data"]["provider_call_count"] >= 3
+    assert updates["sources"]
 
 
 def test_search_wall_timeout_does_not_cap_full_research_node(monkeypatch) -> None:

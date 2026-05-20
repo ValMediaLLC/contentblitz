@@ -298,15 +298,65 @@ def _run_search_fanout(
 ) -> tuple[List[_SearchCallResult], bool]:
     if not queries:
         return [], False
-    return asyncio.run(
-        _run_search_fanout_async(
-            queries=queries,
-            depth=depth,
-            max_concurrency=max_concurrency,
-            per_query_timeout_seconds=per_query_timeout_seconds,
-            node_deadline=node_deadline,
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _run_search_fanout_async(
+                queries=queries,
+                depth=depth,
+                max_concurrency=max_concurrency,
+                per_query_timeout_seconds=per_query_timeout_seconds,
+                node_deadline=node_deadline,
+            )
         )
-    )
+
+    ordered_results: list[_SearchCallResult] = []
+    wall_timeout_triggered = False
+    for search_query in queries:
+        remaining_seconds = _node_time_remaining_seconds(node_deadline)
+        if remaining_seconds <= 0.0:
+            wall_timeout_triggered = True
+            ordered_results.append(
+                _SearchCallResult(
+                    query=search_query,
+                    depth=depth,
+                    response={"results": []},
+                    duration_ms=0,
+                    attempted=False,
+                    timed_out=True,
+                )
+            )
+            continue
+
+        effective_timeout = min(per_query_timeout_seconds, remaining_seconds)
+        started_at = perf_counter()
+        timed_out = False
+        try:
+            response = _invoke_search_web(
+                query=search_query,
+                depth=depth,
+                timeout_seconds=effective_timeout,
+            )
+        except Exception:
+            response = {"results": []}
+        duration_ms = max(0, int((perf_counter() - started_at) * 1000))
+        error = _safe_dict(_safe_dict(response).get("error", {}))
+        error_code = str(error.get("code", "")).strip().lower()
+        if error_code == "provider_timeout":
+            timed_out = True
+        ordered_results.append(
+            _SearchCallResult(
+                query=search_query,
+                depth=depth,
+                response=_safe_dict(response),
+                duration_ms=duration_ms,
+                attempted=True,
+                timed_out=timed_out,
+            )
+        )
+
+    return ordered_results, wall_timeout_triggered
 
 
 def _build_search_queries(user_query: str) -> List[str]:
