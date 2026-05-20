@@ -248,7 +248,10 @@ def _explicit_provider_performance_from_updates(
         return _metrics_from_payload(linkedin)
     if node_name == "research_agent_node":
         research_data = _safe_dict(updates.get("research_data", {}))
-        return _metrics_from_payload(research_data)
+        return (
+            None,
+            _safe_non_negative_int(research_data.get("provider_call_count")),
+        )
     if node_name == "image_agent_node":
         image_output = _safe_dict(tool_outputs.get("image_agent", {}))
         return _metrics_from_payload(image_output)
@@ -354,6 +357,112 @@ def _event_metadata(
         metadata["research_degraded"] = bool(research_data.get("degraded", False))
         if "cache_hit" in research_data:
             metadata["cache_hit"] = bool(research_data.get("cache_hit"))
+        provider_latency_total_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_total_ms")
+        )
+        if provider_latency_total_ms is not None:
+            metadata["provider_latency_total_ms"] = provider_latency_total_ms
+        provider_latency_wall_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_wall_ms")
+        )
+        if provider_latency_wall_ms is not None:
+            metadata["provider_latency_wall_ms"] = provider_latency_wall_ms
+        latency_by_provider = research_data.get("provider_latency_by_provider_ms")
+        if isinstance(latency_by_provider, Mapping):
+            safe_latency_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_provider[key] = value
+            if safe_latency_by_provider:
+                metadata["provider_latency_by_provider_ms"] = safe_latency_by_provider
+        call_count_by_provider = research_data.get("provider_call_count_by_provider")
+        if isinstance(call_count_by_provider, Mapping):
+            safe_call_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_provider[key] = value
+            if safe_call_count_by_provider:
+                metadata["provider_call_count_by_provider"] = (
+                    safe_call_count_by_provider
+                )
+        provider_timeout_count = _safe_non_negative_int(
+            research_data.get("provider_timeout_count")
+        )
+        if provider_timeout_count is not None:
+            metadata["provider_timeout_count"] = provider_timeout_count
+        timeout_count_by_provider = research_data.get(
+            "provider_timeout_count_by_provider"
+        )
+        if isinstance(timeout_count_by_provider, Mapping):
+            safe_timeout_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in timeout_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_timeout_count_by_provider[key] = value
+            if safe_timeout_count_by_provider:
+                metadata["provider_timeout_count_by_provider"] = (
+                    safe_timeout_count_by_provider
+                )
+        search_provider_wall_timeout_ms = _safe_non_negative_int(
+            research_data.get("search_provider_wall_timeout_ms")
+        )
+        if search_provider_wall_timeout_ms is not None:
+            metadata["search_provider_wall_timeout_ms"] = (
+                search_provider_wall_timeout_ms
+            )
+        if "search_provider_wall_timeout_triggered" in research_data:
+            metadata["search_provider_wall_timeout_triggered"] = bool(
+                research_data.get("search_provider_wall_timeout_triggered")
+            )
+    if node_name == "content_strategist_node":
+        strategist_output = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("content_strategist", {})
+        )
+        provider_latency_total_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_total_ms")
+        )
+        if provider_latency_total_ms is not None:
+            metadata["provider_latency_total_ms"] = provider_latency_total_ms
+        provider_latency_wall_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_wall_ms")
+        )
+        if provider_latency_wall_ms is not None:
+            metadata["provider_latency_wall_ms"] = provider_latency_wall_ms
+
+        latency_by_output_type = strategist_output.get(
+            "provider_latency_by_output_type_ms"
+        )
+        if isinstance(latency_by_output_type, Mapping):
+            safe_latency_by_output_type: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_output_type[key] = value
+            if safe_latency_by_output_type:
+                metadata["provider_latency_by_output_type_ms"] = (
+                    safe_latency_by_output_type
+                )
+
+        call_count_by_output_type = strategist_output.get(
+            "provider_call_count_by_output_type"
+        )
+        if isinstance(call_count_by_output_type, Mapping):
+            safe_call_count_by_output_type: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_output_type[key] = value
+            if safe_call_count_by_output_type:
+                metadata["provider_call_count_by_output_type"] = (
+                    safe_call_count_by_output_type
+                )
     if "export_metadata" in updates:
         export_metadata = _safe_dict(updates.get("export_metadata", {}))
         metadata["export_error_count"] = _derive_export_error_count(export_metadata)

@@ -610,11 +610,18 @@ def _derive_performance_summary(state_snapshot: Mapping[str, Any]) -> dict[str, 
             safe_metadata.get("provider_latency_ms"),
             default=-1,
         )
+        provider_latency_total_ms = _safe_int(
+            safe_metadata.get("provider_latency_total_ms"),
+            default=-1,
+        )
 
         if duration_ms >= 0:
             per_node[node_name]["duration_ms"] = duration_ms
         if provider_latency_ms >= 0:
             per_node[node_name]["provider_latency_ms"] = provider_latency_ms
+        elif provider_latency_total_ms >= 0:
+            per_node[node_name]["provider_latency_ms"] = provider_latency_total_ms
+            per_node[node_name]["provider_latency_total_ms"] = provider_latency_total_ms
         if "cache_hit" in safe_metadata:
             per_node[node_name]["cache_hit"] = bool(safe_metadata.get("cache_hit"))
         provider = _safe_text(safe_metadata.get("provider")).lower()

@@ -426,7 +426,15 @@ def test_streaming_includes_provider_latency_only_when_explicitly_provided(
                             "research_data": {
                                 "degraded": False,
                                 "cache_hit": False,
-                                "provider_latency_ms": 33,
+                                "provider_latency_total_ms": 33,
+                                "provider_latency_wall_ms": 21,
+                                "provider_latency_by_provider_ms": {"serp_api": 28},
+                                "provider_call_count": 2,
+                                "provider_call_count_by_provider": {"serp_api": 2},
+                                "provider_timeout_count": 0,
+                                "provider_timeout_count_by_provider": {},
+                                "search_provider_wall_timeout_ms": 8000,
+                                "search_provider_wall_timeout_triggered": False,
                             },
                             "sources": [
                                 {
@@ -464,4 +472,9 @@ def test_streaming_includes_provider_latency_only_when_explicitly_provided(
     )
     safe_metadata = research_event.get("safe_metadata", {})
     assert safe_metadata.get("duration_ms") >= 0
-    assert safe_metadata.get("provider_latency_ms") == 33
+    assert safe_metadata.get("provider_latency_total_ms") == 33
+    assert safe_metadata.get("provider_latency_wall_ms") == 21
+    assert (
+        safe_metadata.get("provider_latency_by_provider_ms", {}).get("serp_api")
+        == 28
+    )

@@ -37,6 +37,16 @@ def _sanitize_query(query: str) -> str:
     return " ".join(str(query or "").strip().split())
 
 
+def _coerce_timeout_seconds(timeout_seconds: Any) -> float:
+    if isinstance(timeout_seconds, bool):
+        return float(_DEFAULT_TIMEOUT_SECONDS)
+    if isinstance(timeout_seconds, (int, float)):
+        value = float(timeout_seconds)
+        if value > 0:
+            return value
+    return float(_DEFAULT_TIMEOUT_SECONDS)
+
+
 def _safe_url(value: Any) -> Optional[str]:
     if not isinstance(value, str):
         return None
@@ -114,7 +124,7 @@ def _build_serp_url(query: str, *, api_key: str, max_results: int) -> str:
 
 
 def _http_get_json(
-    url: str, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
+    url: str, timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
 ) -> Dict[str, Any]:
     req = request.Request(
         url=url,
@@ -171,7 +181,12 @@ def _dedupe_exact_urls(results: List[SearchResult]) -> List[SearchResult]:
     return deduped
 
 
-def _search_serp(query: str, *, max_results: int) -> SearchWebResult:
+def _search_serp(
+    query: str,
+    *,
+    max_results: int,
+    timeout_seconds: float | None = None,
+) -> SearchWebResult:
     api_key = str(os.getenv("SERP_API_KEY", "")).strip()
     if not api_key:
         return _degraded_result(
@@ -183,8 +198,14 @@ def _search_serp(query: str, *, max_results: int) -> SearchWebResult:
         )
 
     url = _build_serp_url(query=query, api_key=api_key, max_results=max_results)
+    request_timeout_seconds = _coerce_timeout_seconds(timeout_seconds)
     try:
-        payload = _http_get_json(url)
+        try:
+            payload = _http_get_json(url, timeout_seconds=request_timeout_seconds)
+        except TypeError as exc:
+            if "timeout_seconds" not in str(exc):
+                raise
+            payload = _http_get_json(url)
     except HTTPError as exc:
         return _degraded_result(
             provider=_SERP_PROVIDER,
@@ -194,12 +215,29 @@ def _search_serp(query: str, *, max_results: int) -> SearchWebResult:
             recoverable=True,
             status_code=exc.code if isinstance(exc.code, int) else None,
         )
-    except URLError:
+    except URLError as exc:
+        timeout_reason = getattr(exc, "reason", None)
+        if isinstance(timeout_reason, TimeoutError):
+            return _degraded_result(
+                provider=_SERP_PROVIDER,
+                query=query,
+                code="provider_timeout",
+                message="SERP provider request timed out.",
+                recoverable=True,
+            )
         return _degraded_result(
             provider=_SERP_PROVIDER,
             query=query,
             code="provider_unavailable",
             message="SERP provider is temporarily unavailable.",
+            recoverable=True,
+        )
+    except TimeoutError:
+        return _degraded_result(
+            provider=_SERP_PROVIDER,
+            query=query,
+            code="provider_timeout",
+            message="SERP provider request timed out.",
             recoverable=True,
         )
     except json.JSONDecodeError:
@@ -256,8 +294,18 @@ def _search_serp(query: str, *, max_results: int) -> SearchWebResult:
     )
 
 
-def _search_perplexity_placeholder(query: str, *, max_results: int) -> SearchWebResult:
-    return search_perplexity(query=query, max_results=max_results)
+def _search_perplexity_placeholder(
+    query: str,
+    *,
+    max_results: int,
+    timeout_seconds: float | None = None,
+) -> SearchWebResult:
+    request_timeout_seconds = _coerce_timeout_seconds(timeout_seconds)
+    return search_perplexity(
+        query=query,
+        max_results=max_results,
+        timeout_seconds=request_timeout_seconds,
+    )
 
 
 def _is_unusable(result: SearchWebResult) -> bool:
@@ -335,6 +383,7 @@ def _run_provider_span(
     query: str,
     max_results: int,
     search_fn: Any,
+    timeout_seconds: float | None = None,
 ) -> SearchWebResult:
     started_at = time.perf_counter()
     provider_span = start_tool_span(
@@ -348,7 +397,19 @@ def _run_provider_span(
         inputs={"tool_name": span_name, "provider": provider},
     )
     try:
-        result = search_fn(query=query, max_results=max_results)
+        if timeout_seconds is not None:
+            try:
+                result = search_fn(
+                    query=query,
+                    max_results=max_results,
+                    timeout_seconds=timeout_seconds,
+                )
+            except TypeError as exc:
+                if "timeout_seconds" not in str(exc):
+                    raise
+                result = search_fn(query=query, max_results=max_results)
+        else:
+            result = search_fn(query=query, max_results=max_results)
     except Exception as error:
         _finish_tool_span(
             span=provider_span,
@@ -388,7 +449,12 @@ def _fallback_reason_from_result(result: SearchWebResult) -> str:
     return "provider_error"
 
 
-def _search_auto(query: str, *, max_results: int) -> tuple[SearchWebResult, bool]:
+def _search_auto(
+    query: str,
+    *,
+    max_results: int,
+    timeout_seconds: float | None = None,
+) -> tuple[SearchWebResult, bool]:
     try:
         serp_result = _run_provider_span(
             span_name="serp",
@@ -398,6 +464,7 @@ def _search_auto(query: str, *, max_results: int) -> tuple[SearchWebResult, bool
             query=query,
             max_results=max_results,
             search_fn=_search_serp,
+            timeout_seconds=timeout_seconds,
         )
     except Exception:
         serp_result = _degraded_result(
@@ -420,6 +487,7 @@ def _search_auto(query: str, *, max_results: int) -> tuple[SearchWebResult, bool
             query=query,
             max_results=max_results,
             search_fn=_search_perplexity_placeholder,
+            timeout_seconds=timeout_seconds,
         )
     except Exception:
         perplexity_result = _degraded_result(
@@ -460,6 +528,7 @@ def search_web(
     *,
     max_results: int = _DEFAULT_MAX_RESULTS,
     provider: str = _AUTO_PROVIDER,
+    timeout_seconds: float | None = None,
 ) -> SearchWebResult:
     """Run a provider-backed web search and return normalized results."""
     started_at = time.perf_counter()
@@ -475,6 +544,7 @@ def search_web(
         bounded_max_results = _DEFAULT_MAX_RESULTS
     if bounded_max_results > _MAX_RESULTS_CAP:
         bounded_max_results = _MAX_RESULTS_CAP
+    request_timeout_seconds = _coerce_timeout_seconds(timeout_seconds)
 
     def _finalize(result: SearchWebResult, *, fallback_used: bool) -> SearchWebResult:
         fallback_reason = ""
@@ -539,6 +609,7 @@ def search_web(
                 query=safe_query,
                 max_results=bounded_max_results,
                 search_fn=_search_serp,
+                timeout_seconds=request_timeout_seconds,
             )
             return _finalize(result, fallback_used=False)
         if provider_name == _PERPLEXITY_PROVIDER:
@@ -550,11 +621,14 @@ def search_web(
                 query=safe_query,
                 max_results=bounded_max_results,
                 search_fn=_search_perplexity_placeholder,
+                timeout_seconds=request_timeout_seconds,
             )
             return _finalize(result, fallback_used=False)
         if provider_name == _AUTO_PROVIDER:
             result, fallback_used = _search_auto(
-                safe_query, max_results=bounded_max_results
+                safe_query,
+                max_results=bounded_max_results,
+                timeout_seconds=request_timeout_seconds,
             )
             return _finalize(result, fallback_used=fallback_used)
 

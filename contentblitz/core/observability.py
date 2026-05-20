@@ -1193,7 +1193,10 @@ def _explicit_provider_performance_metrics(
         return _metrics_from_payload(linkedin)
     if node_name == "research_agent_node":
         research_data = _safe_mapping_value(state.get("research_data", {}))
-        return _metrics_from_payload(research_data)
+        return (
+            None,
+            _safe_non_negative_int(research_data.get("provider_call_count")),
+        )
     if node_name == "image_agent_node":
         image_tool_output = _safe_mapping_value(
             _safe_mapping_value(state.get("tool_outputs", {})).get("image_agent")
@@ -1242,6 +1245,70 @@ def _node_performance_context(
         provider = _node_provider_from_sources(state.get("sources", []))
         if not provider and _safe_bool(research_data.get("fallback_used", False)):
             provider = "perplexity"
+        provider_latency_total_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_total_ms")
+        )
+        provider_latency_wall_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_wall_ms")
+        )
+        if provider_latency_total_ms is not None:
+            context["provider_latency_total_ms"] = provider_latency_total_ms
+        if provider_latency_wall_ms is not None:
+            context["provider_latency_wall_ms"] = provider_latency_wall_ms
+
+        latency_by_provider = research_data.get("provider_latency_by_provider_ms")
+        if isinstance(latency_by_provider, Mapping):
+            safe_latency_by_provider: dict[str, int] = {}
+            for raw_key, raw_value in latency_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_provider[key] = value
+            if safe_latency_by_provider:
+                context["provider_latency_by_provider_ms"] = safe_latency_by_provider
+
+        call_count_by_provider = research_data.get("provider_call_count_by_provider")
+        if isinstance(call_count_by_provider, Mapping):
+            safe_call_count_by_provider: dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_provider[key] = value
+            if safe_call_count_by_provider:
+                context["provider_call_count_by_provider"] = safe_call_count_by_provider
+
+        timeout_count = _safe_non_negative_int(
+            research_data.get("provider_timeout_count")
+        )
+        if timeout_count is not None:
+            context["provider_timeout_count"] = timeout_count
+        timeout_count_by_provider = research_data.get(
+            "provider_timeout_count_by_provider"
+        )
+        if isinstance(timeout_count_by_provider, Mapping):
+            safe_timeout_count_by_provider: dict[str, int] = {}
+            for raw_key, raw_value in timeout_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_timeout_count_by_provider[key] = value
+            if safe_timeout_count_by_provider:
+                context["provider_timeout_count_by_provider"] = (
+                    safe_timeout_count_by_provider
+                )
+
+        search_provider_wall_timeout_ms = _safe_non_negative_int(
+            research_data.get("search_provider_wall_timeout_ms")
+        )
+        if search_provider_wall_timeout_ms is not None:
+            context["search_provider_wall_timeout_ms"] = (
+                search_provider_wall_timeout_ms
+            )
+        if "search_provider_wall_timeout_triggered" in research_data:
+            context["search_provider_wall_timeout_triggered"] = _safe_bool(
+                research_data.get("search_provider_wall_timeout_triggered")
+            )
     elif node_name == "blog_writer_node":
         content_drafts = _safe_mapping_value(state.get("content_drafts", {}))
         blog = _safe_mapping_value(content_drafts.get("blog"))
@@ -1280,6 +1347,46 @@ def _node_performance_context(
         )
         provider = _safe_text(strategist_output.get("provider")).lower()
         model = _safe_text(strategist_output.get("model"))
+        provider_latency_total_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_total_ms")
+        )
+        provider_latency_wall_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_wall_ms")
+        )
+        if provider_latency_total_ms is not None:
+            context["provider_latency_total_ms"] = provider_latency_total_ms
+        if provider_latency_wall_ms is not None:
+            context["provider_latency_wall_ms"] = provider_latency_wall_ms
+
+        latency_by_output_type = strategist_output.get(
+            "provider_latency_by_output_type_ms"
+        )
+        if isinstance(latency_by_output_type, Mapping):
+            safe_latency_by_output_type: dict[str, int] = {}
+            for raw_key, raw_value in latency_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_output_type[key] = value
+            if safe_latency_by_output_type:
+                context["provider_latency_by_output_type_ms"] = (
+                    safe_latency_by_output_type
+                )
+
+        call_count_by_output_type = strategist_output.get(
+            "provider_call_count_by_output_type"
+        )
+        if isinstance(call_count_by_output_type, Mapping):
+            safe_call_count_by_output_type: dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_output_type[key] = value
+            if safe_call_count_by_output_type:
+                context["provider_call_count_by_output_type"] = (
+                    safe_call_count_by_output_type
+                )
 
     if provider:
         context["provider"] = provider
