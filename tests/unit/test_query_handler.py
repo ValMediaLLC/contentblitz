@@ -82,6 +82,47 @@ def test_export_request_sets_export_requested_true(monkeypatch) -> None:
     assert updates["export_metadata"]["formats_requested"] == ["pdf"]
 
 
+def test_export_prompt_initializes_export_metadata_without_execution_results(
+    monkeypatch,
+) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(
+        user_query="Create a blog article and export as HTML and DOCX",
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+    export_metadata = updates["export_metadata"]
+
+    assert export_metadata["formats_requested"] == ["html", "docx"]
+    assert export_metadata["export_paths"] == {}
+    assert export_metadata["exported_at"] is None
+    assert export_metadata["error_log"] == []
+
+
+def test_query_handler_normalizes_export_metadata_without_execution_artifacts(
+    monkeypatch,
+) -> None:
+    _mock_llm(monkeypatch, "malformed")
+    state = create_initial_state(
+        user_query="Create a blog and export as PDF",
+        export_requested=True,
+        export_metadata={
+            "formats_requested": ["pdf"],
+            "export_paths": {"pdf": "/tmp/old_export.pdf"},
+            "exported_at": "2026-05-01T12:00:00Z",
+            "error_log": [{"format": "pdf", "message": "old error"}],
+        },
+    )
+
+    updates = query_handler_module.query_handler_node(state)
+    export_metadata = updates["export_metadata"]
+
+    assert export_metadata["formats_requested"] == ["pdf"]
+    assert export_metadata["export_paths"] == {}
+    assert export_metadata["exported_at"] is None
+    assert export_metadata["error_log"] == []
+
+
 def test_budget_exceeded_routes_to_error_handler_node(monkeypatch) -> None:
     _mock_llm(monkeypatch, "malformed")
     state = create_initial_state(

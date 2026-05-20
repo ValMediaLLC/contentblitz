@@ -29,6 +29,7 @@ def test_trace_metadata_excludes_raw_user_query_and_final_response() -> None:
     state = {
         "session_id": "session-xyz",
         "user_query": "full raw user query that should never appear",
+        "sanitized_user_query": "sanitized prompt preview should also not appear",
         "final_response": "full generated content that should not be traced",
         "workflow_status": "success",
         "requested_outputs": ["blog"],
@@ -36,12 +37,17 @@ def test_trace_metadata_excludes_raw_user_query_and_final_response() -> None:
     }
 
     metadata = observability_module.safe_trace_metadata(state)
+    payload = repr(metadata).lower()
 
     assert "user_query" not in metadata
+    assert "sanitized_user_query" not in metadata
+    assert "query_preview" not in metadata
     assert "final_response" not in metadata
+    assert "full raw user query" not in payload
+    assert "sanitized prompt preview" not in payload
 
 
-def test_trace_metadata_uses_safe_query_preview_key() -> None:
+def test_trace_metadata_never_uses_query_preview_keys() -> None:
     state = {
         "sanitized_user_query": "Create a blog and LinkedIn post about AI workflows.",
         "workflow_status": "running",
@@ -49,7 +55,7 @@ def test_trace_metadata_uses_safe_query_preview_key() -> None:
 
     metadata = observability_module.safe_trace_metadata(state)
 
-    assert "query_preview" in metadata
+    assert "query_preview" not in metadata
     assert "request_preview" not in metadata
 
 
@@ -188,6 +194,33 @@ def test_trace_metadata_success_without_degradation_stays_success() -> None:
     assert metadata["export_failure_status"] is False
 
 
+def test_trace_metadata_export_warning_without_failed_formats_is_not_failure() -> None:
+    state = {
+        "workflow_status": "success",
+        "requested_outputs": ["blog"],
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "export_status": {"pdf": "completed"},
+            "error_log": [
+                {"code": "pdf_validation_warning", "message": "safe warning"}
+            ],
+            "export_warning_count": 1,
+            "export_error_count": 0,
+        },
+    }
+
+    metadata = observability_module.safe_trace_metadata(state)
+
+    assert metadata["workflow_status"] == "success"
+    assert metadata["export_failure_status"] is False
+    assert metadata["degraded_workflow_status"] is False
+    assert metadata["requested_export_formats"] == ["pdf"]
+    assert metadata["completed_export_formats"] == ["pdf"]
+    assert metadata["failed_export_formats"] == []
+    assert metadata["export_warning_count"] == 1
+    assert metadata["export_error_count"] == 0
+
+
 def test_safe_node_end_metadata_does_not_mutate_state() -> None:
     state = {
         "workflow_status": "running",
@@ -313,7 +346,6 @@ def test_deterministic_prompt_resolved_outputs_appear_in_trace_metadata(
 
 def test_workflow_trace_inputs_omit_empty_intent() -> None:
     metadata = {
-        "query_preview": "Create a post about AI workflows.",
         "requested_outputs": [],
         "export_formats_requested": [],
     }
@@ -325,7 +357,6 @@ def test_workflow_trace_inputs_omit_empty_intent() -> None:
 
 def test_workflow_trace_inputs_include_intent_when_present() -> None:
     metadata = {
-        "query_preview": "Create a post about AI workflows.",
         "requested_outputs": ["blog", "linkedin"],
         "export_formats_requested": ["pdf", "markdown"],
     }
@@ -333,6 +364,17 @@ def test_workflow_trace_inputs_include_intent_when_present() -> None:
     inputs = observability_module.safe_workflow_trace_inputs(metadata)
 
     assert inputs["intent"] == ["blog", "linkedin", "pdf", "md"]
+
+
+def test_workflow_trace_inputs_support_export_metadata_format_fallback() -> None:
+    metadata = {
+        "requested_outputs": ["blog", "image"],
+        "export_metadata": {"formats_requested": ["word", "markdown", "unknown"]},
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "image", "md", "docx"]
 
 
 def test_workflow_trace_inputs_keep_supported_intent_subset_only() -> None:
@@ -346,11 +388,11 @@ def test_workflow_trace_inputs_keep_supported_intent_subset_only() -> None:
     assert inputs["intent"] == ["blog", "linkedin", "image", "html", "docx"]
 
 
-def test_workflow_trace_inputs_infer_intent_from_query_preview() -> None:
+def test_workflow_trace_inputs_do_not_infer_intent_from_prompt_text() -> None:
     metadata = {
-        "query_preview": (
-            "Create a blog article, LinkedIn post, and image concept; "
-            "export as PDF and DOCX."
+        "user_query": "Create a blog article, LinkedIn post, image, and export as PDF.",
+        "sanitized_user_query": (
+            "Create a blog article, LinkedIn post, image, and export as PDF."
         ),
         "requested_outputs": [],
         "export_formats_requested": [],
@@ -358,4 +400,15 @@ def test_workflow_trace_inputs_infer_intent_from_query_preview() -> None:
 
     inputs = observability_module.safe_workflow_trace_inputs(metadata)
 
-    assert inputs["intent"] == ["blog", "linkedin", "image", "pdf", "docx"]
+    assert inputs == {}
+
+
+def test_workflow_trace_inputs_ignore_unsupported_values() -> None:
+    metadata = {
+        "requested_outputs": ["research", "unknown", "", "blog"],
+        "export_formats_requested": ["csv", "pptx", "", "pdf"],
+    }
+
+    inputs = observability_module.safe_workflow_trace_inputs(metadata)
+
+    assert inputs["intent"] == ["blog", "pdf"]

@@ -89,6 +89,62 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return default
 
 
+def _normalize_format_list(value: Any) -> list[str]:
+    normalized: list[str] = []
+    for item in _safe_list(value):
+        token = _safe_text(item).lower()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _failed_export_formats(export_metadata: Mapping[str, Any]) -> list[str]:
+    explicit_failed = _normalize_format_list(
+        export_metadata.get("failed_export_formats")
+    )
+    if explicit_failed:
+        return explicit_failed
+    export_status = _safe_dict(export_metadata.get("export_status", {}))
+    return [
+        _safe_text(fmt).lower()
+        for fmt, status in export_status.items()
+        if _safe_text(fmt) and _safe_text(status).lower() == "failed"
+    ]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = _safe_text(entry.get("code")).lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = _safe_text(entry.get("message")).lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_failure_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_error_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    failed_formats = _failed_export_formats(export_metadata)
+    if failed_formats:
+        return len(failed_formats)
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
+    )
+
+
+def _export_warning_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_warning_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and _is_warning_export_log_entry(item)
+    )
+
+
 def _sanitized_plain(value: Any) -> str:
     sanitized, _ = sanitize_plain_output(value)
     return sanitized
@@ -584,6 +640,24 @@ def build_render_payload(
 
     export_metadata = _safe_dict(state_snapshot.get("export_metadata", {}))
     export_errors = _safe_list(export_metadata.get("error_log", []))
+    export_warning_count = _export_warning_count(export_metadata)
+    export_error_count = _export_failure_count(export_metadata)
+    failed_export_formats = _failed_export_formats(export_metadata)
+    requested_export_formats = _normalize_format_list(
+        export_metadata.get("requested_export_formats")
+        or export_metadata.get("formats_requested", [])
+    )
+    completed_export_formats = _normalize_format_list(
+        export_metadata.get("completed_export_formats", [])
+    )
+    if not completed_export_formats:
+        completed_export_formats = [
+            _safe_text(fmt).lower()
+            for fmt, status in _safe_dict(
+                export_metadata.get("export_status", {})
+            ).items()
+            if _safe_text(fmt) and _safe_text(status).lower() == "completed"
+        ]
     raw_export_paths = _safe_dict(export_metadata.get("export_paths", {}))
     export_paths: dict[str, str] = {}
     missing_export_formats: list[str] = []
@@ -626,11 +700,13 @@ def build_render_payload(
     final_response = _safe_text(state_snapshot.get("final_response"))
     final_response, final_changed = sanitize_markdown_output(final_response)
     unsafe_content_removed = unsafe_content_removed or final_changed
-    if export_errors and final_response:
+    if export_error_count > 0 and final_response:
         warnings.append(
             "Export encountered a non-blocking failure; "
             "the final response is still available."
         )
+    elif export_warning_count > 0:
+        warnings.append("Export completed with non-blocking warnings.")
 
     warnings.extend(
         _quality_warnings(_safe_dict(state_snapshot.get("quality_scores", {})))
@@ -708,6 +784,11 @@ def build_render_payload(
             or bool(_safe_list(export_metadata.get("formats_requested", []))),
             "paths": export_paths,
             "errors": normalize_errors_for_display(export_errors),
-            "non_blocking_failure": bool(export_errors) and bool(final_response),
+            "requested_formats": requested_export_formats,
+            "completed_formats": completed_export_formats,
+            "failed_formats": failed_export_formats,
+            "export_warning_count": export_warning_count,
+            "export_error_count": export_error_count,
+            "non_blocking_failure": export_error_count > 0 and bool(final_response),
         },
     }

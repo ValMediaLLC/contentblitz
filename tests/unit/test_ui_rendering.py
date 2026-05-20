@@ -249,6 +249,29 @@ def test_render_payload_does_not_mutate_workflow_state() -> None:
     assert state == before
 
 
+def test_export_warning_without_failed_formats_is_not_non_blocking_failure() -> None:
+    state = _base_state()
+    state["workflow_status"] = "success"
+    state["export_requested"] = True
+    state["export_metadata"] = {
+        "formats_requested": ["pdf"],
+        "export_paths": {"pdf": "exports/content.pdf"},
+        "export_status": {"pdf": "completed"},
+        "error_log": [{"code": "pdf_validation_warning", "message": "safe warning"}],
+        "export_warning_count": 1,
+        "export_error_count": 0,
+    }
+    payload = build_render_payload(
+        state=state,
+        node_statuses=build_initial_node_statuses(),
+    )
+
+    assert payload["export_status"]["export_error_count"] == 0
+    assert payload["export_status"]["export_warning_count"] == 1
+    assert payload["export_status"]["failed_formats"] == []
+    assert payload["export_status"]["non_blocking_failure"] is False
+
+
 def test_export_off_marks_export_node_skipped_in_payload_statuses() -> None:
     state = _base_state()
     state["export_requested"] = False

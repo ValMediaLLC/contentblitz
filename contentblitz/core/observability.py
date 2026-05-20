@@ -106,16 +106,6 @@ _TRACE_INPUT_EXPORT_INTENT_MAP = {
     "docx": "docx",
     "word": "docx",
 }
-_TRACE_INPUT_LINKEDIN_PATTERN = re.compile(r"\blinked[\s-]*in\b")
-_TRACE_INPUT_BLOG_PATTERN = re.compile(r"\bblog\b")
-_TRACE_INPUT_BLOG_POST_PATTERN = re.compile(r"\bblog\s+post\b")
-_TRACE_INPUT_ARTICLE_PATTERN = re.compile(
-    r"\b(article|seo article|long-form article|write an article)\b"
-)
-_TRACE_INPUT_IMAGE_PATTERN = re.compile(
-    r"\b(image|visual|graphic|concept art|image prompt|design prompt|illustration|"
-    r"futuristic design)\b"
-)
 _ENV_STYLE_METADATA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _FORBIDDEN_ENV_METADATA_KEYS = {
     "LANGSMITH_TRACING",
@@ -404,58 +394,15 @@ def _safe_content_preview(value: Any) -> str:
     return _safe_text(preview.get("preview"))
 
 
-def _safe_request_preview(state: Mapping[str, Any]) -> str:
-    candidate = _safe_text(state.get("sanitized_user_query"))
-    if not candidate:
-        candidate = _safe_text(state.get("user_query"))
-    if not candidate:
-        return ""
-    return _safe_content_preview(candidate)
-
-
-def _normalize_intent_text(value: Any) -> str:
-    return " ".join(_safe_text(value).lower().split())
-
-
-def _infer_intent_from_query_preview(query_preview: str) -> set[str]:
-    normalized = _normalize_intent_text(query_preview)
-    if not normalized:
-        return set()
-
-    inferred: set[str] = set()
-    linkedin_requested = bool(_TRACE_INPUT_LINKEDIN_PATTERN.search(normalized))
-    blog_requested = bool(
-        _TRACE_INPUT_BLOG_PATTERN.search(normalized)
-        or _TRACE_INPUT_BLOG_POST_PATTERN.search(normalized)
-        or (
-            _TRACE_INPUT_ARTICLE_PATTERN.search(normalized)
-            and not linkedin_requested
-        )
-    )
-    image_requested = bool(_TRACE_INPUT_IMAGE_PATTERN.search(normalized))
-
-    if blog_requested:
-        inferred.add("blog")
-    if linkedin_requested:
-        inferred.add("linkedin")
-    if image_requested:
-        inferred.add("image")
-
-    if re.search(r"\bpdf\b", normalized):
-        inferred.add("pdf")
-    if re.search(r"\bhtml\b", normalized):
-        inferred.add("html")
-    if re.search(r"\b(docx|word)\b", normalized):
-        inferred.add("docx")
-    if re.search(r"\b(markdown|md)\b", normalized):
-        inferred.add("md")
-
-    return inferred
-
-
 def _safe_workflow_trace_intent(metadata: Mapping[str, Any]) -> list[str]:
     requested_outputs = _safe_string_list(metadata.get("requested_outputs", []))
     export_formats = _safe_string_list(metadata.get("export_formats_requested", []))
+    if not export_formats:
+        export_metadata = metadata.get("export_metadata", {})
+        if isinstance(export_metadata, Mapping):
+            export_formats = _safe_string_list(
+                export_metadata.get("formats_requested", [])
+            )
     seen: set[str] = set()
 
     for output in requested_outputs:
@@ -468,11 +415,6 @@ def _safe_workflow_trace_intent(metadata: Mapping[str, Any]) -> list[str]:
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-
-    inferred = _infer_intent_from_query_preview(metadata.get("query_preview", ""))
-    for token in inferred:
-        if token in _TRACE_INPUT_INTENT_OPTIONS:
-            seen.add(token)
 
     ordered_intent = [token for token in _TRACE_INPUT_INTENT_OPTIONS if token in seen]
     return ordered_intent
@@ -728,6 +670,120 @@ def _safe_export_formats(state: Mapping[str, Any]) -> list[str]:
     return formats[:_MAX_EXPORT_FORMATS]
 
 
+def _safe_format_list(value: Any, *, max_items: int = _MAX_EXPORT_FORMATS) -> list[str]:
+    return _safe_string_list(value)[:max_items]
+
+
+def _failed_export_formats(state: Mapping[str, Any]) -> list[str]:
+    export_metadata = state.get("export_metadata", {})
+    if not isinstance(export_metadata, Mapping):
+        return []
+    explicit_failed = _safe_format_list(
+        export_metadata.get("failed_export_formats", [])
+    )
+    if explicit_failed:
+        return explicit_failed
+    export_status = export_metadata.get("export_status", {})
+    if not isinstance(export_status, Mapping):
+        return []
+    failed: list[str] = []
+    for fmt, status in export_status.items():
+        safe_fmt = _safe_text(fmt).lower()
+        safe_status = _safe_text(status).lower()
+        if not safe_fmt or safe_status != "failed":
+            continue
+        if safe_fmt not in failed:
+            failed.append(safe_fmt)
+    return failed[:_MAX_EXPORT_FORMATS]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = _safe_text(entry.get("code")).lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = _safe_text(entry.get("message")).lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_error_count_from_log(export_metadata: Mapping[str, Any]) -> int:
+    error_log = export_metadata.get("error_log", [])
+    if not isinstance(error_log, list):
+        return 0
+    return sum(
+        1
+        for entry in error_log
+        if isinstance(entry, Mapping) and not _is_warning_export_log_entry(entry)
+    )
+
+
+def _export_warning_count_from_log(export_metadata: Mapping[str, Any]) -> int:
+    error_log = export_metadata.get("error_log", [])
+    if not isinstance(error_log, list):
+        return 0
+    return sum(
+        1
+        for entry in error_log
+        if isinstance(entry, Mapping) and _is_warning_export_log_entry(entry)
+    )
+
+
+def _safe_export_outcome_summary(state: Mapping[str, Any]) -> dict[str, Any]:
+    export_metadata = state.get("export_metadata", {})
+    if not isinstance(export_metadata, Mapping):
+        return {
+            "requested_export_formats": [],
+            "completed_export_formats": [],
+            "failed_export_formats": [],
+            "export_warning_count": 0,
+            "export_error_count": 0,
+        }
+
+    requested_export_formats = _safe_format_list(
+        export_metadata.get("requested_export_formats")
+        or export_metadata.get("formats_requested", [])
+    )
+    completed_export_formats = _safe_format_list(
+        export_metadata.get("completed_export_formats", [])
+    )
+    if not completed_export_formats:
+        export_status = export_metadata.get("export_status", {})
+        if isinstance(export_status, Mapping):
+            completed_export_formats = [
+                safe_fmt
+                for fmt, status in export_status.items()
+                for safe_fmt in [_safe_text(fmt).lower()]
+                if safe_fmt and _safe_text(status).lower() == "completed"
+            ][: _MAX_EXPORT_FORMATS]
+    failed_export_formats = _failed_export_formats(state)
+
+    raw_error_count = _safe_non_negative_int(export_metadata.get("export_error_count"))
+    export_error_count = (
+        raw_error_count
+        if raw_error_count is not None
+        else (
+            len(failed_export_formats)
+            if failed_export_formats
+            else _export_error_count_from_log(export_metadata)
+        )
+    )
+    raw_warning_count = _safe_non_negative_int(
+        export_metadata.get("export_warning_count")
+    )
+    export_warning_count = (
+        raw_warning_count
+        if raw_warning_count is not None
+        else _export_warning_count_from_log(export_metadata)
+    )
+
+    return {
+        "requested_export_formats": requested_export_formats,
+        "completed_export_formats": completed_export_formats,
+        "failed_export_formats": failed_export_formats,
+        "export_warning_count": export_warning_count,
+        "export_error_count": export_error_count,
+    }
+
+
 def _safe_source_count(state: Mapping[str, Any]) -> int:
     sources = state.get("sources", [])
     if not isinstance(sources, list):
@@ -781,20 +837,8 @@ def _has_recoverable_image_failure(state: Mapping[str, Any]) -> bool:
 
 
 def _has_export_failure(state: Mapping[str, Any]) -> bool:
-    export_metadata = state.get("export_metadata", {})
-    if not isinstance(export_metadata, Mapping):
-        return False
-    error_log = export_metadata.get("error_log", [])
-    if isinstance(error_log, list) and any(
-        isinstance(item, Mapping) for item in error_log
-    ):
-        return True
-    export_status = export_metadata.get("export_status", {})
-    if isinstance(export_status, Mapping):
-        for value in export_status.values():
-            if _safe_text(value).lower() == "failed":
-                return True
-    return False
+    summary = _safe_export_outcome_summary(state)
+    return int(summary.get("export_error_count", 0)) > 0
 
 
 def _is_degraded_workflow(state: Mapping[str, Any]) -> bool:
@@ -869,13 +913,13 @@ def safe_trace_metadata(
     routing_decision = _safe_text(state.get("routing_decision"))
     workflow_status = _effective_trace_workflow_status(state)
     session_id = _safe_text(state.get("session_id"))
-    query_preview = _safe_request_preview(state)
     retry_metadata = _safe_retry_metadata(state)
     sources_summary = _safe_sources_summary(state)
     image_summary = _safe_image_output_summary(state)
     research_summary = _safe_research_summary(state)
     draft_summary = _safe_draft_summary(state)
     final_response_summary = _safe_final_response_summary(state)
+    export_outcome_summary = _safe_export_outcome_summary(state)
 
     metadata: dict[str, Any] = {
         "requested_outputs": requested_outputs,
@@ -886,6 +930,15 @@ def safe_trace_metadata(
         "degraded_workflow_status": _is_degraded_workflow(state),
         "recoverable_image_failure_status": _has_recoverable_image_failure(state),
         "export_failure_status": _has_export_failure(state),
+        "requested_export_formats": export_outcome_summary[
+            "requested_export_formats"
+        ],
+        "completed_export_formats": export_outcome_summary[
+            "completed_export_formats"
+        ],
+        "failed_export_formats": export_outcome_summary["failed_export_formats"],
+        "export_warning_count": export_outcome_summary["export_warning_count"],
+        "export_error_count": export_outcome_summary["export_error_count"],
         "source_count": _safe_source_count(state),
         "image_output_count": _safe_image_output_count(state),
         "retry_attempt": retry_metadata.get("retry_attempt", 0),
@@ -898,8 +951,6 @@ def safe_trace_metadata(
         metadata["session_id"] = session_id
     if workflow_status:
         metadata["workflow_status"] = workflow_status
-    if query_preview:
-        metadata["query_preview"] = query_preview
     if routing_decision:
         metadata["routing_decision"] = routing_decision
 
@@ -1268,6 +1319,7 @@ class _LangSmithTraceSpanHandle:
             if isinstance(stripped_metadata_any, Mapping)
             else {}
         )
+        safe_workflow_inputs = safe_workflow_trace_inputs(safe_metadata)
         metadata_workflow_status = _safe_text(safe_metadata.get("workflow_status"))
         if metadata_workflow_status:
             safe_outputs["workflow_status"] = metadata_workflow_status
@@ -1295,8 +1347,22 @@ class _LangSmithTraceSpanHandle:
                     )
                     extra_metadata.update(safe_metadata)
 
+        def _scrub_run_inputs() -> None:
+            if self._run is None or not safe_workflow_inputs:
+                return
+            existing_inputs = getattr(self._run, "inputs", None)
+            if isinstance(existing_inputs, dict):
+                existing_inputs.clear()
+                existing_inputs.update(safe_workflow_inputs)
+                return
+            try:
+                setattr(self._run, "inputs", dict(safe_workflow_inputs))
+            except Exception:
+                return
+
         try:
             _scrub_run_metadata()
+            _scrub_run_inputs()
         except Exception:
             # Tracing must never fail workflow execution.
             pass
@@ -1316,6 +1382,7 @@ class _LangSmithTraceSpanHandle:
         finally:
             try:
                 _scrub_run_metadata()
+                _scrub_run_inputs()
             except Exception:
                 pass
             try:

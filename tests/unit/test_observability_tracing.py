@@ -98,6 +98,7 @@ class _BrokenTracer:
 
 @dataclass
 class _FakeLangSmithRun:
+    inputs: Any = field(default_factory=dict)
     ended_outputs: Dict[str, Any] = field(default_factory=dict)
     ended_error: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -336,6 +337,28 @@ def test_langsmith_span_finish_uses_effective_partial_success() -> None:
 
     assert context.run.ended_outputs["workflow_status"] == "partial_success"
     assert context.run.ended_error == ""
+    assert context.exited is True
+
+
+def test_langsmith_span_finish_updates_root_inputs_with_safe_resolved_intent() -> None:
+    context = _FakeLangSmithTraceContext(
+        run=_FakeLangSmithRun(inputs={}),
+    )
+    handle = observability_module._LangSmithTraceSpanHandle(context)  # noqa: SLF001
+
+    handle.finish(
+        metadata={
+            "requested_outputs": ["blog", "linkedin", "image"],
+            "export_formats_requested": ["pdf"],
+            "user_query": "raw prompt text should never be used",
+            "sanitized_user_query": "sanitized prompt should never be used",
+            "query_preview": "query preview should never be used",
+            "workflow_status": "success",
+        },
+        outputs={"workflow_status": "success"},
+    )
+
+    assert context.run.inputs == {"intent": ["blog", "linkedin", "image", "pdf"]}
     assert context.exited is True
 
 

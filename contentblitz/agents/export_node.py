@@ -6,18 +6,18 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
+from contentblitz.tools.exports.docx import (
+    build_docx_document_bytes_from_text,
+    build_docx_export_document,
+)
 from contentblitz.tools.exports.filenames import (
     resolve_docx_export_path,
     resolve_export_dir,
     resolve_html_export_path,
     resolve_markdown_export_path,
     resolve_pdf_export_path,
-)
-from contentblitz.tools.exports.docx import (
-    build_docx_document_bytes_from_text,
-    build_docx_export_document,
 )
 from contentblitz.tools.exports.html import (
     build_html_export_document,
@@ -32,8 +32,8 @@ from contentblitz.tools.exports.pdf import (
     build_pdf_export_document,
 )
 from contentblitz.tools.exports.validation import (
-    validate_docx_export,
     normalize_validation_result,
+    validate_docx_export,
     validate_html_export,
     validate_markdown_export,
     validate_pdf_export,
@@ -56,6 +56,70 @@ def _now_utc_iso() -> str:
 
 def _safe_text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def _normalize_requested_formats(raw_formats: List[Any]) -> List[str]:
+    normalized: List[str] = []
+    for item in raw_formats:
+        token = _safe_text(item).lower()
+        if not token:
+            continue
+        if token in {"md", "markdown"}:
+            token = "markdown"
+        elif token == "word":
+            token = "docx"
+        if token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _is_warning_diagnostic(entry: Mapping[str, Any]) -> bool:
+    code = _safe_text(entry.get("code")).lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = _safe_text(entry.get("message")).lower()
+    return "warning" in message and "failed" not in message
+
+
+def _diagnostic_counts(error_log: List[Dict[str, Any]]) -> tuple[int, int]:
+    warning_count = 0
+    error_count = 0
+    for entry in error_log:
+        if not isinstance(entry, Mapping):
+            continue
+        if _is_warning_diagnostic(entry):
+            warning_count += 1
+        else:
+            error_count += 1
+    return warning_count, error_count
+
+
+def _resolve_workflow_status_from_exports(
+    *,
+    previous_status: str,
+    requested_count: int,
+    completed_count: int,
+    failed_count: int,
+) -> str:
+    normalized_previous = _safe_text(previous_status).lower()
+    if requested_count <= 0:
+        return normalized_previous
+    if failed_count == 0:
+        if normalized_previous in {
+            "partial_success",
+            "degraded",
+            "failed",
+            "awaiting_clarification",
+        }:
+            return normalized_previous
+        return normalized_previous or "success"
+    if failed_count >= requested_count:
+        if normalized_previous == "failed":
+            return "failed"
+        return "degraded"
+    if normalized_previous in {"failed", "degraded"}:
+        return normalized_previous
+    return "partial_success"
 
 
 def _filename_for_export(output_type: str, content: str, format_name: str) -> str:
@@ -209,19 +273,17 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     final_response = str(state.get("final_response", ""))
     assembled_outputs = deepcopy(_safe_dict(state.get("assembled_outputs", {})))
     export_metadata = deepcopy(_safe_dict(state.get("export_metadata", {})))
-    formats_requested = [
-        str(item).strip().lower()
-        for item in _safe_list(export_metadata.get("formats_requested", []))
-        if str(item).strip()
-    ]
+    formats_requested = _normalize_requested_formats(
+        _safe_list(export_metadata.get("formats_requested", []))
+    )
     export_requested = bool(state.get("export_requested", False))
     if not formats_requested and export_requested:
         formats_requested = ["markdown"]
 
-    export_paths = deepcopy(_safe_dict(export_metadata.get("export_paths", {})))
-    error_log = deepcopy(_safe_list(export_metadata.get("error_log", [])))
-    export_status = deepcopy(_safe_dict(export_metadata.get("export_status", {})))
-    export_messages = deepcopy(_safe_list(export_metadata.get("status_messages", [])))
+    export_paths: Dict[str, str] = {}
+    error_log: List[Dict[str, Any]] = []
+    export_status: Dict[str, str] = {}
+    export_messages: List[str] = []
     format_validation: Dict[str, Dict[str, Any]] = {}
 
     default_export_format = formats_requested[0] if formats_requested else "markdown"
@@ -379,7 +441,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 _safe_error_entry(
                     format_name=fmt,
                     code=f"{fmt}_validation_failed",
-                    message=f"{fmt.upper()} export failed validation and was not delivered.",
+                    message=(
+                        f"{fmt.upper()} export failed validation and was "
+                        "not delivered."
+                    ),
                 )
             )
             continue
@@ -402,7 +467,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         _safe_error_entry(
                             format_name="markdown",
                             code="markdown_export_path_invalid",
-                            message="Markdown export produced an unsafe or missing output path.",
+                            message=(
+                                "Markdown export produced an unsafe or missing "
+                                "output path."
+                            ),
                         )
                     )
             except Exception:
@@ -442,7 +510,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         _safe_error_entry(
                             format_name="pdf",
                             code="pdf_export_path_invalid",
-                            message="PDF export produced an unsafe or missing output path.",
+                            message=(
+                                "PDF export produced an unsafe or missing "
+                                "output path."
+                            ),
                         )
                     )
             except Exception:
@@ -476,7 +547,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         _safe_error_entry(
                             format_name="html",
                             code="html_export_path_invalid",
-                            message="HTML export produced an unsafe or missing output path.",
+                            message=(
+                                "HTML export produced an unsafe or missing "
+                                "output path."
+                            ),
                         )
                     )
             except Exception:
@@ -516,7 +590,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         _safe_error_entry(
                             format_name="docx",
                             code="docx_export_path_invalid",
-                            message="DOCX export produced an unsafe or missing output path.",
+                            message=(
+                                "DOCX export produced an unsafe or missing "
+                                "output path."
+                            ),
                         )
                     )
             except Exception:
@@ -551,7 +628,10 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     _safe_error_entry(
                         format_name=fmt,
                         code=f"{fmt}_export_path_invalid",
-                        message=f"{fmt.upper()} export produced an unsafe or missing output path.",
+                        message=(
+                            f"{fmt.upper()} export produced an unsafe or "
+                            "missing output path."
+                        ),
                     )
                 )
         except Exception as exc:
@@ -574,9 +654,25 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
     export_metadata["export_paths"] = export_paths
     export_metadata["error_log"] = error_log
     export_metadata["export_status"] = export_status
-    export_metadata["export_error_count"] = sum(
-        1 for status in export_status.values() if _safe_text(status).lower() == "failed"
-    )
+    requested_export_formats = list(formats_requested)
+    completed_export_formats = [
+        fmt
+        for fmt in requested_export_formats
+        if _safe_text(export_status.get(fmt)).lower() == "completed"
+    ]
+    failed_export_formats = [
+        fmt
+        for fmt in requested_export_formats
+        if _safe_text(export_status.get(fmt)).lower() == "failed"
+    ]
+    warning_diagnostic_count, _ = _diagnostic_counts(error_log)
+    export_error_count = len(failed_export_formats)
+
+    export_metadata["requested_export_formats"] = requested_export_formats
+    export_metadata["completed_export_formats"] = completed_export_formats
+    export_metadata["failed_export_formats"] = failed_export_formats
+    export_metadata["export_warning_count"] = warning_diagnostic_count
+    export_metadata["export_error_count"] = export_error_count
     export_metadata["status_messages"] = list(
         dict.fromkeys(
             [
@@ -590,8 +686,15 @@ def export_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
     )
     export_metadata["exported_at"] = _now_utc_iso()
+    workflow_status = _resolve_workflow_status_from_exports(
+        previous_status=_safe_text(state.get("workflow_status", "")),
+        requested_count=len(requested_export_formats),
+        completed_count=len(completed_export_formats),
+        failed_count=export_error_count,
+    )
 
     return {
         "export_metadata": export_metadata,
         "export_outputs": export_outputs,
+        "workflow_status": workflow_status,
     }

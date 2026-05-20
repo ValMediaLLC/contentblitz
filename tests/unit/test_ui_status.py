@@ -145,10 +145,37 @@ def test_export_failure_is_non_blocking_when_final_response_exists() -> None:
         "export_metadata": {
             "formats_requested": ["pdf"],
             "error_log": [{"message": "pdf export failed"}],
+            "failed_export_formats": ["pdf"],
+            "export_error_count": 1,
         },
     }
     messages = build_status_messages(state=state, node_statuses=statuses)
     assert any("exports failed" in message.lower() for message in messages)
+
+
+def test_export_warning_without_failed_formats_does_not_emit_failure_message() -> None:
+    statuses = build_initial_node_statuses()
+    statuses["export_node"] = "completed"
+    state = {
+        "workflow_status": "success",
+        "final_response": "Final text exists.",
+        "export_requested": True,
+        "export_metadata": {
+            "formats_requested": ["pdf"],
+            "export_status": {"pdf": "completed"},
+            "error_log": [
+                {"code": "pdf_validation_warning", "message": "safe warning"}
+            ],
+            "failed_export_formats": [],
+            "export_error_count": 0,
+            "export_warning_count": 1,
+        },
+    }
+
+    messages = build_status_messages(state=state, node_statuses=statuses)
+
+    assert not any("exports failed" in message.lower() for message in messages)
+    assert any("non-blocking warnings" in message.lower() for message in messages)
 
 
 def test_export_off_marks_export_node_skipped() -> None:

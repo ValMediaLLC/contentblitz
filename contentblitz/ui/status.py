@@ -30,6 +30,72 @@ def _safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _normalize_format_list(value: Any) -> list[str]:
+    normalized: list[str] = []
+    for item in _safe_list(value):
+        token = str(item).strip().lower()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _failed_export_formats(export_metadata: Mapping[str, Any]) -> list[str]:
+    explicit_failed = _normalize_format_list(
+        export_metadata.get("failed_export_formats")
+    )
+    if explicit_failed:
+        return explicit_failed
+    status = _safe_dict(export_metadata.get("export_status", {}))
+    return [
+        str(fmt).strip().lower()
+        for fmt, value in status.items()
+        if str(fmt).strip() and str(value).strip().lower() == "failed"
+    ]
+
+
+def _is_warning_export_log_entry(entry: Mapping[str, Any]) -> bool:
+    code = str(entry.get("code", "")).strip().lower()
+    if code.endswith("_warning") or code == "warning":
+        return True
+    message = str(entry.get("message", "")).strip().lower()
+    return "warning" in message and "failed" not in message
+
+
+def _export_failure_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_error_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    failed_formats = _failed_export_formats(export_metadata)
+    if failed_formats:
+        return len(failed_formats)
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
+    )
+
+
+def _export_warning_count(export_metadata: Mapping[str, Any]) -> int:
+    explicit = _safe_int(export_metadata.get("export_warning_count"), default=-1)
+    if explicit >= 0:
+        return explicit
+    return sum(
+        1
+        for item in _safe_list(export_metadata.get("error_log", []))
+        if isinstance(item, Mapping) and _is_warning_export_log_entry(item)
+    )
+
+
 def normalize_observability_status(status: Any) -> str:
     """Normalize observability status to a safe bounded set."""
     normalized = str(status).strip().lower()
@@ -258,12 +324,15 @@ def build_status_messages(
         )
 
     export_metadata = _safe_dict(state.get("export_metadata", {}))
-    export_errors = _safe_list(export_metadata.get("error_log", []))
+    export_failures = _export_failure_count(export_metadata)
+    export_warnings = _export_warning_count(export_metadata)
     final_response = str(state.get("final_response", "")).strip()
-    if export_errors and final_response:
+    if export_failures > 0 and final_response:
         messages.append(
             "One or more exports failed, but the final response is still available."
         )
+    elif export_warnings > 0:
+        messages.append("Export completed with non-blocking warnings.")
 
     cost_controls = _safe_dict(state.get("cost_controls", {}))
     if bool(cost_controls.get("budget_exceeded", False)):

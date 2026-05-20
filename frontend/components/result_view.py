@@ -1385,11 +1385,27 @@ def render_export_status(render_payload: Mapping[str, Any]) -> None:
             _render_export_download(_safe_text(fmt_name), raw_path)
 
     export_errors = export_status.get("errors", [])
+    export_error_count = (
+        int(export_status.get("export_error_count", 0))
+        if isinstance(export_status.get("export_error_count"), (int, float))
+        and not isinstance(export_status.get("export_error_count"), bool)
+        else 0
+    )
+    export_warning_count = (
+        int(export_status.get("export_warning_count", 0))
+        if isinstance(export_status.get("export_warning_count"), (int, float))
+        and not isinstance(export_status.get("export_warning_count"), bool)
+        else 0
+    )
     if isinstance(export_errors, list) and export_errors:
-        if bool(export_status.get("non_blocking_failure", False)):
+        if export_error_count > 0 and bool(
+            export_status.get("non_blocking_failure", False)
+        ):
             st.warning("Export completed with non-blocking warnings.")
-        else:
+        elif export_error_count > 0:
             st.error("Export failed.")
+        elif export_warning_count > 0:
+            st.info("Export completed with non-blocking warnings.")
         for item in export_errors:
             if not isinstance(item, Mapping):
                 continue
