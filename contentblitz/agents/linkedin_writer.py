@@ -468,6 +468,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             model=model,
         )
     )
+    provider_used = str(first_response.get("provider", "")).strip().lower()
     provider_latency_total_ms += max(0, int((perf_counter() - first_started_at) * 1000))
     provider_call_count += 1
     cost_controls = apply_text_tokens(cost_controls, first_response)
@@ -518,6 +519,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         elif len(retry_body) >= len(body):
             body = retry_body
             model = retry_model
+            provider_used = str(retry_response.get("provider", "")).strip().lower()
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
     if not body:
@@ -563,6 +565,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "provider_failure_reason": (
             provider_failure_reason if fallback_generated else ""
         ),
+        "provider_used": provider_used,
         "real_generation_succeeded": not fallback_generated,
         "generation_tokens": _response_total_tokens(first_response),
     }

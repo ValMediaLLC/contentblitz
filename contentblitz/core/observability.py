@@ -89,6 +89,8 @@ _TOOL_TRACE_INT_FIELDS = (
     "input_token_count",
     "output_token_count",
     "total_token_count",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
     "result_count",
     "citation_available_count",
     "source_count",
@@ -1152,6 +1154,17 @@ def _node_provider_from_sources(sources: Any) -> str:
     return ""
 
 
+def _provider_from_model_name(model_name: str) -> str:
+    model = _safe_text(model_name).lower()
+    if not model:
+        return ""
+    if model.startswith("claude"):
+        return "anthropic"
+    if model.startswith("gpt-") or model.startswith("o"):
+        return "openai"
+    return ""
+
+
 def _explicit_provider_latency_ms(
     *,
     node_name: str,
@@ -1312,29 +1325,31 @@ def _node_performance_context(
     elif node_name == "blog_writer_node":
         content_drafts = _safe_mapping_value(state.get("content_drafts", {}))
         blog = _safe_mapping_value(content_drafts.get("blog"))
+        provider = _safe_text(blog.get("provider_used")).lower()
         model = _safe_text(blog.get("model_used"))
-        if model:
-            provider = "openai"
+        if not provider:
+            provider = _provider_from_model_name(model)
     elif node_name == "linkedin_writer_node":
         linkedin = _safe_mapping_value(
             _safe_mapping_value(state.get("content_drafts", {})).get("linkedin")
         )
+        provider = _safe_text(linkedin.get("provider_used")).lower()
         model = _safe_text(linkedin.get("model_used"))
-        if model:
-            provider = "openai"
+        if not provider:
+            provider = _provider_from_model_name(model)
     elif node_name == "image_agent_node":
         image_tool_output = _safe_mapping_value(
             _safe_mapping_value(state.get("tool_outputs", {})).get("image_agent")
         )
         provider = _safe_text(image_tool_output.get("provider")).lower()
-        model = _safe_text(image_tool_output.get("provider"))
+        model = _safe_text(image_tool_output.get("model"))
         if not provider:
             image_outputs = state.get("image_outputs", [])
             if isinstance(image_outputs, list) and image_outputs:
                 first = image_outputs[0]
                 if isinstance(first, Mapping):
                     provider = _safe_text(first.get("provider")).lower()
-                    model = _safe_text(first.get("provider"))
+                    model = _safe_text(first.get("model"))
     elif node_name == "query_handler_node":
         query_handler_output = _safe_mapping_value(
             _safe_mapping_value(state.get("tool_outputs", {})).get("query_handler")

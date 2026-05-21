@@ -20,10 +20,31 @@ def _text_response(*, content: str, model: str = "gpt-4o-mini"):
     )
 
 
+def _anthropic_text_response(
+    *,
+    content: str,
+    model: str = "claude-3-5-sonnet-latest",
+):
+    return SimpleNamespace(
+        model=model,
+        content=[SimpleNamespace(type="text", text=content)],
+        usage=SimpleNamespace(
+            input_tokens=6,
+            output_tokens=9,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        ),
+    )
+
+
 def _make_text_client(create_fn):
     return SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create_fn))
     )
+
+
+def _make_anthropic_client(create_fn):
+    return SimpleNamespace(messages=SimpleNamespace(create=create_fn))
 
 
 def _make_image_client(generate_fn):
@@ -67,6 +88,41 @@ def test_generate_text_success_contract(monkeypatch):
     assert result.input_tokens == 5
     assert result.output_tokens == 7
     assert result.total_tokens == 12
+    assert len(calls) == 1
+
+
+def test_generate_text_anthropic_success_contract(monkeypatch):
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-test")
+
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _anthropic_text_response(
+            content="Anthropic contract text",
+            model=kwargs["model"],
+        )
+
+    monkeypatch.setattr(
+        generate_text_module,
+        "_build_anthropic_client",
+        lambda api_key: _make_anthropic_client(create),
+    )
+
+    result = generate_text_module.generate_text(
+        prompt="Write with Anthropic.",
+        agent_key="query_handler",
+    )
+
+    assert is_dataclass(result)
+    assert result.provider == "anthropic"
+    assert result.text == "Anthropic contract text"
+    assert result.degraded is False
+    assert result.error is None
+    assert result.input_tokens == 6
+    assert result.output_tokens == 9
+    assert result.total_tokens == 15
     assert len(calls) == 1
 
 
@@ -316,6 +372,7 @@ def test_generate_image_both_models_fail(monkeypatch):
 
 def test_missing_api_keys_fail_safely_only_on_invocation(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SERP_API_KEY", raising=False)
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
 
@@ -327,11 +384,18 @@ def test_missing_api_keys_fail_safely_only_on_invocation(monkeypatch):
         prompt="missing key",
         agent_key="query_handler",
     )
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_PROVIDER", "anthropic")
+    anthropic_text_result = generate_text_module.generate_text(
+        prompt="missing anthropic key",
+        agent_key="query_handler",
+    )
     web_result = search_web_module.search_web("missing serp key", provider="serp")
     image_result = generate_image_module.generate_image(prompt="missing key image")
 
     assert text_result.degraded is True
     assert text_result.error["code"] == "configuration_error"
+    assert anthropic_text_result.degraded is True
+    assert anthropic_text_result.error["code"] == "configuration_error"
     assert web_result.degraded is True
     assert web_result.error["code"] == "configuration_error"
     assert image_result.degraded is True

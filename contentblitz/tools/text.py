@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from contentblitz.config import RETRY_POLICY
-from contentblitz.core.model_policy import resolve_text_model
+from contentblitz.core.model_policy import resolve_text_provider_model
 from contentblitz.tools.generate_text import generate_text as _core_generate_text
 
 _RETRY_POLICY_AGENT_ALIASES = {
@@ -35,10 +35,14 @@ def generate_text(
     Internally this delegates to the typed OpenAI-backed tool in
     `contentblitz.tools.generate_text`.
     """
+    selection = resolve_text_provider_model(
+        agent_key,
+        near_budget=False,
+    )
     requested_model = str(model).strip() if model is not None else ""
     if not requested_model:
-        requested_model = resolve_text_model("default", near_budget=False)
-    fallback_model = resolve_text_model("default", near_budget=True)
+        requested_model = selection.model
+    fallback_model = selection.fallback_model or requested_model
 
     retry_policy_agent = _retry_policy_agent_key(agent_key)
     attempt_limit = (
@@ -56,7 +60,9 @@ def generate_text(
     return {
         "prompt": prompt,
         "agent_key": agent_key,
+        "provider_requested": selection.provider,
         "model_requested": requested_model,
+        "fallback_provider": selection.fallback_provider,
         "fallback_model": fallback_model,
         "attempt_limit": attempt_limit,
         "metadata": metadata or {},
@@ -70,5 +76,7 @@ def generate_text(
             "prompt_tokens": result.input_tokens,
             "completion_tokens": result.output_tokens,
             "total_tokens": result.total_tokens,
+            "cache_creation_input_tokens": result.cache_creation_input_tokens,
+            "cache_read_input_tokens": result.cache_read_input_tokens,
         },
     }

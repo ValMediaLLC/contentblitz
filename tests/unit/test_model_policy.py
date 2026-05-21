@@ -10,6 +10,7 @@ from contentblitz.core.model_policy import (
     KNOWN_TEXT_MODEL_AGENT_KEYS,
     build_text_model_policy,
     resolve_text_model,
+    resolve_text_provider_model,
 )
 from contentblitz.state import create_initial_state
 
@@ -38,6 +39,53 @@ def test_unknown_agent_key_uses_safe_fallback() -> None:
 
     assert resolved_default == policy["unknown"].default_model
     assert resolved_fallback == policy["unknown"].fallback_model
+
+
+def test_provider_selection_defaults_to_openai() -> None:
+    selection = resolve_text_provider_model(
+        "blog_writer",
+        near_budget=False,
+    )
+    assert selection.provider == "openai"
+    assert selection.model
+
+
+def test_global_provider_can_switch_to_anthropic(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_PROVIDER", "anthropic")
+
+    default_selection = resolve_text_provider_model(
+        "content_strategist",
+        near_budget=False,
+    )
+    near_budget_selection = resolve_text_provider_model(
+        "content_strategist",
+        near_budget=True,
+    )
+
+    assert default_selection.provider == "anthropic"
+    assert default_selection.model.startswith("claude")
+    assert default_selection.fallback_provider == "anthropic"
+    assert near_budget_selection.provider == "anthropic"
+
+
+def test_agent_model_policy_json_overrides_provider_and_models(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "CONTENTBLITZ_AGENT_MODEL_POLICY",
+        (
+            '{"blog_writer":{"provider":"anthropic","model":"claude-3-5-sonnet-latest",'
+            '"fallback_provider":"openai","fallback_model":"gpt-4.1-mini"}}'
+        ),
+    )
+
+    default_selection = resolve_text_provider_model("blog_writer", near_budget=False)
+    near_budget_selection = resolve_text_provider_model("blog_writer", near_budget=True)
+
+    assert default_selection.provider == "anthropic"
+    assert default_selection.model == "claude-3-5-sonnet-latest"
+    assert default_selection.fallback_provider == "openai"
+    assert default_selection.fallback_model == "gpt-4.1-mini"
+    assert near_budget_selection.provider == "openai"
+    assert near_budget_selection.model == "gpt-4.1-mini"
 
 
 def test_near_budget_selects_cheaper_research_model() -> None:
@@ -138,6 +186,41 @@ def test_global_env_default_overrides_agent_defaults(monkeypatch) -> None:
         near_budget_controls,
         agent_key="query_handler",
     ) == "gpt-5.4-mini"
+
+
+def test_new_default_model_env_alias_is_supported(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_DEFAULT_TEXT_MODEL", "gpt-4.1")
+
+    selection = resolve_text_provider_model(
+        "query_handler",
+        near_budget=False,
+    )
+    assert selection.model == "gpt-4.1"
+
+
+def test_global_provider_and_models_override_agent_policy_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_PROVIDER", "anthropic")
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_MODEL_DEFAULT", "claude-sonnet-4-6")
+    monkeypatch.setenv(
+        "CONTENTBLITZ_TEXT_MODEL_FALLBACK",
+        "claude-haiku-4-5-20251001",
+    )
+
+    default_selection = resolve_text_provider_model(
+        "blog_writer",
+        near_budget=False,
+    )
+    near_budget_selection = resolve_text_provider_model(
+        "blog_writer",
+        near_budget=True,
+    )
+
+    assert default_selection.provider == "anthropic"
+    assert default_selection.model == "claude-sonnet-4-6"
+    assert default_selection.fallback_provider == "anthropic"
+    assert default_selection.fallback_model == "claude-haiku-4-5-20251001"
+    assert near_budget_selection.provider == "anthropic"
+    assert near_budget_selection.model == "claude-haiku-4-5-20251001"
 
 
 def test_clarification_can_override_independently_from_query_handler(

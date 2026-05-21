@@ -279,6 +279,7 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     provider_call_count = 1
     raw_output = str(llm_response.get("output", "")).strip()
     degraded_response = bool(llm_response.get("degraded", False))
+    provider_used = str(llm_response.get("provider", "")).strip().lower()
     provider_error = _safe_dict(llm_response.get("error", {}))
     provider_failure_reason = str(provider_error.get("code", "")).strip().lower()
     fallback_generated = degraded_response or not raw_output
@@ -320,6 +321,7 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "provider_failure_reason": (
             provider_failure_reason if fallback_generated else ""
         ),
+        "provider_used": provider_used,
         "real_generation_succeeded": not fallback_generated,
         "generation_tokens": _response_total_tokens(llm_response),
     }

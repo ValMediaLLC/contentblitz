@@ -170,6 +170,8 @@ def test_tools_do_not_mutate_cost_counters(monkeypatch) -> None:
             input_tokens=2,
             output_tokens=3,
             total_tokens=5,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
             degraded=False,
             error=None,
         ),
@@ -220,3 +222,33 @@ def test_tools_do_not_mutate_cost_counters(monkeypatch) -> None:
     assert "cost_controls" not in search_result
     assert "cost_controls" not in image_result
     assert counters == original
+
+
+def test_anthropic_usage_maps_to_apply_text_tokens(monkeypatch) -> None:
+    monkeypatch.setattr(
+        text_tool,
+        "_core_generate_text",
+        lambda **kwargs: GenerateTextResult(
+            text="anthropic output",
+            model="claude-3-5-sonnet-latest",
+            provider="anthropic",
+            input_tokens=8,
+            output_tokens=10,
+            total_tokens=18,
+            cache_creation_input_tokens=2,
+            cache_read_input_tokens=3,
+            degraded=False,
+            error=None,
+        ),
+    )
+
+    result = text_tool.generate_text(prompt="hello", agent_key="query_handler")
+    updated = apply_text_tokens(
+        normalize_cost_controls({"tokens_used_this_session": 4}),
+        result,
+    )
+
+    assert result["usage"]["total_tokens"] == 18
+    assert result["usage"]["cache_creation_input_tokens"] == 2
+    assert result["usage"]["cache_read_input_tokens"] == 3
+    assert updated["tokens_used_this_session"] == 22
