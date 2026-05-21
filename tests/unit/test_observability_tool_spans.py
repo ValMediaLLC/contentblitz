@@ -115,9 +115,14 @@ def _reset_tracing_factory() -> None:
     observability_module.reset_tracer_factory()
 
 
-def _install_text_client(monkeypatch: pytest.MonkeyPatch, content: str) -> None:
+def _install_text_client(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    *,
+    model: str = "gpt-4o-mini",
+) -> None:
     response = SimpleNamespace(
-        model="gpt-4o",
+        model=model,
         choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8, total_tokens=20),
     )
@@ -180,7 +185,7 @@ def test_generate_text_creates_child_span_when_tracing_enabled(
     )
     finish_metadata = tool_finish["metadata"]
     assert finish_metadata["provider"] == "openai"
-    assert finish_metadata["model"] == "gpt-4o"
+    assert finish_metadata["model"] == "gpt-4o-mini"
     assert finish_metadata["total_token_count"] == 20
     assert finish_metadata["retry_attempt"] >= 1
     assert finish_metadata["fallback_used"] is False

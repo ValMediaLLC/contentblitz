@@ -138,7 +138,7 @@ def test_primary_failure_falls_back_to_gpt_4o_mini(monkeypatch) -> None:
 def test_all_provider_failures_return_degraded_result(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     attempts = RETRY_POLICY["blog_writer"] + 1
-    total_calls = attempts * 2
+    total_calls = attempts
     completions = _install_fake_client(
         monkeypatch,
         [RuntimeError(f"provider-failure-{idx}") for idx in range(total_calls)],
@@ -154,14 +154,14 @@ def test_all_provider_failures_return_degraded_result(monkeypatch) -> None:
     assert result.error is not None
     assert result.error["code"] == "unknown_provider_error"
     assert result.error["attempts_per_model"] == attempts
-    assert result.error["models_attempted"] == ["gpt-4o", "gpt-4o-mini"]
+    assert result.error["models_attempted"] == ["gpt-4o-mini"]
     assert len(completions.calls) == total_calls
 
 
 def test_retries_follow_retry_policy(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     attempts = RETRY_POLICY["query_handler"] + 1
-    total_calls = attempts * 2
+    total_calls = attempts
     completions = _install_fake_client(
         monkeypatch,
         [RuntimeError(f"fail-{idx}") for idx in range(total_calls)],
@@ -174,7 +174,6 @@ def test_retries_follow_retry_policy(monkeypatch) -> None:
 
     assert result.degraded is True
     called_models = [call["model"] for call in completions.calls]
-    assert called_models.count("gpt-4o") == attempts
     assert called_models.count("gpt-4o-mini") == attempts
     assert len(called_models) == total_calls
 
