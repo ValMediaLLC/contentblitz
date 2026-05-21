@@ -10,7 +10,7 @@ from typing import Any, List, Mapping
 from frontend.components import result_view as result_view_module
 
 _PROVIDER_WARNING = (
-    "OpenAI provider unavailable or quota-limited. "
+    "Text provider unavailable or quota-limited. "
     "ContentBlitz generated limited fallback outputs."
 )
 _TEXT_FALLBACK_WARNING = (
@@ -1535,7 +1535,7 @@ def test_provider_degradation_banner_and_status_cards_render(monkeypatch) -> Non
     )
 
     assert any(
-        "OpenAI provider unavailable or quota-limited. "
+        "Text provider unavailable or quota-limited. "
         "ContentBlitz generated limited fallback outputs."
         in call
         for call in dummy_st.warning_calls

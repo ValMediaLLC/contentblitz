@@ -228,3 +228,27 @@ def test_missing_anthropic_key_falls_back_to_openai_when_configured(
     assert result.provider == "openai"
     assert result.text == "OpenAI fallback"
     assert openai_calls
+
+
+def test_missing_anthropic_key_returns_safe_configuration_diagnostics(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "1")
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = generate_text_module.generate_text(
+        prompt="Anthropic key missing diagnostic test.",
+        agent_key="blog_writer",
+    )
+
+    assert result.degraded is True
+    assert result.provider == "anthropic"
+    assert result.error is not None
+    assert result.error["code"] == "configuration_error"
+    assert result.error["provider"] == "anthropic"
+    assert result.error["requested_provider"] == "anthropic"
+    assert result.error["fallback_provider"] == "anthropic"
+    assert "traceback" not in str(result.error).lower()
+    assert "api_key=" not in str(result.error).lower()

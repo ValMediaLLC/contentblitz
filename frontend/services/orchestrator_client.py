@@ -97,6 +97,17 @@ def _safe_text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
+def _infer_provider_from_model(model: str) -> str:
+    normalized = _safe_text(model).lower()
+    if not normalized:
+        return ""
+    if normalized.startswith("claude"):
+        return "anthropic"
+    if normalized.startswith("gpt-") or normalized.startswith("o"):
+        return "openai"
+    return ""
+
+
 def _normalize_format_list(value: Any) -> List[str]:
     normalized: List[str] = []
     for item in _safe_list(value):
@@ -153,26 +164,32 @@ def _node_provider_and_model(
 
     if node_name == "blog_writer_node":
         blog = _safe_dict(_safe_dict(updates.get("content_drafts", {})).get("blog", {}))
+        provider = _safe_text(blog.get("provider_used")).lower() or _safe_text(
+            blog.get("provider")
+        ).lower()
         model = _safe_text(blog.get("model_used"))
-        if model:
-            provider = "openai"
+        if not provider:
+            provider = _infer_provider_from_model(model)
     elif node_name == "linkedin_writer_node":
         linkedin = _safe_dict(
             _safe_dict(updates.get("content_drafts", {})).get("linkedin", {})
         )
+        provider = _safe_text(linkedin.get("provider_used")).lower() or _safe_text(
+            linkedin.get("provider")
+        ).lower()
         model = _safe_text(linkedin.get("model_used"))
-        if model:
-            provider = "openai"
+        if not provider:
+            provider = _infer_provider_from_model(model)
     elif node_name == "image_agent_node":
         tool_outputs = _safe_dict(updates.get("tool_outputs", {}))
         image_tool = _safe_dict(tool_outputs.get("image_agent", {}))
         provider = _safe_text(image_tool.get("provider")).lower()
-        model = _safe_text(image_tool.get("provider"))
+        model = _safe_text(image_tool.get("model"))
         if not provider:
             image_outputs = _safe_list(updates.get("image_outputs", []))
             if image_outputs and isinstance(image_outputs[0], Mapping):
                 provider = _safe_text(image_outputs[0].get("provider")).lower()
-                model = _safe_text(image_outputs[0].get("provider"))
+                model = _safe_text(image_outputs[0].get("model"))
     elif node_name == "research_agent_node":
         sources = _safe_list(updates.get("sources", []))
         for item in sources:

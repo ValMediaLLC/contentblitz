@@ -116,6 +116,32 @@ def _safe_non_negative_int(value: Any) -> int | None:
     return None
 
 
+def _provider_from_model_name(model_name: str) -> str:
+    normalized = str(model_name).strip().lower()
+    if not normalized:
+        return ""
+    if normalized.startswith("claude"):
+        return "anthropic"
+    if normalized.startswith("gpt-") or normalized.startswith("o"):
+        return "openai"
+    return ""
+
+
+def _provider_from_llm_response(
+    response: Mapping[str, Any],
+    *,
+    fallback_model: str = "",
+) -> str:
+    provider = str(response.get("provider", "")).strip().lower()
+    if provider:
+        return provider
+    model = str(response.get("model", "")).strip() or str(fallback_model).strip()
+    inferred = _provider_from_model_name(model)
+    if inferred:
+        return inferred
+    return "openai"
+
+
 def _increment_int_map(
     target: Dict[str, int],
     *,
@@ -945,12 +971,16 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     query_generation_prompt = (
         "Generate 3-5 search queries as JSON list for this topic:\n" f"{query}"
     )
+    query_generation_model = preferred_text_model(
+        cost_controls,
+        agent_key="research_agent",
+    )
     query_generation_started_at = perf_counter()
     query_generation = _safe_dict(
         generate_text(
             prompt=query_generation_prompt,
             agent_key="research_agent",
-            model=preferred_text_model(cost_controls, agent_key="research_agent"),
+            model=query_generation_model,
         )
     )
     query_generation_provider_latency_ms = max(
@@ -960,12 +990,20 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     provider_latency_total_ms += query_generation_provider_latency_ms
     provider_call_count += 1
     provider_latency_wall_ms += query_generation_provider_latency_ms
+    query_generation_provider = _provider_from_llm_response(
+        query_generation,
+        fallback_model=query_generation_model,
+    )
     _increment_int_map(
         provider_latency_by_provider_ms,
-        key="openai",
+        key=query_generation_provider,
         delta=query_generation_provider_latency_ms,
     )
-    _increment_int_map(provider_call_count_by_provider, key="openai", delta=1)
+    _increment_int_map(
+        provider_call_count_by_provider,
+        key=query_generation_provider,
+        delta=1,
+    )
     cost_controls = apply_text_tokens(cost_controls, query_generation)
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
@@ -1137,14 +1175,21 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     provider_call_count += summary_provider_call_count
     provider_latency_wall_ms += summary_provider_latency_ms
     if summary_provider_call_count > 0:
+        summary_provider = _provider_from_llm_response(
+            summary_response,
+            fallback_model=preferred_text_model(
+                cost_controls,
+                agent_key="research_agent",
+            ),
+        )
         _increment_int_map(
             provider_latency_by_provider_ms,
-            key="openai",
+            key=summary_provider,
             delta=summary_provider_latency_ms,
         )
         _increment_int_map(
             provider_call_count_by_provider,
-            key="openai",
+            key=summary_provider,
             delta=summary_provider_call_count,
         )
     cost_controls = apply_text_tokens(cost_controls, summary_response)

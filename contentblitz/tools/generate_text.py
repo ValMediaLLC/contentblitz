@@ -125,6 +125,11 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return default
 
 
+def _safe_error_class(exc: Exception) -> str:
+    class_name = exc.__class__.__name__.strip().lower()
+    return class_name or "unknown_error"
+
+
 def _extract_text_from_content_items(items: Iterable[Any]) -> str:
     fragments: list[str] = []
     for item in items:
@@ -217,6 +222,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
             "message": "Text generation provider authentication failed.",
             "provider": _OPENAI_PROVIDER,
             "status_code": status_value,
+            "error_class": _safe_error_class(exc),
             "recoverable": False,
         }
     if isinstance(exc, RateLimitError):
@@ -234,6 +240,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
             ),
             "provider": _OPENAI_PROVIDER,
             "status_code": status_value,
+            "error_class": _safe_error_class(exc),
             "recoverable": True,
         }
     if isinstance(exc, APIConnectionError):
@@ -242,6 +249,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
             "message": "Text generation provider is temporarily unavailable.",
             "provider": _OPENAI_PROVIDER,
             "status_code": status_value,
+            "error_class": _safe_error_class(exc),
             "recoverable": True,
         }
     if isinstance(exc, BadRequestError):
@@ -250,6 +258,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
             "message": "Text generation provider request failed safely.",
             "provider": _OPENAI_PROVIDER,
             "status_code": status_value,
+            "error_class": _safe_error_class(exc),
             "recoverable": True,
         }
     if isinstance(exc, APIError):
@@ -267,6 +276,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
             ),
             "provider": _OPENAI_PROVIDER,
             "status_code": status_value,
+            "error_class": _safe_error_class(exc),
             "recoverable": True,
         }
 
@@ -275,6 +285,7 @@ def _normalize_openai_provider_error(exc: Exception) -> Dict[str, Any]:
         "message": "Text generation provider request failed safely.",
         "provider": _OPENAI_PROVIDER,
         "status_code": status_value,
+        "error_class": _safe_error_class(exc),
         "recoverable": True,
     }
 
@@ -285,7 +296,14 @@ def _normalize_anthropic_provider_error(exc: Exception) -> Dict[str, Any]:
     status_value = status_code if isinstance(status_code, int) else None
     class_name = exc.__class__.__name__.lower()
 
-    if "authentication" in class_name or status_value in {401, 403}:
+    if (
+        "anthropic_sdk_unavailable" in message_text
+        or "modulenotfounderror" in class_name
+    ):
+        code = "configuration_error"
+        message = "Anthropic provider is not available in this environment."
+        recoverable = False
+    elif "authentication" in class_name or status_value in {401, 403}:
         code = "authentication_failed"
         message = "Text generation provider authentication failed."
         recoverable = False
@@ -304,6 +322,10 @@ def _normalize_anthropic_provider_error(exc: Exception) -> Dict[str, Any]:
         code = "provider_unavailable"
         message = "Text generation provider is temporarily unavailable."
         recoverable = True
+    elif status_value == 400:
+        code = "configuration_error"
+        message = "Text generation provider request failed safely."
+        recoverable = False
     else:
         code = "unknown_provider_error"
         message = "Text generation provider request failed safely."
@@ -314,6 +336,7 @@ def _normalize_anthropic_provider_error(exc: Exception) -> Dict[str, Any]:
         "message": message,
         "provider": _ANTHROPIC_PROVIDER,
         "status_code": status_value,
+        "error_class": _safe_error_class(exc),
         "recoverable": recoverable,
     }
 
@@ -374,6 +397,48 @@ def _degraded_result(
         degraded=True,
         error=error,
     )
+
+
+def _with_safe_diagnostics(
+    *,
+    error: Mapping[str, Any] | None,
+    requested_provider: str,
+    requested_model: str,
+    fallback_provider: str,
+    fallback_model: str,
+    provider_models_attempted: list[str] | None = None,
+    last_error: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = dict(error or {})
+    diagnostics["requested_provider"] = str(requested_provider).strip().lower()
+    diagnostics["requested_model"] = str(requested_model).strip()
+    diagnostics["fallback_provider"] = str(fallback_provider).strip().lower()
+    diagnostics["fallback_model"] = str(fallback_model).strip()
+    if provider_models_attempted:
+        diagnostics["provider_models_attempted"] = [
+            str(item).strip()
+            for item in provider_models_attempted
+            if str(item).strip()
+        ]
+
+    safe_last_error: Dict[str, Any] = {}
+    if isinstance(last_error, Mapping):
+        code = str(last_error.get("code", "")).strip().lower()
+        provider = str(last_error.get("provider", "")).strip().lower()
+        status_code = _safe_int(last_error.get("status_code"), default=-1)
+        error_class = str(last_error.get("error_class", "")).strip().lower()
+        if code:
+            safe_last_error["code"] = code
+        if provider:
+            safe_last_error["provider"] = provider
+        if status_code >= 0:
+            safe_last_error["status_code"] = status_code
+        if error_class:
+            safe_last_error["error_class"] = error_class
+    if safe_last_error:
+        diagnostics["last_error"] = safe_last_error
+
+    return diagnostics
 
 
 def _fallback_used(
@@ -667,18 +732,13 @@ def generate_text(
 ) -> GenerateTextResult:
     """Generate text with guarded retries and safe fallback behavior."""
     agent = str(agent_key).strip()
-    default_selection = _default_selection("default")
     agent_selection = _default_selection(agent or "default")
     requested_provider = agent_selection.provider
     requested_model = str(model).strip() if model is not None else ""
     if not requested_model:
-        requested_model = default_selection.model
+        requested_model = agent_selection.model
     fallback_provider = agent_selection.fallback_provider or requested_provider
-    fallback_model = (
-        agent_selection.fallback_model
-        or default_selection.fallback_model
-        or requested_model
-    )
+    fallback_model = agent_selection.fallback_model or requested_model
 
     started_at = time.perf_counter()
     tool_span = start_tool_span(
@@ -716,12 +776,18 @@ def generate_text(
                 _degraded_result(
                     provider=requested_provider,
                     model=requested_model,
-                    error={
-                        "code": "invalid_agent_key",
-                        "message": "Unknown agent key for retry policy.",
-                        "provider": requested_provider,
-                        "recoverable": False,
-                    },
+                    error=_with_safe_diagnostics(
+                        error={
+                            "code": "invalid_agent_key",
+                            "message": "Unknown agent key for retry policy.",
+                            "provider": requested_provider,
+                            "recoverable": False,
+                        },
+                        requested_provider=requested_provider,
+                        requested_model=requested_model,
+                        fallback_provider=fallback_provider,
+                        fallback_model=fallback_model,
+                    ),
                 )
             )
 
@@ -732,7 +798,16 @@ def generate_text(
                 _degraded_result(
                     provider=requested_provider,
                     model=requested_model,
-                    error=_rejected_prompt_error("empty_prompt", requested_provider),
+                    error=_with_safe_diagnostics(
+                        error=_rejected_prompt_error(
+                            "empty_prompt",
+                            requested_provider,
+                        ),
+                        requested_provider=requested_provider,
+                        requested_model=requested_model,
+                        fallback_provider=fallback_provider,
+                        fallback_model=fallback_model,
+                    ),
                 )
             )
 
@@ -742,7 +817,13 @@ def generate_text(
                 _degraded_result(
                     provider=requested_provider,
                     model=requested_model,
-                    error=blocked_error,
+                    error=_with_safe_diagnostics(
+                        error=blocked_error,
+                        requested_provider=requested_provider,
+                        requested_model=requested_model,
+                        fallback_provider=fallback_provider,
+                        fallback_model=fallback_model,
+                    ),
                 )
             )
 
@@ -751,15 +832,21 @@ def generate_text(
                 _degraded_result(
                     provider=requested_provider,
                     model=requested_model,
-                    error={
-                        "code": "live_calls_disabled",
-                        "message": (
-                            "Live provider calls are disabled by "
-                            "CONTENTBLITZ_ENABLE_LIVE_CALLS."
-                        ),
-                        "provider": requested_provider,
-                        "recoverable": False,
-                    },
+                    error=_with_safe_diagnostics(
+                        error={
+                            "code": "live_calls_disabled",
+                            "message": (
+                                "Live provider calls are disabled by "
+                                "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+                            ),
+                            "provider": requested_provider,
+                            "recoverable": False,
+                        },
+                        requested_provider=requested_provider,
+                        requested_model=requested_model,
+                        fallback_provider=fallback_provider,
+                        fallback_model=fallback_model,
+                    ),
                 )
             )
 
@@ -786,8 +873,10 @@ def generate_text(
             if not api_key:
                 last_error = {
                     "code": "configuration_error",
-                    "message": f"{api_key_env_name} is not configured.",
+                    "message": "Provider credentials are not configured.",
                     "provider": provider_name,
+                    "status_code": None,
+                    "error_class": "missing_api_key",
                     "recoverable": provider_name != requested_provider,
                 }
                 continue
@@ -818,8 +907,31 @@ def generate_text(
                     continue
 
                 if provider_result.degraded:
+                    error_payload = _with_safe_diagnostics(
+                        error=provider_result.error,
+                        requested_provider=requested_provider,
+                        requested_model=requested_model,
+                        fallback_provider=fallback_provider,
+                        fallback_model=fallback_model,
+                        provider_models_attempted=attempted_provider_models,
+                    )
                     return _finalize(
-                        provider_result,
+                        GenerateTextResult(
+                            text=provider_result.text,
+                            model=provider_result.model,
+                            provider=provider_result.provider,
+                            input_tokens=provider_result.input_tokens,
+                            output_tokens=provider_result.output_tokens,
+                            total_tokens=provider_result.total_tokens,
+                            cache_creation_input_tokens=(
+                                provider_result.cache_creation_input_tokens
+                            ),
+                            cache_read_input_tokens=(
+                                provider_result.cache_read_input_tokens
+                            ),
+                            degraded=True,
+                            error=error_payload,
+                        ),
                         retry_attempt=attempt_counter,
                         retry_exhausted=False,
                     )
@@ -847,18 +959,25 @@ def generate_text(
             _degraded_result(
                 provider=final_provider,
                 model=final_model,
-                error={
-                    "code": safe_error_code,
-                    "message": (
-                        "Text generation provider is unavailable or quota-limited."
-                    ),
-                    "provider": final_provider,
-                    "recoverable": True,
-                    "attempts_per_model": attempts_per_model,
-                    "models_attempted": attempted_models,
-                    "provider_models_attempted": attempted_provider_models,
-                    "last_error": last_error,
-                },
+                error=_with_safe_diagnostics(
+                    error={
+                        "code": safe_error_code,
+                        "message": (
+                            "Text generation provider is unavailable or quota-limited."
+                        ),
+                        "provider": final_provider,
+                        "recoverable": True,
+                        "attempts_per_model": attempts_per_model,
+                        "models_attempted": attempted_models,
+                        "provider_models_attempted": attempted_provider_models,
+                    },
+                    requested_provider=requested_provider,
+                    requested_model=requested_model,
+                    fallback_provider=fallback_provider,
+                    fallback_model=fallback_model,
+                    provider_models_attempted=attempted_provider_models,
+                    last_error=last_error,
+                ),
             ),
             retry_attempt=attempt_counter,
             retry_exhausted=True,

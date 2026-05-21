@@ -158,6 +158,52 @@ def test_provider_latency_aggregates_text_and_search_calls(monkeypatch) -> None:
     assert research_data["provider_latency_by_provider_ms"]["serp_api"] >= 0
 
 
+def test_research_metrics_use_text_provider_field(monkeypatch) -> None:
+    state = create_initial_state(user_query="anthropic provider metrics")
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        time.sleep(0.002)
+        if "Generate 3-5 search queries" in prompt:
+            return {
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "output": json.dumps(["q1", "q2", "q3"]),
+            }
+        return {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "output": "Synthesized research summary.",
+        }
+
+    def fake_search_web(query, depth="standard"):
+        _ = (query, depth)
+        return {
+            "results": [
+                {
+                    "title": "Anthropic metrics source",
+                    "url": "https://example.com/metrics",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    call_counts = updates["research_data"]["provider_call_count_by_provider"]
+    latency = updates["research_data"]["provider_latency_by_provider_ms"]
+
+    assert call_counts["anthropic"] == 2
+    assert "openai" not in call_counts
+    assert latency["anthropic"] > 0
+    assert call_counts["serp_api"] == 3
+
+
 def test_search_fanout_runs_concurrently_and_merges_in_query_order(monkeypatch) -> None:
     state = create_initial_state(user_query="parallel search fanout")
     inflight = {"current": 0, "max": 0}
