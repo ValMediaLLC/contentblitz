@@ -33,25 +33,68 @@ def test_existing_clarification_message_is_used(monkeypatch) -> None:
 
 
 def test_missing_message_triggers_generate_text(monkeypatch) -> None:
-    calls = {"count": 0}
+    calls = {"count": 0, "policy_agent_key": "", "model": ""}
+
+    def fake_preferred_text_model(cost_controls, *, agent_key=None):
+        _ = cost_controls
+        calls["policy_agent_key"] = str(agent_key or "")
+        return "policy-clarification-model"
 
     def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
         calls["count"] += 1
-        assert agent_key == "query_handler"
+        assert agent_key == "clarification"
+        calls["model"] = str(model)
         assert "User query: blog" in prompt
         return {"output": "Could you confirm the desired output format?"}
 
+    monkeypatch.setattr(
+        clarification_node_module,
+        "preferred_text_model",
+        fake_preferred_text_model,
+    )
     monkeypatch.setattr(clarification_node_module, "generate_text", fake_generate_text)
 
     state = _base_state(clarification_message=None)
     updates = clarification_node_module.clarification_node(state)
 
     assert calls["count"] == 1
+    assert calls["policy_agent_key"] == "clarification"
+    assert calls["model"] == "policy-clarification-model"
     assert (
         updates["clarification_message"]
         == "Could you confirm the desired output format?"
     )
     assert updates["final_response"] == "Could you confirm the desired output format?"
+
+
+def test_clarification_generation_uses_clarification_agent_consistently(
+    monkeypatch,
+) -> None:
+    seen = {"policy_agent_key": "", "generate_agent_key": ""}
+
+    def fake_preferred_text_model(cost_controls, *, agent_key=None):
+        _ = cost_controls
+        seen["policy_agent_key"] = str(agent_key or "")
+        return "clarification-model"
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (prompt, model, metadata)
+        seen["generate_agent_key"] = str(agent_key or "")
+        return {"output": "Could you clarify your target audience?"}
+
+    monkeypatch.setattr(
+        clarification_node_module,
+        "preferred_text_model",
+        fake_preferred_text_model,
+    )
+    monkeypatch.setattr(clarification_node_module, "generate_text", fake_generate_text)
+
+    _ = clarification_node_module.clarification_node(
+        _base_state(clarification_message=None)
+    )
+
+    assert seen["policy_agent_key"] == "clarification"
+    assert seen["generate_agent_key"] == "clarification"
 
 
 def test_generate_text_failure_uses_static_fallback(monkeypatch) -> None:

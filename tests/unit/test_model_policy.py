@@ -140,6 +140,28 @@ def test_global_env_default_overrides_agent_defaults(monkeypatch) -> None:
     ) == "gpt-5.4-mini"
 
 
+def test_clarification_can_override_independently_from_query_handler(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "CONTENTBLITZ_TEXT_MODEL_CLARIFICATION_DEFAULT",
+        "gpt-5.4-mini",
+    )
+    monkeypatch.setenv(
+        "CONTENTBLITZ_TEXT_MODEL_QUERY_HANDLER_DEFAULT",
+        "gpt-4.1-mini",
+    )
+    controls = normalize_cost_controls(
+        {
+            "tokens_used_this_session": 0,
+            "token_budget_per_session": 1000,
+        }
+    )
+
+    assert preferred_text_model(controls, agent_key="clarification") == "gpt-5.4-mini"
+    assert preferred_text_model(controls, agent_key="query_handler") == "gpt-4.1-mini"
+
+
 def test_blog_writer_uses_model_policy(monkeypatch) -> None:
     seen: dict[str, str] = {}
 

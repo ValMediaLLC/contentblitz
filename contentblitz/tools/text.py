@@ -8,6 +8,17 @@ from contentblitz.config import RETRY_POLICY
 from contentblitz.core.model_policy import resolve_text_model
 from contentblitz.tools.generate_text import generate_text as _core_generate_text
 
+_RETRY_POLICY_AGENT_ALIASES = {
+    "clarification": "query_handler",
+}
+
+
+def _retry_policy_agent_key(agent_key: str) -> str:
+    normalized = str(agent_key).strip()
+    if not normalized:
+        return normalized
+    return _RETRY_POLICY_AGENT_ALIASES.get(normalized, normalized)
+
 
 def generate_text(
     prompt: str,
@@ -29,8 +40,11 @@ def generate_text(
         requested_model = resolve_text_model("default", near_budget=False)
     fallback_model = resolve_text_model("default", near_budget=True)
 
+    retry_policy_agent = _retry_policy_agent_key(agent_key)
     attempt_limit = (
-        int(RETRY_POLICY.get(agent_key, 0)) + 1 if agent_key in RETRY_POLICY else 0
+        int(RETRY_POLICY.get(retry_policy_agent, 0)) + 1
+        if retry_policy_agent in RETRY_POLICY
+        else 0
     )
     result = _core_generate_text(
         prompt=prompt,

@@ -33,6 +33,9 @@ _SAFE_PROVIDER_ERROR_CODES = {
     "empty_provider_response",
     "unknown_provider_error",
 }
+_RETRY_POLICY_AGENT_ALIASES = {
+    "clarification": "query_handler",
+}
 
 
 def _default_requested_model() -> str:
@@ -41,6 +44,13 @@ def _default_requested_model() -> str:
 
 def _default_fallback_model() -> str:
     return resolve_text_model("default", near_budget=True)
+
+
+def _retry_policy_agent_key(agent_key: str) -> str:
+    normalized = str(agent_key).strip()
+    if not normalized:
+        return normalized
+    return _RETRY_POLICY_AGENT_ALIASES.get(normalized, normalized)
 
 
 @dataclass(frozen=True)
@@ -417,7 +427,8 @@ def generate_text(
         return result
 
     try:
-        if agent not in RETRY_POLICY:
+        retry_policy_agent = _retry_policy_agent_key(agent)
+        if retry_policy_agent not in RETRY_POLICY:
             return _finalize(
                 _degraded_result(
                     model=requested_model,
@@ -477,7 +488,9 @@ def generate_text(
             )
 
         client = _build_openai_client(api_key=api_key)
-        attempts_per_model = _safe_int(RETRY_POLICY.get(agent, 0), default=0) + 1
+        attempts_per_model = (
+            _safe_int(RETRY_POLICY.get(retry_policy_agent, 0), default=0) + 1
+        )
         attempt_counter = 0
 
         models_to_try = [requested_model]

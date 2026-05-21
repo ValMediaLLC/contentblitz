@@ -416,6 +416,23 @@ def test_research_summary_preview_is_not_misclassified_as_stack_trace() -> None:
     assert "Research summary line one." in preview
 
 
+def test_safe_tool_metadata_preserves_clarification_agent_attribution() -> None:
+    metadata = observability_module.safe_tool_metadata(
+        {
+            "tool_name": "generate_text",
+            "agent_key": "clarification",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+            "duration_ms": 12,
+        }
+    )
+
+    assert metadata["tool_name"] == "generate_text"
+    assert metadata["agent_key"] == "clarification"
+    assert metadata["agent_key"] != "query_handler"
+    assert metadata["provider"] == "openai"
+
+
 def test_deterministic_prompt_resolved_outputs_appear_in_trace_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

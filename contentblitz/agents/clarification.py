@@ -56,7 +56,7 @@ def _resolve_clarification_message(state: Dict[str, Any]) -> str:
     try:
         response = generate_text(
             prompt=prompt,
-            agent_key="query_handler",
+            agent_key="clarification",
             model=model,
         )
         message = _extract_message(response)
