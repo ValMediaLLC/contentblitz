@@ -111,3 +111,23 @@ def test_prompt_injection_guard_rejects_without_state_object(monkeypatch) -> Non
     assert result.error is not None
     assert result.error["code"] == "prompt_rejected"
     assert client_created["value"] is False
+
+
+def test_legacy_adapter_uses_env_model_policy_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_MODEL_DEFAULT", "gpt-5.4")
+    monkeypatch.setenv("CONTENTBLITZ_TEXT_MODEL_FALLBACK", "gpt-5.4-mini")
+    completions = _mock_successful_client(
+        monkeypatch,
+        content="Policy default model output",
+        model="gpt-5.4",
+    )
+
+    result = legacy_text_module.generate_text(
+        prompt="Policy default model check.",
+        agent_key="query_handler",
+    )
+
+    assert result["model_requested"] == "gpt-5.4"
+    assert result["fallback_model"] == "gpt-5.4-mini"
+    assert completions.calls[0]["model"] == "gpt-5.4"

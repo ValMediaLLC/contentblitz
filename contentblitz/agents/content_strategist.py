@@ -334,7 +334,9 @@ def content_strategist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     provider_call_count_by_output_type: Dict[str, int] = {}
     provider_name = ""
     model_used = ""
-    preferred_model = preferred_text_model(cost_controls)
+    preferred_model = preferred_text_model(
+        cost_controls, agent_key="content_strategist"
+    )
     requested_brief_outputs = [
         output_type for output_type in _BRIEF_OUTPUT_ORDER if output_type in outputs
     ]

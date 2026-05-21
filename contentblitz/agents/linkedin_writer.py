@@ -452,7 +452,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "status_messages": [_FALLBACK_PROVIDER_WARNING],
         }
 
-    model = preferred_text_model(cost_controls)
+    model = preferred_text_model(cost_controls, agent_key="linkedin_writer")
     prompt = _build_prompt(
         user_query=user_query,
         linkedin_brief=linkedin_brief,
@@ -484,7 +484,7 @@ def linkedin_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         and len(body) < _MIN_LINKEDIN_CHARS
         and not token_budget_exceeded(cost_controls)
     ):
-        retry_model = preferred_text_model(cost_controls)
+        retry_model = preferred_text_model(cost_controls, agent_key="linkedin_writer")
         retry_prompt = _build_prompt(
             user_query=user_query,
             linkedin_brief=linkedin_brief,

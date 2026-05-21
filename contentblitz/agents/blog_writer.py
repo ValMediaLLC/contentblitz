@@ -259,7 +259,7 @@ def blog_writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "errors": _append_budget_error(state),
         }
 
-    model = preferred_text_model(cost_controls)
+    model = preferred_text_model(cost_controls, agent_key="blog_writer")
     prompt = _build_prompt(
         user_query=user_query,
         blog_brief=blog_brief,

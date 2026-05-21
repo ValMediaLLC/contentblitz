@@ -21,11 +21,10 @@ from contentblitz.config import (
     RETRY_POLICY,
     live_provider_calls_enabled,
 )
+from contentblitz.core.model_policy import resolve_text_model
 from contentblitz.core.observability import safe_tool_metadata, start_tool_span
 
 _PROVIDER = "openai"
-_PRIMARY_MODEL = "gpt-4o"
-_FALLBACK_MODEL = "gpt-4o-mini"
 _SAFE_PROVIDER_ERROR_CODES = {
     "quota_exceeded",
     "authentication_failed",
@@ -34,6 +33,14 @@ _SAFE_PROVIDER_ERROR_CODES = {
     "empty_provider_response",
     "unknown_provider_error",
 }
+
+
+def _default_requested_model() -> str:
+    return resolve_text_model("default", near_budget=False)
+
+
+def _default_fallback_model() -> str:
+    return resolve_text_model("default", near_budget=True)
 
 
 @dataclass(frozen=True)
@@ -238,7 +245,7 @@ def _fallback_used(
     requested_model: str,
     result: GenerateTextResult,
 ) -> bool:
-    requested = str(requested_model).strip() or _PRIMARY_MODEL
+    requested = str(requested_model).strip() or _default_requested_model()
     if not result.degraded:
         return str(result.model).strip() != requested
     if not isinstance(result.error, Mapping):
@@ -370,13 +377,16 @@ def _call_provider(
 def generate_text(
     prompt: str,
     agent_key: str,
-    model: str = _PRIMARY_MODEL,
+    model: str | None = None,
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerateTextResult:
     """Generate text using OpenAI with guarded retries and safe fallback behavior."""
-    requested_model = str(model).strip() or _PRIMARY_MODEL
+    requested_model = str(model).strip() if model is not None else ""
+    if not requested_model:
+        requested_model = _default_requested_model()
+    fallback_model = _default_fallback_model()
     agent = str(agent_key).strip()
     started_at = time.perf_counter()
     tool_span = start_tool_span(
@@ -471,8 +481,8 @@ def generate_text(
         attempt_counter = 0
 
         models_to_try = [requested_model]
-        if requested_model != _FALLBACK_MODEL:
-            models_to_try.append(_FALLBACK_MODEL)
+        if requested_model != fallback_model:
+            models_to_try.append(fallback_model)
 
         last_error: Optional[Dict[str, Any]] = None
         for model_name in models_to_try:

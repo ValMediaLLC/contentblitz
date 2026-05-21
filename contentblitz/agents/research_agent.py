@@ -524,7 +524,7 @@ def _synthesize_summary(
         generate_text(
             prompt=prompt,
             agent_key="research_agent",
-            model=preferred_text_model(cost_controls),
+            model=preferred_text_model(cost_controls, agent_key="research_agent"),
         )
     )
     summary_provider_latency_ms = max(
@@ -950,7 +950,7 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         generate_text(
             prompt=query_generation_prompt,
             agent_key="research_agent",
-            model=preferred_text_model(cost_controls),
+            model=preferred_text_model(cost_controls, agent_key="research_agent"),
         )
     )
     query_generation_provider_latency_ms = max(

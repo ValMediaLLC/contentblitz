@@ -16,6 +16,12 @@ from contentblitz.core.cost_controls import (
     search_cap_reached,
     token_budget_exceeded,
 )
+from contentblitz.core.model_policy import (
+    KNOWN_TEXT_MODEL_AGENT_KEYS,
+    TextModelPolicyEntry,
+    build_text_model_policy,
+    resolve_text_model,
+)
 from contentblitz.core.observability import (
     ObservabilityConfig,
     build_observability_config,
@@ -46,6 +52,10 @@ __all__ = [
     "search_cap_reached",
     "image_cap_reached",
     "retry_cap_reached",
+    "TextModelPolicyEntry",
+    "KNOWN_TEXT_MODEL_AGENT_KEYS",
+    "build_text_model_policy",
+    "resolve_text_model",
     "ObservabilityConfig",
     "build_observability_config",
     "is_tracing_enabled",

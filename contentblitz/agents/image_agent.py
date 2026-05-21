@@ -109,7 +109,7 @@ def _enhance_prompt(
         generate_text(
             prompt=prompt,
             agent_key="image_agent",
-            model=preferred_text_model(cost_controls),
+            model=preferred_text_model(cost_controls, agent_key="image_agent"),
         )
     )
     enhanced = str(response.get("output", "")).strip()

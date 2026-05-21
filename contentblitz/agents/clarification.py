@@ -5,6 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Mapping
 
+from contentblitz.core.cost_controls import (
+    normalize_cost_controls,
+    preferred_text_model,
+)
 from contentblitz.tools.text import generate_text
 
 _DEFAULT_CLARIFICATION_MESSAGE = (
@@ -47,8 +51,14 @@ def _resolve_clarification_message(state: Dict[str, Any]) -> str:
         "Ask for concrete goals and desired output type.\n\n"
         f"User query: {query}"
     )
+    cost_controls = normalize_cost_controls(state.get("cost_controls", {}))
+    model = preferred_text_model(cost_controls, agent_key="clarification")
     try:
-        response = generate_text(prompt=prompt, agent_key="query_handler")
+        response = generate_text(
+            prompt=prompt,
+            agent_key="query_handler",
+            model=model,
+        )
         message = _extract_message(response)
     except Exception:
         message = ""

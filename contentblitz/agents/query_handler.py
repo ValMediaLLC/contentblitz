@@ -639,7 +639,7 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "export_formats.\n\n"
         f"User query: {effective_query}"
     )
-    model = preferred_text_model(cost_controls)
+    model = preferred_text_model(cost_controls, agent_key="query_handler")
     provider_started_at = perf_counter()
     llm_response = _safe_dict(
         generate_text(
