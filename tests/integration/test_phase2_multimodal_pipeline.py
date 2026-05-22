@@ -116,7 +116,7 @@ def _make_image_client(*, fallback_to_dalle2: bool = False):
     def generate(**kwargs):
         model = kwargs["model"]
         calls["models"].append(model)
-        if fallback_to_dalle2 and model == "dall-e-3":
+        if fallback_to_dalle2 and model == "stable-image-core":
             raise RuntimeError("primary image model failed")
         return SimpleNamespace(
             data=[SimpleNamespace(url="https://img.example/phase2-image.png")]
@@ -205,13 +205,16 @@ def test_image_only_dalle3_success(monkeypatch) -> None:
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: client
     )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["image"], research_required=False))
 
     assert result["workflow_status"] == "success"
     assert result["final_response"].strip()
-    assert calls["models"] == ["dall-e-3"]
+    assert calls["models"] == ["stable-image-core"]
     assert result["cost_controls"]["image_generations_used_this_session"] == 1
     for output in result.get("image_outputs", []):
         assert "base64" not in output
@@ -229,15 +232,18 @@ def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: client
     )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: client
+    )
     graph = build_langgraph()
 
     result = graph.invoke(_preclassified_state(["image"], research_required=False))
 
     assert result["workflow_status"] == "success"
     assert result["final_response"].strip()
-    assert calls["models"] == ["dall-e-3", "dall-e-2"]
+    assert calls["models"] == ["stable-image-core", "fal-ai/fast-sdxl"]
     assert any(
-        item.get("provider") == "dall-e-2" for item in result.get("image_outputs", [])
+        item.get("provider") == "fal_ai" for item in result.get("image_outputs", [])
     )
 
 
@@ -251,6 +257,9 @@ def test_blog_linkedin_image_all_mocked_success(monkeypatch) -> None:
     client, _ = _make_image_client(fallback_to_dalle2=False)
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: client
     )
     graph = build_langgraph()
 
@@ -276,6 +285,9 @@ def test_image_cap_reached_produces_partial_success(monkeypatch) -> None:
     client, _ = _make_image_client(fallback_to_dalle2=False)
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: client
     )
     graph = build_langgraph()
 

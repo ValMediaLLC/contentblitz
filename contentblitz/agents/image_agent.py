@@ -6,6 +6,7 @@ from copy import deepcopy
 from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.config import MODEL_FALLBACKS
 from contentblitz.core.cost_controls import (
     apply_text_tokens,
     image_cap_reached,
@@ -151,7 +152,7 @@ def _normalize_provider(response: Mapping[str, Any]) -> str:
     primary = str(response.get("provider_primary", "")).strip()
     if primary:
         return primary
-    return "dall-e-3"
+    return str(MODEL_FALLBACKS.get("primary_image_provider", "stability_ai")).strip()
 
 
 def _append_recoverable_image_error(
@@ -304,7 +305,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "recoverable": True,
             },
             "prompt": enhanced_prompt,
-            "provider": "dall-e-3",
+            "provider": _normalize_provider({}),
         }
         image_outputs.append(failure_payload)
         tool_outputs["image_agent"] = {

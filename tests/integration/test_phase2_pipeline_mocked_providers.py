@@ -31,7 +31,8 @@ def _no_real_network(monkeypatch) -> None:
 
 def _long_linkedin_post() -> str:
     segment = (
-        "Execution velocity improves when content planning, research, and review are systemized. "
+        "Execution velocity improves when content planning, research, and review are "
+        "systemized. "
         "The goal is repeatability, not one-off output spikes. "
     )
     return (
@@ -95,7 +96,8 @@ def _text_payload_for_prompt(prompt: str) -> str:
     if "Write an SEO-friendly blog draft in markdown." in prompt:
         return (
             "# AI Workflow Systems\n\n"
-            "A durable content workflow combines repeatable research inputs, scoped briefs, "
+            "A durable content workflow combines repeatable research inputs, scoped "
+            "briefs, "
             "and measurable editorial standards."
         )
     if "Write a LinkedIn post in plain text." in prompt:
@@ -154,7 +156,10 @@ def test_research_only_with_serp_success(monkeypatch) -> None:
                 {
                     "title": "Primary research source",
                     "link": "https://example.com/research-source",
-                    "snippet": "This source has meaningful details about AI workflow adoption patterns.",
+                    "snippet": (
+                        "This source has meaningful details about AI workflow "
+                        "adoption patterns."
+                    ),
                     "source": "Example",
                     "date": "2026-05-09",
                 }
@@ -268,7 +273,10 @@ def test_blog_linkedin_image_with_all_providers_mocked_success(monkeypatch) -> N
                 {
                     "title": "Deduped source A",
                     "link": "https://example.com/source-a",
-                    "snippet": "Detailed source snippet for meaningful synthesis and citation.",
+                    "snippet": (
+                        "Detailed source snippet for meaningful synthesis and "
+                        "citation."
+                    ),
                     "source": "ExampleA",
                 },
                 {

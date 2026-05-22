@@ -142,14 +142,17 @@ def _install_image_client_with_fallback(monkeypatch: pytest.MonkeyPatch) -> None
         calls.append(dict(kwargs))
         if len(calls) == 1:
             raise RuntimeError("primary failed")
-        return SimpleNamespace(
-            data=[SimpleNamespace(url="https://img.example/fallback.png")]
-        )
+        return {"images": [{"url": "https://img.example/fallback.png"}]}
 
-    client = SimpleNamespace(images=SimpleNamespace(generate=_generate))
+    client = SimpleNamespace(generate=_generate)
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
+        "_build_stability_client",
+        lambda api_key: client,
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
         lambda api_key: client,
     )
 
@@ -278,7 +281,8 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     _clear_langsmith_env(monkeypatch)
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls-test")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-secret")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "1")
     _install_image_client_with_fallback(monkeypatch)
 
@@ -289,15 +293,15 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
 
     assert result.degraded is False
-    assert result.model == "dall-e-2"
+    assert result.model == "fal-ai/fast-sdxl"
     tool_names = [
         event.get("tool_name")
         for event in recording.events
         if event.get("event") == "tool_start"
     ]
     assert "generate_image" in tool_names
-    assert "dall_e_3" in tool_names
-    assert "dall_e_2_fallback" in tool_names
+    assert "stability_ai" in tool_names
+    assert "fal_ai_fallback" in tool_names
     image_finish = next(
         event
         for event in recording.events
@@ -306,8 +310,8 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
     image_metadata = image_finish["metadata"]
     assert image_metadata["fallback_used"] is True
-    assert image_metadata["fallback_model"] == "dall-e-2"
-    assert image_metadata["final_model"] == "dall-e-2"
+    assert image_metadata["fallback_model"] == "fal-ai/fast-sdxl"
+    assert image_metadata["final_model"] == "fal-ai/fast-sdxl"
     assert image_metadata["image_output_count"] == 1
     flattened = repr(recording.events).lower()
     assert "base64" not in flattened

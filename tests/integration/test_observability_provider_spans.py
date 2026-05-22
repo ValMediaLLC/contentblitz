@@ -126,6 +126,11 @@ def _install_mocked_image_provider(monkeypatch: pytest.MonkeyPatch) -> None:
         "_build_openai_client",
         lambda api_key: client,
     )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
+        lambda api_key: client,
+    )
 
 
 def test_provider_child_spans_are_recorded_and_safe(
@@ -190,8 +195,8 @@ def test_provider_child_spans_are_recorded_and_safe(
     assert "serp" in tool_start_names
     assert "perplexity_fallback" in tool_start_names
     assert "generate_image" in tool_start_names
-    assert "dall_e_3" in tool_start_names
-    assert "dall_e_2_fallback" in tool_start_names
+    assert "stability_ai" in tool_start_names
+    assert "fal_ai_fallback" in tool_start_names
 
     tool_finishes = {
         event["name"]: event
@@ -202,7 +207,10 @@ def test_provider_child_spans_are_recorded_and_safe(
     assert tool_finishes["search_web"]["metadata"]["fallback_used"] is True
     assert tool_finishes["search_web"]["metadata"]["fallback_provider"] == "perplexity"
     assert tool_finishes["generate_image"]["metadata"]["fallback_used"] is True
-    assert tool_finishes["generate_image"]["metadata"]["final_model"] == "dall-e-2"
+    assert (
+        tool_finishes["generate_image"]["metadata"]["final_model"]
+        == "fal-ai/fast-sdxl"
+    )
     assert (
         tool_finishes["perplexity_fallback"]["metadata"]["observability_summary"][
             "provider"

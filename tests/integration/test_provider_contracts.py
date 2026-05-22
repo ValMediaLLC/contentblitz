@@ -298,8 +298,8 @@ def test_search_web_auto_both_providers_degraded(monkeypatch):
     assert result.error["code"] == "all_providers_failed"
 
 
-def test_generate_image_dalle3_success_contract(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+def test_generate_image_stability_success_contract(monkeypatch):
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
 
     calls = []
 
@@ -311,15 +311,15 @@ def test_generate_image_dalle3_success_contract(monkeypatch):
 
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
+        "_build_stability_client",
         lambda api_key: _make_image_client(generate),
     )
 
     result = generate_image_module.generate_image(prompt="Create an image")
 
     assert is_dataclass(result)
-    assert result.provider == "openai"
-    assert result.model == "dall-e-3"
+    assert result.provider == "stability_ai"
+    assert result.model == "stable-image-core"
     assert result.image_url == "https://img.example/success.png"
     assert result.revised_prompt == "revised"
     assert result.degraded is False
@@ -327,51 +327,78 @@ def test_generate_image_dalle3_success_contract(monkeypatch):
     assert len(calls) == 1
 
 
-def test_generate_image_dalle3_failure_then_dalle2_success(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+def test_generate_image_stability_failure_then_fal_success(monkeypatch):
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     models = []
 
-    def generate(**kwargs):
+    def stability_generate(**kwargs):
         model = kwargs["model"]
         models.append(model)
-        if model == "dall-e-3":
-            raise RuntimeError("primary model failed")
+        raise RuntimeError("primary model failed")
+
+    def fal_generate(**kwargs):
+        model = kwargs["model"]
+        models.append(model)
         return _image_response(url="https://img.example/fallback.png")
 
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
-        lambda api_key: _make_image_client(generate),
+        "_build_stability_client",
+        lambda api_key: _make_image_client(stability_generate),
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
+        lambda api_key: _make_image_client(fal_generate),
     )
 
     result = generate_image_module.generate_image(prompt="Fallback image request")
     assert result.degraded is False
-    assert result.model == "dall-e-2"
+    assert result.provider == "fal_ai"
+    assert result.model == "fal-ai/fast-sdxl"
     assert result.image_url == "https://img.example/fallback.png"
-    assert models == ["dall-e-3", "dall-e-2"]
+    assert models == ["stable-image-core", "fal-ai/fast-sdxl"]
 
 
-def test_generate_image_both_models_fail(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+def test_generate_image_both_providers_fail(monkeypatch):
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
 
-    def generate(**kwargs):
+    def stability_generate(**kwargs):
+        _ = kwargs
+        raise RuntimeError("all stability generations failed")
+
+    def fal_generate(**kwargs):
+        _ = kwargs
         raise RuntimeError("all image models failed")
 
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
-        lambda api_key: _make_image_client(generate),
+        "_build_stability_client",
+        lambda api_key: _make_image_client(stability_generate),
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
+        lambda api_key: _make_image_client(fal_generate),
     )
 
     result = generate_image_module.generate_image(prompt="Both fail")
     assert result.degraded is True
     assert result.error is not None
     assert result.error["code"] == "unknown_provider_error"
-    assert result.error["models_attempted"] == ["dall-e-3", "dall-e-2"]
+    assert result.error["models_attempted"] == [
+        "stable-image-core",
+        "fal-ai/fast-sdxl",
+    ]
 
 
 def test_missing_api_keys_fail_safely_only_on_invocation(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("STABILITY_API_KEY", raising=False)
+    monkeypatch.delenv("FAL_API_KEY", raising=False)
+    monkeypatch.delenv("FAL_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SERP_API_KEY", raising=False)
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
@@ -412,7 +439,7 @@ def test_tools_never_mutate_state_and_return_normalized_objects(monkeypatch):
     }
     before = copy.deepcopy(sentinel_state)
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setattr(
         generate_text_module,
@@ -437,7 +464,7 @@ def test_tools_never_mutate_state_and_return_normalized_objects(monkeypatch):
     )
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
+        "_build_stability_client",
         lambda api_key: _make_image_client(
             lambda **kwargs: _image_response(url="https://img.example/a.png")
         ),

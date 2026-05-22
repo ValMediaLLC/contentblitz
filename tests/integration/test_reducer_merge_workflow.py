@@ -127,6 +127,9 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
     )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
+    )
 
     graph = build_langgraph()
     result = graph.invoke(_preclassified_state(["blog", "linkedin", "image"]))
@@ -148,7 +151,7 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     assert any(item.get("recoverable") is True for item in result.get("errors", []))
     assert result["cost_controls"]["tokens_used_this_session"] > 0
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
-    assert calls == ["dall-e-3", "dall-e-2"]
+    assert calls == ["stable-image-core", "fal-ai/fast-sdxl"]
     assert "recoverable issue" in result.get("final_response", "").lower()
     assert result.get("final_response", "").strip()
 
@@ -165,6 +168,9 @@ def test_parallel_fanout_state_is_deterministic_across_repeated_runs(
     image_client, _ = _make_failing_image_client()
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
     )
 
     graph = build_langgraph()
@@ -207,6 +213,9 @@ def test_emitted_status_warning_and_prompt_lists_remain_string_only(
     image_client, _ = _make_failing_image_client()
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
     )
 
     graph = build_langgraph()

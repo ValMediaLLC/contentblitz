@@ -95,7 +95,7 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "dall-e-3",
+            "provider_used": "stability_ai",
             "images": [
                 {
                     "url": "https://example.com/success.png",
@@ -129,7 +129,7 @@ def test_successful_local_path_image_writes_renderable_output(monkeypatch) -> No
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "gpt-image-1",
+            "provider_used": "fal_ai",
             "images": [
                 {
                     "local_path": "exports/images/fashion_001.png",
@@ -156,7 +156,11 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
         return {"output": "Enhanced prompt."}
 
     def fake_generate_image(prompt, style="default"):
-        return {"provider_used": "dall-e-3", "images": [], "error": "provider timeout"}
+        return {
+            "provider_used": "stability_ai",
+            "images": [],
+            "error": "provider timeout",
+        }
 
     monkeypatch.setattr(image_agent_module, "generate_text", fake_generate_text)
     monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image)
@@ -213,7 +217,7 @@ def test_non_renderable_asset_id_is_degraded_not_success(monkeypatch) -> None:
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "gpt-image-1",
+            "provider_used": "fal_ai",
             "images": [
                 {
                     "id": "img_asset_only_001",

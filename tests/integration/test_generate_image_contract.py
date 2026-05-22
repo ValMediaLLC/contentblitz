@@ -2,53 +2,72 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import is_dataclass
-from types import SimpleNamespace
 
 generate_image_module = importlib.import_module("contentblitz.tools.generate_image")
 legacy_image_module = importlib.import_module("contentblitz.tools.image")
 
 
-class _FakeImages:
-    def __init__(self, response):
-        self._response = response
+class _FakeImageClient:
+    def __init__(self, scripted):
+        self._scripted = list(scripted)
         self.calls = []
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
-        return self._response
+        if not self._scripted:
+            raise AssertionError("No scripted image response remaining.")
+        item = self._scripted.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
-def _mock_success_client(monkeypatch, *, url: str, revised_prompt: str | None = None):
-    item = {"url": url}
-    if revised_prompt is not None:
-        item["revised_prompt"] = revised_prompt
-    response = SimpleNamespace(data=[SimpleNamespace(**item)])
-    images = _FakeImages(response)
-    client = SimpleNamespace(images=images)
+def _mock_stability_client(monkeypatch, scripted):
+    client = _FakeImageClient(scripted)
     monkeypatch.setattr(
-        generate_image_module, "_build_openai_client", lambda api_key: client
+        generate_image_module,
+        "_build_stability_client",
+        lambda api_key: client,
     )
-    return images
+    return client
+
+
+def _mock_fal_client(monkeypatch, scripted):
+    client = _FakeImageClient(scripted)
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
+        lambda api_key: client,
+    )
+    return client
 
 
 def test_generate_image_contract_shape(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    images = _mock_success_client(
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    stability_client = _mock_stability_client(
         monkeypatch,
-        url="https://img.example/contract.png",
-        revised_prompt="contract revised",
+        [
+            {
+                "images": [
+                    {
+                        "url": "https://img.example/contract.png",
+                        "revised_prompt": "contract revised",
+                    }
+                ]
+            }
+        ],
     )
 
     result = generate_image_module.generate_image(
         prompt="A clean futuristic dashboard concept.",
-        model="dall-e-3",
+        model="stable-image-core",
         size="1024x1024",
         quality="standard",
     )
 
     assert is_dataclass(result)
-    assert result.provider == "openai"
-    assert result.model == "dall-e-3"
+    assert result.provider == "stability_ai"
+    assert result.model == "stable-image-core"
     assert result.prompt == "A clean futuristic dashboard concept."
     assert result.image_url == "https://img.example/contract.png"
     assert result.local_path is None
@@ -58,28 +77,27 @@ def test_generate_image_contract_shape(monkeypatch) -> None:
     assert result.degraded is False
     assert result.error is None
 
-    assert len(images.calls) == 1
-    call = images.calls[0]
-    assert call["model"] == "dall-e-3"
+    assert len(stability_client.calls) == 1
+    call = stability_client.calls[0]
+    assert call["model"] == "stable-image-core"
     assert call["prompt"] == "A clean futuristic dashboard concept."
     assert call["size"] == "1024x1024"
-    assert "response_format" not in call
 
 
 def test_legacy_image_adapter_remains_compatible(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    _mock_success_client(
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    _mock_stability_client(
         monkeypatch,
-        url="https://img.example/legacy.png",
+        [{"images": [{"url": "https://img.example/legacy.png"}]}],
     )
 
     legacy = legacy_image_module.generate_image(
         prompt="Legacy adapter image prompt.",
         style="editorial",
     )
-    assert legacy["provider_primary"] == "dall-e-3"
-    assert legacy["provider_fallback"] == "dall-e-2"
-    assert legacy["provider_used"] in {"dall-e-3", "dall-e-2"}
+    assert legacy["provider_primary"] == "stability_ai"
+    assert legacy["provider_fallback"] == "fal_ai"
+    assert legacy["provider_used"] in {"stability_ai", "fal_ai"}
     assert legacy["used_external_api"] is True
     assert legacy["degraded"] is False
     assert legacy["error"] is None
@@ -89,18 +107,19 @@ def test_legacy_image_adapter_remains_compatible(monkeypatch) -> None:
 
 
 def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "0")
 
     client_built = {"value": False}
 
     def _fake_builder(api_key: str):
+        _ = api_key
         client_built["value"] = True
         raise AssertionError(
             "Image client should not be built when live calls are disabled."
         )
 
-    monkeypatch.setattr(generate_image_module, "_build_openai_client", _fake_builder)
+    monkeypatch.setattr(generate_image_module, "_build_stability_client", _fake_builder)
 
     result = generate_image_module.generate_image(
         prompt="Disabled-live-call contract case."
@@ -110,13 +129,12 @@ def test_generate_image_live_calls_disabled_contract(monkeypatch) -> None:
     assert result.error["code"] == "live_calls_disabled"
     assert client_built["value"] is False
 
+
 def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    response = SimpleNamespace(data=[SimpleNamespace(id="asset_123abc")])
-    images = _FakeImages(response)
-    client = SimpleNamespace(images=images)
-    monkeypatch.setattr(
-        generate_image_module, "_build_openai_client", lambda api_key: client
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    _mock_stability_client(
+        monkeypatch,
+        [{"images": [{"id": "asset_123abc"}]}],
     )
 
     legacy = legacy_image_module.generate_image(
@@ -129,3 +147,24 @@ def test_legacy_image_adapter_maps_non_url_image_refs_to_id(monkeypatch) -> None
     assert legacy["images"][0]["id"] == "asset_123abc"
     assert legacy["images"][0]["renderable"] is False
     assert "url" not in legacy["images"][0]
+
+
+def test_stability_fallback_to_fal_contract(monkeypatch) -> None:
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
+    stability_client = _mock_stability_client(
+        monkeypatch,
+        [RuntimeError("stability failed")],
+    )
+    fal_client = _mock_fal_client(
+        monkeypatch,
+        [{"images": [{"url": "https://img.example/fal-fallback.png"}]}],
+    )
+
+    result = generate_image_module.generate_image(prompt="Fallback contract prompt.")
+    assert result.degraded is False
+    assert result.provider == "fal_ai"
+    assert result.model == "fal-ai/fast-sdxl"
+    assert result.image_url == "https://img.example/fal-fallback.png"
+    assert len(stability_client.calls) == 1
+    assert len(fal_client.calls) == 1

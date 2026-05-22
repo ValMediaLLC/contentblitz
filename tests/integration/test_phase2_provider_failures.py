@@ -85,6 +85,11 @@ def test_generate_image_failure_is_normalized_without_secret_or_stacktrace(monke
         "_build_openai_client",
         lambda api_key: _make_image_client(generate),
     )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
+        lambda api_key: _make_image_client(generate),
+    )
 
     result = generate_image_module.generate_image(prompt="failure image")
     assert result.degraded is True
