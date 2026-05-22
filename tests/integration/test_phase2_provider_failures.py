@@ -76,6 +76,8 @@ def test_search_web_failure_is_normalized_without_secret_or_raw_payload(monkeypa
 def test_generate_image_failure_is_normalized_without_secret_or_stacktrace(monkeypatch):
     secret = "sk-image-secret-value"  # pragma: allowlist secret
     monkeypatch.setenv("OPENAI_API_KEY", secret)
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
 
     def generate(**kwargs):
         raise RuntimeError(f"image provider payload included {secret}")

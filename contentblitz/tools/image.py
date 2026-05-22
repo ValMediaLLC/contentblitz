@@ -68,6 +68,16 @@ def generate_image(prompt: str, style: str = "default") -> Dict[str, Any]:
         "provider_fallback": provider_fallback,
         "provider_used": result.provider,
         "model_used": result.model,
+        "provider_call_count": int(result.provider_call_count or 0),
+        "provider_call_count_by_provider": dict(result.provider_call_count_by_provider),
+        "provider_latency_by_provider_ms": dict(
+            result.provider_latency_by_provider_ms
+        ),
+        "image_provider_attempts": list(result.provider_attempts),
+        "primary_provider": result.primary_provider or provider_primary,
+        "fallback_provider": result.fallback_provider or provider_fallback,
+        "fallback_provider_attempted": bool(result.fallback_provider_attempted),
+        "fallback_provider_used": bool(result.fallback_provider_used),
         "images": images,
         "used_external_api": not result.degraded,
         "degraded": result.degraded,

@@ -44,6 +44,7 @@ def test_no_real_network_calls_when_providers_are_mocked(monkeypatch):
     monkeypatch.setattr(perplexity_module.request, "urlopen", _block_network)
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
 
     monkeypatch.setattr(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 TOP_LEVEL_PROVIDER_WARNING = (
-    "Text provider unavailable or quota-limited. "
+    "Provider unavailable or quota-limited. "
     "ContentBlitz generated limited fallback outputs."
 )
 TEXT_FALLBACK_WARNING = (
@@ -25,6 +25,7 @@ _TEXT_WARNING_MARKERS = (
     "fallback outlines",
 )
 _TOP_LEVEL_PROVIDER_MARKERS = (
+    "provider unavailable or quota-limited",
     "text provider unavailable or quota-limited",
     "openai provider unavailable or quota-limited",
     "anthropic text provider unavailable or quota-limited",

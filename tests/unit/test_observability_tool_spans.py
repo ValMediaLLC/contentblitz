@@ -293,7 +293,7 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
 
     assert result.degraded is False
-    assert result.model == "fal-ai/fast-sdxl"
+    assert result.model == "fal-ai/flux/schnell"
     tool_names = [
         event.get("tool_name")
         for event in recording.events
@@ -310,8 +310,8 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
     image_metadata = image_finish["metadata"]
     assert image_metadata["fallback_used"] is True
-    assert image_metadata["fallback_model"] == "fal-ai/fast-sdxl"
-    assert image_metadata["final_model"] == "fal-ai/fast-sdxl"
+    assert image_metadata["fallback_model"] == "fal-ai/flux/schnell"
+    assert image_metadata["final_model"] == "fal-ai/flux/schnell"
     assert image_metadata["image_output_count"] == 1
     flattened = repr(recording.events).lower()
     assert "base64" not in flattened

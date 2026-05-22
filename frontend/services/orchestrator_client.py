@@ -480,6 +480,75 @@ def _event_metadata(
                 metadata["provider_call_count_by_output_type"] = (
                     safe_call_count_by_output_type
                 )
+    if node_name == "image_agent_node":
+        image_tool = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("image_agent", {})
+        )
+
+        latency_by_provider = image_tool.get("provider_latency_by_provider_ms")
+        if isinstance(latency_by_provider, Mapping):
+            safe_latency_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_provider[key] = value
+            if safe_latency_by_provider:
+                metadata["provider_latency_by_provider_ms"] = safe_latency_by_provider
+
+        call_count_by_provider = image_tool.get("provider_call_count_by_provider")
+        if isinstance(call_count_by_provider, Mapping):
+            safe_call_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_provider[key] = value
+            if safe_call_count_by_provider:
+                metadata["provider_call_count_by_provider"] = (
+                    safe_call_count_by_provider
+                )
+
+        safe_attempts: List[Dict[str, Any]] = []
+        for raw_attempt in _safe_list(image_tool.get("image_provider_attempts", [])):
+            if not isinstance(raw_attempt, Mapping):
+                continue
+            provider_name = _safe_text(raw_attempt.get("provider")).lower()
+            model_name = _safe_text(raw_attempt.get("model"))
+            status_name = _safe_text(raw_attempt.get("status")).lower()
+            error_code = _safe_text(raw_attempt.get("error_code")).lower()
+            duration_value = _safe_non_negative_int(raw_attempt.get("duration_ms"))
+            attempt_metadata: Dict[str, Any] = {}
+            if provider_name:
+                attempt_metadata["provider"] = provider_name
+            if model_name:
+                attempt_metadata["model"] = model_name
+            if status_name:
+                attempt_metadata["status"] = status_name
+            if error_code:
+                attempt_metadata["error_code"] = error_code
+            if duration_value is not None:
+                attempt_metadata["duration_ms"] = duration_value
+            attempt_metadata["fallback"] = bool(raw_attempt.get("fallback", False))
+            if attempt_metadata:
+                safe_attempts.append(attempt_metadata)
+        if safe_attempts:
+            metadata["image_provider_attempts"] = safe_attempts
+
+        primary_provider = _safe_text(image_tool.get("primary_provider")).lower()
+        fallback_provider = _safe_text(image_tool.get("fallback_provider")).lower()
+        if primary_provider:
+            metadata["primary_provider"] = primary_provider
+        if fallback_provider:
+            metadata["fallback_provider"] = fallback_provider
+        if "fallback_provider_attempted" in image_tool:
+            metadata["fallback_provider_attempted"] = bool(
+                image_tool.get("fallback_provider_attempted")
+            )
+        if "fallback_provider_used" in image_tool:
+            metadata["fallback_provider_used"] = bool(
+                image_tool.get("fallback_provider_used")
+            )
     if "export_metadata" in updates:
         export_metadata = _safe_dict(updates.get("export_metadata", {}))
         metadata["export_error_count"] = _derive_export_error_count(export_metadata)

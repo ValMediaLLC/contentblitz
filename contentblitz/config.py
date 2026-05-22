@@ -41,7 +41,7 @@ MODEL_FALLBACKS: Dict[str, str] = {
     "primary_image_provider": "stability_ai",
     "fallback_image_provider": "fal_ai",
     "primary_image_model": "stable-image-core",
-    "fallback_image_model": "fal-ai/fast-sdxl",
+    "fallback_image_model": "fal-ai/flux/schnell",
 }
 
 INJECTION_GUARD = {

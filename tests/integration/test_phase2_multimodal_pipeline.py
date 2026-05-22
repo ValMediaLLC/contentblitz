@@ -196,6 +196,7 @@ def test_blog_and_linkedin_token_cost_tracking(monkeypatch) -> None:
 
 def test_image_only_dalle3_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -223,6 +224,8 @@ def test_image_only_dalle3_success(monkeypatch) -> None:
 
 def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -241,7 +244,7 @@ def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
 
     assert result["workflow_status"] == "success"
     assert result["final_response"].strip()
-    assert calls["models"] == ["stable-image-core", "fal-ai/fast-sdxl"]
+    assert calls["models"] == ["stable-image-core", "fal-ai/flux/schnell"]
     assert any(
         item.get("provider") == "fal_ai" for item in result.get("image_outputs", [])
     )
@@ -249,6 +252,7 @@ def test_image_only_dalle3_fallback_to_dalle2(monkeypatch) -> None:
 
 def test_blog_linkedin_image_all_mocked_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -277,6 +281,7 @@ def test_blog_linkedin_image_all_mocked_success(monkeypatch) -> None:
 
 def test_image_cap_reached_produces_partial_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",

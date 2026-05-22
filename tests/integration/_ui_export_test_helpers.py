@@ -218,6 +218,8 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
 def install_mock_image_client(
     monkeypatch, *, fail_all: bool = False
 ) -> dict[str, list[str]]:
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     calls = {"models": []}
 
     def generate(**kwargs):

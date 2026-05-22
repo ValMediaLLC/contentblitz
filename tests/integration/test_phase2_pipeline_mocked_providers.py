@@ -252,6 +252,7 @@ def test_research_only_with_serp_degraded_perplexity_fallback(monkeypatch) -> No
 
 def test_blog_linkedin_image_with_all_providers_mocked_success(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
     monkeypatch.setenv("SERP_API_KEY", "serp-test")
     monkeypatch.setattr(
         generate_text_module,

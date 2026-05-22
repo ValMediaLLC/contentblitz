@@ -141,6 +141,8 @@ def test_provider_child_spans_are_recorded_and_safe(
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls-test")
     monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-live-secret")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
 
     _install_mocked_text_provider(monkeypatch)
     _install_mocked_image_provider(monkeypatch)
@@ -209,7 +211,7 @@ def test_provider_child_spans_are_recorded_and_safe(
     assert tool_finishes["generate_image"]["metadata"]["fallback_used"] is True
     assert (
         tool_finishes["generate_image"]["metadata"]["final_model"]
-        == "fal-ai/fast-sdxl"
+        == "fal-ai/flux/schnell"
     )
     assert (
         tool_finishes["perplexity_fallback"]["metadata"]["observability_summary"][

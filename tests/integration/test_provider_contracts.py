@@ -356,9 +356,9 @@ def test_generate_image_stability_failure_then_fal_success(monkeypatch):
     result = generate_image_module.generate_image(prompt="Fallback image request")
     assert result.degraded is False
     assert result.provider == "fal_ai"
-    assert result.model == "fal-ai/fast-sdxl"
+    assert result.model == "fal-ai/flux/schnell"
     assert result.image_url == "https://img.example/fallback.png"
-    assert models == ["stable-image-core", "fal-ai/fast-sdxl"]
+    assert models == ["stable-image-core", "fal-ai/flux/schnell"]
 
 
 def test_generate_image_both_providers_fail(monkeypatch):
@@ -390,7 +390,7 @@ def test_generate_image_both_providers_fail(monkeypatch):
     assert result.error["code"] == "unknown_provider_error"
     assert result.error["models_attempted"] == [
         "stable-image-core",
-        "fal-ai/fast-sdxl",
+        "fal-ai/flux/schnell",
     ]
 
 

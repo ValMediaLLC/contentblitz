@@ -76,6 +76,15 @@ def test_generate_image_contract_shape(monkeypatch) -> None:
     assert result.revised_prompt == "contract revised"
     assert result.degraded is False
     assert result.error is None
+    assert result.provider_call_count == 1
+    assert result.provider_call_count_by_provider == {"stability_ai": 1}
+    assert result.primary_provider == "stability_ai"
+    assert result.fallback_provider == "fal_ai"
+    assert result.fallback_provider_attempted is False
+    assert result.fallback_provider_used is False
+    assert len(result.provider_attempts) == 1
+    assert result.provider_attempts[0]["provider"] == "stability_ai"
+    assert result.provider_attempts[0]["status"] == "success"
 
     assert len(stability_client.calls) == 1
     call = stability_client.calls[0]
@@ -97,10 +106,18 @@ def test_legacy_image_adapter_remains_compatible(monkeypatch) -> None:
     )
     assert legacy["provider_primary"] == "stability_ai"
     assert legacy["provider_fallback"] == "fal_ai"
+    assert legacy["primary_provider"] == "stability_ai"
+    assert legacy["fallback_provider"] == "fal_ai"
     assert legacy["provider_used"] in {"stability_ai", "fal_ai"}
     assert legacy["used_external_api"] is True
     assert legacy["degraded"] is False
     assert legacy["error"] is None
+    assert legacy["provider_call_count"] == 1
+    assert legacy["provider_call_count_by_provider"] == {"stability_ai": 1}
+    assert isinstance(legacy["provider_latency_by_provider_ms"], dict)
+    assert isinstance(legacy["image_provider_attempts"], list)
+    assert legacy["fallback_provider_attempted"] is False
+    assert legacy["fallback_provider_used"] is False
     assert isinstance(legacy["images"], list)
     assert len(legacy["images"]) == 1
     assert legacy["images"][0]["url"] == "https://img.example/legacy.png"
@@ -164,7 +181,15 @@ def test_stability_fallback_to_fal_contract(monkeypatch) -> None:
     result = generate_image_module.generate_image(prompt="Fallback contract prompt.")
     assert result.degraded is False
     assert result.provider == "fal_ai"
-    assert result.model == "fal-ai/fast-sdxl"
+    assert result.model == "fal-ai/flux/schnell"
     assert result.image_url == "https://img.example/fal-fallback.png"
+    assert result.provider_call_count == 2
+    assert result.provider_call_count_by_provider == {"stability_ai": 1, "fal_ai": 1}
+    assert result.fallback_provider_attempted is True
+    assert result.fallback_provider_used is True
+    assert [attempt["provider"] for attempt in result.provider_attempts] == [
+        "stability_ai",
+        "fal_ai",
+    ]
     assert len(stability_client.calls) == 1
     assert len(fal_client.calls) == 1
