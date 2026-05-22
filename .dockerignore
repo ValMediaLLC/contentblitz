@@ -1,0 +1,13 @@
+.venv/
+.venv-x64/
+__pycache__/
+.pytest_cache/
+coverage/
+htmlcov/
+.env
+.git/
+*.pyc
+*.pyo
+*.zip
+exports/
+sessions/
