@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import importlib
+from pathlib import Path
 
 import requests
 
@@ -305,6 +307,7 @@ def test_stability_failure_falls_back_to_fal(monkeypatch) -> None:
     assert result.provider == "fal_ai"
     assert result.model == "fal-ai/flux/schnell"
     assert result.image_url == "https://img.example/fallback.png"
+    assert result.local_path is None
     assert result.provider_call_count == 2
     assert result.provider_call_count_by_provider == {"stability_ai": 1, "fal_ai": 1}
     assert result.fallback_provider_attempted is True
@@ -317,6 +320,44 @@ def test_stability_failure_falls_back_to_fal(monkeypatch) -> None:
     assert result.provider_attempts[1]["status"] == "success"
     assert len(stability_client.calls) == 1
     assert len(fal_client.calls) == 1
+
+
+def test_fal_data_uri_response_becomes_renderable_local_image(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
+    monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
+    _install_fake_stability_client(
+        monkeypatch,
+        [RuntimeError("stability failed")],
+    )
+    raw_bytes = b"\x89PNG\r\n\x1a\nmock-image"
+    data_uri = "data:image/png;base64," + base64.b64encode(raw_bytes).decode("ascii")
+    _install_fake_fal_client(
+        monkeypatch,
+        [{"images": [{"url": data_uri}]}],
+    )
+
+    result = generate_image_module.generate_image(
+        prompt="Render fallback image from a safe data URI.",
+    )
+
+    assert result.degraded is False
+    assert result.provider == "fal_ai"
+    assert result.renderable is True
+    assert result.image_url is None
+    assert isinstance(result.local_path, str)
+    local_path = Path(result.local_path)
+    if not local_path.is_absolute():
+        local_path = Path.cwd() / local_path
+    assert local_path.exists()
+    assert local_path.read_bytes() == raw_bytes
+    assert result.fallback_provider_attempted is True
+    assert result.fallback_provider_used is True
+    assert "data:image/" not in str(result)
+    assert "base64," not in str(result)
 
 
 def test_all_providers_fail_returns_degraded_result(monkeypatch) -> None:
@@ -532,6 +573,7 @@ def test_fal_empty_response_records_safe_diagnostics(monkeypatch) -> None:
     assert diagnostics["url_present"] is False
     assert diagnostics["local_path_present"] is False
     assert diagnostics["image_bytes_present"] is False
+    assert diagnostics["b64_json_present"] is False
     assert diagnostics["request_id_present"] is False
     assert "debug_payload" in diagnostics["response_keys"]
     assert "sensitive-raw-data" not in str(result.error)

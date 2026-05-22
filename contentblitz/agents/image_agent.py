@@ -208,6 +208,7 @@ def _safe_response_shape(raw: Any) -> Dict[str, Any]:
         "url_present",
         "local_path_present",
         "image_bytes_present",
+        "b64_json_present",
         "request_id_present",
     ):
         if key in raw:

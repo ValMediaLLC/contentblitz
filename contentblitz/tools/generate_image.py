@@ -266,6 +266,23 @@ def _safe_url_or_ref(value: Any) -> Optional[str]:
     return None
 
 
+def _safe_data_uri_image_bytes(value: Any) -> tuple[Optional[bytes], str]:
+    if not isinstance(value, str):
+        return None, ""
+    candidate = value.strip()
+    if not candidate.lower().startswith("data:image/"):
+        return None, ""
+    header, separator, payload = candidate.partition(",")
+    if not separator:
+        return None, ""
+    header_lower = header.lower()
+    if ";base64" not in header_lower:
+        return None, ""
+    mime_type = header_lower.split(";", 1)[0].replace("data:", "", 1).strip()
+    image_bytes = _safe_bytes_from_base64(payload.strip())
+    return image_bytes, mime_type
+
+
 def _safe_image_id(value: Any) -> Optional[str]:
     if not isinstance(value, str):
         return None
@@ -367,8 +384,10 @@ def _response_shape_diagnostics(response: Any) -> Dict[str, Any]:
         "image_count": 0,
         "first_image_keys": [],
         "url_present": False,
+        "url_type": "none",
         "local_path_present": False,
         "image_bytes_present": False,
+        "b64_json_present": False,
         "request_id_present": False,
     }
     if not isinstance(response, Mapping):
@@ -402,8 +421,15 @@ def _response_shape_diagnostics(response: Any) -> Dict[str, Any]:
                 }
             )
             diagnostics["first_image_keys"] = first_image_keys[:20]
+            raw_url = _safe_text(first_image.get("url") or first_image.get("image_url"))
+            if raw_url.lower().startswith("data:image/"):
+                diagnostics["url_type"] = "data_uri"
+            elif _safe_url_or_ref(raw_url):
+                diagnostics["url_type"] = "http"
+            elif raw_url:
+                diagnostics["url_type"] = "other"
             diagnostics["url_present"] = bool(
-                _safe_url_or_ref(first_image.get("url") or first_image.get("image_url"))
+                _safe_url_or_ref(raw_url)
             )
             diagnostics["local_path_present"] = bool(
                 _safe_text(first_image.get("local_path"))
@@ -411,6 +437,10 @@ def _response_shape_diagnostics(response: Any) -> Dict[str, Any]:
             diagnostics["image_bytes_present"] = bool(
                 _safe_image_bytes(first_image.get("image_bytes"))
                 or _safe_image_bytes(first_image.get("bytes"))
+            )
+            diagnostics["b64_json_present"] = bool(
+                _safe_text(first_image.get("b64_json"))
+                or _safe_text(first_image.get("base64"))
             )
             diagnostics["request_id_present"] = (
                 diagnostics["request_id_present"]
@@ -886,15 +916,19 @@ def _result_from_payload(
         )
 
     image_url = _safe_url_or_ref(first_item.get("url") or first_item.get("image_url"))
+    raw_image_url = _safe_text(first_item.get("url") or first_item.get("image_url"))
     local_path = _safe_text(first_item.get("local_path")) or None
     image_id = _safe_image_id(first_item.get("file_id") or first_item.get("id"))
     image_bytes = _safe_image_bytes(first_item.get("image_bytes"))
+    data_uri_mime_type = ""
     if image_bytes is None:
         image_bytes = _safe_image_bytes(first_item.get("bytes"))
     if image_bytes is None:
         image_bytes = _safe_bytes_from_base64(first_item.get("b64_json"))
     if image_bytes is None:
         image_bytes = _safe_bytes_from_base64(first_item.get("image"))
+    if image_bytes is None and raw_image_url.lower().startswith("data:image/"):
+        image_bytes, data_uri_mime_type = _safe_data_uri_image_bytes(raw_image_url)
 
     if image_url is None and local_path is None and image_bytes is not None:
         local_path = _write_image_bytes_to_local_path(
@@ -903,7 +937,8 @@ def _result_from_payload(
             model=model,
             extension=_safe_text(
                 first_item.get("output_format") or first_item.get("mime_type")
-            ),
+            )
+            or data_uri_mime_type,
         )
 
     revised_prompt = _safe_text(first_item.get("revised_prompt")) or None
@@ -977,6 +1012,7 @@ def _safe_response_shape(raw: Mapping[str, Any]) -> Dict[str, Any]:
         "url_present",
         "local_path_present",
         "image_bytes_present",
+        "b64_json_present",
         "request_id_present",
     )
     for field_name in bool_fields:
@@ -987,6 +1023,10 @@ def _safe_response_shape(raw: Mapping[str, Any]) -> Dict[str, Any]:
     for field_name in int_fields:
         if field_name in raw:
             safe_shape[field_name] = max(0, int(raw.get(field_name) or 0))
+
+    url_type = _safe_text(raw.get("url_type")).lower()
+    if url_type in {"data_uri", "http", "other", "none"}:
+        safe_shape["url_type"] = url_type
 
     return safe_shape
 

@@ -223,6 +223,7 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
                         "url_present": False,
                         "local_path_present": False,
                         "image_bytes_present": False,
+                        "b64_json_present": False,
                         "request_id_present": False,
                     },
                 },
