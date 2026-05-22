@@ -19,7 +19,11 @@ def _legacy_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def search_web(query: str, depth: str = "standard") -> Dict[str, Any]:
+def search_web(
+    query: str,
+    depth: str = "standard",
+    timeout_seconds: float | None = None,
+) -> Dict[str, Any]:
     """
     Legacy dict contract used by the research agent.
 
@@ -27,7 +31,12 @@ def search_web(query: str, depth: str = "standard") -> Dict[str, Any]:
     - `depth="fallback"` -> Perplexity placeholder provider
     """
     provider = "perplexity" if str(depth).strip().lower() == "fallback" else "serp"
-    typed_result = _core_search_web(query=query, max_results=5, provider=provider)
+    typed_result = _core_search_web(
+        query=query,
+        max_results=5,
+        provider=provider,
+        timeout_seconds=timeout_seconds,
+    )
     return {
         "query": typed_result.query,
         "depth": depth,

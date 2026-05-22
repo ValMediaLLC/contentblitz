@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from copy import deepcopy
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 from urllib.parse import urlparse
 
@@ -27,6 +30,10 @@ from contentblitz.tools.web_search import search_web
 _MIN_SEARCH_QUERIES = 3
 _MAX_SEARCH_QUERIES = 5
 _DEFAULT_SEARCH_QUERY_CAP = 5
+_SEARCH_FANOUT_CONCURRENCY = 5
+_SEARCH_QUERY_TIMEOUT_SECONDS = 5.0
+# SERP/search-provider fan-out wall timeout only (not full research node timeout).
+_SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS = 8.0
 _MIN_LIST_ITEMS = 3
 _FALLBACK_KEYWORDS = ["market trends", "audience insights", "strategic positioning"]
 _KEYWORD_STOPWORDS = {
@@ -97,6 +104,285 @@ def _safe_list(value: Any) -> list[Any]:
 
 def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
+
+
+def _provider_from_model_name(model_name: str) -> str:
+    normalized = str(model_name).strip().lower()
+    if not normalized:
+        return ""
+    if normalized.startswith("claude"):
+        return "anthropic"
+    if normalized.startswith("gpt-") or normalized.startswith("o"):
+        return "openai"
+    return ""
+
+
+def _provider_from_llm_response(
+    response: Mapping[str, Any],
+    *,
+    fallback_model: str = "",
+) -> str:
+    provider = str(response.get("provider", "")).strip().lower()
+    if provider:
+        return provider
+    model = str(response.get("model", "")).strip() or str(fallback_model).strip()
+    inferred = _provider_from_model_name(model)
+    if inferred:
+        return inferred
+    return "openai"
+
+
+def _increment_int_map(
+    target: Dict[str, int],
+    *,
+    key: str,
+    delta: int = 1,
+) -> None:
+    safe_key = str(key).strip().lower()
+    if not safe_key:
+        return
+    amount = max(0, int(delta))
+    if amount <= 0:
+        target.setdefault(safe_key, max(0, int(target.get(safe_key, 0))))
+        return
+    target[safe_key] = max(0, int(target.get(safe_key, 0))) + amount
+
+
+@dataclass(frozen=True)
+class _SearchCallResult:
+    query: str
+    depth: str
+    response: Dict[str, Any]
+    duration_ms: int
+    attempted: bool
+    timed_out: bool
+
+
+def _node_time_remaining_seconds(deadline: float) -> float:
+    return max(0.0, float(deadline - perf_counter()))
+
+
+def _invoke_search_web(
+    *,
+    query: str,
+    depth: str,
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    try:
+        return _safe_dict(
+            search_web(query=query, depth=depth, timeout_seconds=timeout_seconds)
+        )
+    except TypeError as exc:
+        if "timeout_seconds" not in str(exc):
+            raise
+        return _safe_dict(search_web(query=query, depth=depth))
+
+
+async def _run_search_call_async(
+    *,
+    query: str,
+    depth: str,
+    semaphore: asyncio.Semaphore,
+    per_query_timeout_seconds: float,
+    node_deadline: float,
+) -> _SearchCallResult:
+    async with semaphore:
+        remaining_seconds = _node_time_remaining_seconds(node_deadline)
+        if remaining_seconds <= 0.0:
+            return _SearchCallResult(
+                query=query,
+                depth=depth,
+                response={"results": []},
+                duration_ms=0,
+                attempted=False,
+                timed_out=True,
+            )
+        effective_timeout = min(per_query_timeout_seconds, remaining_seconds)
+        started_at = perf_counter()
+        timed_out = False
+        attempted = True
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _invoke_search_web,
+                    query=query,
+                    depth=depth,
+                    timeout_seconds=effective_timeout,
+                ),
+                timeout=effective_timeout,
+            )
+        except asyncio.TimeoutError:
+            response = {"results": []}
+            timed_out = True
+        except Exception:
+            response = {"results": []}
+        duration_ms = max(0, int((perf_counter() - started_at) * 1000))
+        return _SearchCallResult(
+            query=query,
+            depth=depth,
+            response=_safe_dict(response),
+            duration_ms=duration_ms,
+            attempted=attempted,
+            timed_out=timed_out,
+        )
+
+
+async def _run_search_fanout_async(
+    *,
+    queries: List[str],
+    depth: str,
+    max_concurrency: int,
+    per_query_timeout_seconds: float,
+    node_deadline: float,
+) -> tuple[List[_SearchCallResult], bool]:
+    if not queries:
+        return [], False
+    semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
+    task_by_query: dict[str, asyncio.Task[_SearchCallResult]] = {}
+    for search_query in queries:
+        task_by_query[search_query] = asyncio.create_task(
+            _run_search_call_async(
+                query=search_query,
+                depth=depth,
+                semaphore=semaphore,
+                per_query_timeout_seconds=per_query_timeout_seconds,
+                node_deadline=node_deadline,
+            )
+        )
+
+    phase_timeout_seconds = _node_time_remaining_seconds(node_deadline)
+    if phase_timeout_seconds <= 0.0:
+        for task in task_by_query.values():
+            task.cancel()
+        return (
+            [
+                _SearchCallResult(
+                    query=search_query,
+                    depth=depth,
+                    response={"results": []},
+                    duration_ms=0,
+                    attempted=False,
+                    timed_out=True,
+                )
+                for search_query in queries
+            ],
+            True,
+        )
+
+    done, pending = await asyncio.wait(
+        task_by_query.values(),
+        timeout=phase_timeout_seconds,
+    )
+    wall_timeout_triggered = bool(pending)
+    for task in pending:
+        task.cancel()
+
+    done_results: dict[str, _SearchCallResult] = {}
+    for task in done:
+        try:
+            result = task.result()
+        except Exception:
+            continue
+        done_results[result.query] = result
+
+    ordered_results: list[_SearchCallResult] = []
+    for search_query in queries:
+        result = done_results.get(search_query)
+        if result is not None:
+            ordered_results.append(result)
+            continue
+        ordered_results.append(
+            _SearchCallResult(
+                query=search_query,
+                depth=depth,
+                response={"results": []},
+                duration_ms=0,
+                attempted=False,
+                timed_out=True,
+            )
+        )
+    return ordered_results, wall_timeout_triggered
+
+
+def _run_search_fanout(
+    *,
+    queries: List[str],
+    depth: str,
+    max_concurrency: int,
+    per_query_timeout_seconds: float,
+    node_deadline: float,
+) -> tuple[List[_SearchCallResult], bool]:
+    if not queries:
+        return [], False
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _run_search_fanout_async(
+                queries=queries,
+                depth=depth,
+                max_concurrency=max_concurrency,
+                per_query_timeout_seconds=per_query_timeout_seconds,
+                node_deadline=node_deadline,
+            )
+        )
+
+    ordered_results: list[_SearchCallResult] = []
+    wall_timeout_triggered = False
+    for search_query in queries:
+        remaining_seconds = _node_time_remaining_seconds(node_deadline)
+        if remaining_seconds <= 0.0:
+            wall_timeout_triggered = True
+            ordered_results.append(
+                _SearchCallResult(
+                    query=search_query,
+                    depth=depth,
+                    response={"results": []},
+                    duration_ms=0,
+                    attempted=False,
+                    timed_out=True,
+                )
+            )
+            continue
+
+        effective_timeout = min(per_query_timeout_seconds, remaining_seconds)
+        started_at = perf_counter()
+        timed_out = False
+        try:
+            response = _invoke_search_web(
+                query=search_query,
+                depth=depth,
+                timeout_seconds=effective_timeout,
+            )
+        except Exception:
+            response = {"results": []}
+        duration_ms = max(0, int((perf_counter() - started_at) * 1000))
+        error = _safe_dict(_safe_dict(response).get("error", {}))
+        error_code = str(error.get("code", "")).strip().lower()
+        if error_code == "provider_timeout":
+            timed_out = True
+        ordered_results.append(
+            _SearchCallResult(
+                query=search_query,
+                depth=depth,
+                response=_safe_dict(response),
+                duration_ms=duration_ms,
+                attempted=True,
+                timed_out=timed_out,
+            )
+        )
+
+    return ordered_results, wall_timeout_triggered
 
 
 def _build_search_queries(user_query: str) -> List[str]:
@@ -240,9 +526,15 @@ def _synthesize_summary(
     query: str,
     sources: List[Dict[str, Any]],
     cost_controls: Mapping[str, Any],
-) -> tuple[str, Dict[str, Any], bool]:
+) -> tuple[str, Dict[str, Any], bool, int, int]:
     if not sources:
-        return _deterministic_research_summary(query=query, sources=sources), {}, True
+        return (
+            _deterministic_research_summary(query=query, sources=sources),
+            {},
+            True,
+            0,
+            0,
+        )
 
     top = sources[:5]
     bullets = "\n".join(
@@ -253,20 +545,31 @@ def _synthesize_summary(
         f"Topic: {query}\n"
         f"Findings:\n{bullets}"
     )
+    summary_started_at = perf_counter()
     llm_response = _safe_dict(
         generate_text(
             prompt=prompt,
             agent_key="research_agent",
-            model=preferred_text_model(cost_controls),
+            model=preferred_text_model(cost_controls, agent_key="research_agent"),
         )
+    )
+    summary_provider_latency_ms = max(
+        0,
+        int((perf_counter() - summary_started_at) * 1000),
     )
     summary = str(_safe_dict(llm_response).get("output", "")).strip()
     if summary:
-        return summary, llm_response, False
-    return _deterministic_research_summary(
-        query=query,
-        sources=sources,
-    ), llm_response, True
+        return summary, llm_response, False, summary_provider_latency_ms, 1
+    return (
+        _deterministic_research_summary(
+            query=query,
+            sources=sources,
+        ),
+        llm_response,
+        True,
+        summary_provider_latency_ms,
+        1,
+    )
 
 
 def _make_degraded_perplexity_source(query: str) -> Dict[str, Any]:
@@ -656,23 +959,81 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         cost_controls.get("search_query_cap_per_session", _DEFAULT_SEARCH_QUERY_CAP)
     )
     remaining_calls = max(0, query_cap - used_queries)
+    provider_latency_total_ms = 0
+    provider_call_count = 0
+    provider_latency_by_provider_ms: Dict[str, int] = {}
+    provider_call_count_by_provider: Dict[str, int] = {}
+    provider_timeout_count = 0
+    provider_timeout_count_by_provider: Dict[str, int] = {}
+    provider_latency_wall_ms = 0
+    search_provider_wall_timeout_triggered = False
 
     query_generation_prompt = (
         "Generate 3-5 search queries as JSON list for this topic:\n" f"{query}"
     )
-    query_generation = generate_text(
-        prompt=query_generation_prompt,
+    query_generation_model = preferred_text_model(
+        cost_controls,
         agent_key="research_agent",
-        model=preferred_text_model(cost_controls),
     )
-    cost_controls = apply_text_tokens(cost_controls, _safe_dict(query_generation))
+    query_generation_started_at = perf_counter()
+    query_generation = _safe_dict(
+        generate_text(
+            prompt=query_generation_prompt,
+            agent_key="research_agent",
+            model=query_generation_model,
+        )
+    )
+    query_generation_provider_latency_ms = max(
+        0,
+        int((perf_counter() - query_generation_started_at) * 1000),
+    )
+    provider_latency_total_ms += query_generation_provider_latency_ms
+    provider_call_count += 1
+    provider_latency_wall_ms += query_generation_provider_latency_ms
+    query_generation_provider = _provider_from_llm_response(
+        query_generation,
+        fallback_model=query_generation_model,
+    )
+    _increment_int_map(
+        provider_latency_by_provider_ms,
+        key=query_generation_provider,
+        delta=query_generation_provider_latency_ms,
+    )
+    _increment_int_map(
+        provider_call_count_by_provider,
+        key=query_generation_provider,
+        delta=1,
+    )
+    cost_controls = apply_text_tokens(cost_controls, query_generation)
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
+        degraded_payload = _degraded_research_payload(
+            query,
+            reason="token_budget_exceeded_after_query_planning",
+        )
+        degraded_payload["provider_latency_total_ms"] = (
+            _safe_non_negative_int(provider_latency_total_ms) or 0
+        )
+        degraded_payload["provider_latency_wall_ms"] = (
+            _safe_non_negative_int(provider_latency_wall_ms) or 0
+        )
+        degraded_payload["provider_latency_by_provider_ms"] = dict(
+            provider_latency_by_provider_ms
+        )
+        degraded_payload["provider_call_count"] = provider_call_count
+        degraded_payload["provider_call_count_by_provider"] = dict(
+            provider_call_count_by_provider
+        )
+        degraded_payload["provider_timeout_count"] = provider_timeout_count
+        degraded_payload["provider_timeout_count_by_provider"] = dict(
+            provider_timeout_count_by_provider
+        )
+        degraded_payload["search_provider_wall_timeout_ms"] = int(
+            _SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS * 1000
+        )
+        degraded_payload["search_provider_wall_timeout_triggered"] = False
         return {
-            "research_data": _degraded_research_payload(
-                query,
-                reason="token_budget_exceeded_after_query_planning",
-            ),
+            "research_data": degraded_payload,
             "sources": [],
             "cost_controls": cost_controls,
             "workflow_status": "research_complete",
@@ -685,23 +1046,48 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     collected_sources: List[Dict[str, Any]] = []
     fallback_used = False
     search_calls_used = 0
+    search_phase_started_at = perf_counter()
+    search_provider_deadline = perf_counter() + _SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS
 
-    for search_query in search_queries:
-        if remaining_calls <= 0:
-            break
+    primary_queries = search_queries[:remaining_calls]
+    primary_results, primary_wall_timeout_triggered = _run_search_fanout(
+        queries=primary_queries,
+        depth="standard",
+        max_concurrency=_SEARCH_FANOUT_CONCURRENCY,
+        per_query_timeout_seconds=_SEARCH_QUERY_TIMEOUT_SECONDS,
+        node_deadline=search_provider_deadline,
+    )
+    search_provider_wall_timeout_triggered = (
+        search_provider_wall_timeout_triggered or primary_wall_timeout_triggered
+    )
 
-        try:
-            primary_response = search_web(query=search_query, depth="standard")
-        except Exception:
-            primary_response = {"results": []}
-        remaining_calls -= 1
+    degraded_primary_queries: List[str] = []
+    for primary_result in primary_results:
+        search_query = primary_result.query
+        if primary_result.timed_out:
+            provider_timeout_count += 1
+            _increment_int_map(provider_timeout_count_by_provider, key="serp_api")
+        if not primary_result.attempted:
+            fallback_used = True
+            degraded_primary_queries.append(search_query)
+            continue
+
+        provider_latency_total_ms += primary_result.duration_ms
+        provider_call_count += 1
+        _increment_int_map(
+            provider_latency_by_provider_ms,
+            key="serp_api",
+            delta=primary_result.duration_ms,
+        )
+        _increment_int_map(provider_call_count_by_provider, key="serp_api", delta=1)
+        remaining_calls = max(0, remaining_calls - 1)
         search_calls_used += 1
         executed_queries.append(search_query)
 
-        primary_results = _safe_list(_safe_dict(primary_response).get("results"))
+        primary_raw_results = _safe_list(primary_result.response.get("results"))
         primary_sources = [
             _normalize_source(item, provider="serp_api", query=search_query)
-            for item in primary_results
+            for item in primary_raw_results
             if isinstance(item, Mapping)
         ]
 
@@ -710,26 +1096,61 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         fallback_used = True
-        if remaining_calls <= 0:
+        degraded_primary_queries.append(search_query)
+
+    fallback_budget = max(0, remaining_calls)
+    fallback_queries = degraded_primary_queries[:fallback_budget]
+    fallback_skipped_queries = degraded_primary_queries[fallback_budget:]
+
+    fallback_results, fallback_wall_timeout_triggered = _run_search_fanout(
+        queries=fallback_queries,
+        depth="fallback",
+        max_concurrency=_SEARCH_FANOUT_CONCURRENCY,
+        per_query_timeout_seconds=_SEARCH_QUERY_TIMEOUT_SECONDS,
+        node_deadline=search_provider_deadline,
+    )
+    search_provider_wall_timeout_triggered = (
+        search_provider_wall_timeout_triggered or fallback_wall_timeout_triggered
+    )
+
+    for fallback_result in fallback_results:
+        search_query = fallback_result.query
+        if fallback_result.timed_out:
+            provider_timeout_count += 1
+            _increment_int_map(provider_timeout_count_by_provider, key="perplexity")
+        if not fallback_result.attempted:
             collected_sources.append(_make_degraded_perplexity_source(search_query))
             continue
 
-        try:
-            fallback_response = search_web(query=search_query, depth="fallback")
-        except Exception:
-            fallback_response = {"results": []}
-        remaining_calls -= 1
+        provider_latency_total_ms += fallback_result.duration_ms
+        provider_call_count += 1
+        _increment_int_map(
+            provider_latency_by_provider_ms,
+            key="perplexity",
+            delta=fallback_result.duration_ms,
+        )
+        _increment_int_map(provider_call_count_by_provider, key="perplexity", delta=1)
+        remaining_calls = max(0, remaining_calls - 1)
         search_calls_used += 1
 
-        fallback_results = _safe_list(_safe_dict(fallback_response).get("results"))
+        fallback_raw_results = _safe_list(fallback_result.response.get("results"))
         fallback_sources = [
             _normalize_source(item, provider="perplexity", query=search_query)
-            for item in fallback_results
+            for item in fallback_raw_results
             if isinstance(item, Mapping)
         ]
         if not fallback_sources:
             fallback_sources = [_make_degraded_perplexity_source(search_query)]
         collected_sources.extend(fallback_sources)
+
+    for search_query in fallback_skipped_queries:
+        collected_sources.append(_make_degraded_perplexity_source(search_query))
+
+    search_provider_wall_elapsed_ms = max(
+        0,
+        int((perf_counter() - search_phase_started_at) * 1000),
+    )
+    provider_latency_wall_ms += search_provider_wall_elapsed_ms
 
     deduped_sources = _dedupe_sources(collected_sources)
     deduped_sources.sort(
@@ -739,11 +1160,38 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     deduped_sources = _sanitize_sources_for_output(query=query, sources=deduped_sources)
     quality = "degraded" if degraded else "standard"
-    summary, summary_response, deterministic_summary_used = _synthesize_summary(
+    (
+        summary,
+        summary_response,
+        deterministic_summary_used,
+        summary_provider_latency_ms,
+        summary_provider_call_count,
+    ) = _synthesize_summary(
         query=query,
         sources=deduped_sources,
         cost_controls=cost_controls,
     )
+    provider_latency_total_ms += summary_provider_latency_ms
+    provider_call_count += summary_provider_call_count
+    provider_latency_wall_ms += summary_provider_latency_ms
+    if summary_provider_call_count > 0:
+        summary_provider = _provider_from_llm_response(
+            summary_response,
+            fallback_model=preferred_text_model(
+                cost_controls,
+                agent_key="research_agent",
+            ),
+        )
+        _increment_int_map(
+            provider_latency_by_provider_ms,
+            key=summary_provider,
+            delta=summary_provider_latency_ms,
+        )
+        _increment_int_map(
+            provider_call_count_by_provider,
+            key=summary_provider,
+            delta=summary_provider_call_count,
+        )
     cost_controls = apply_text_tokens(cost_controls, summary_response)
     if not summary.strip():
         summary = _deterministic_research_summary(query=query, sources=deduped_sources)
@@ -769,6 +1217,30 @@ def research_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "entities": entities,
         "deterministic_summary_used": deterministic_summary_used,
     }
+    if provider_call_count > 0:
+        research_data["provider_latency_total_ms"] = (
+            _safe_non_negative_int(provider_latency_total_ms) or 0
+        )
+        research_data["provider_latency_wall_ms"] = (
+            _safe_non_negative_int(provider_latency_wall_ms) or 0
+        )
+        research_data["provider_latency_by_provider_ms"] = dict(
+            provider_latency_by_provider_ms
+        )
+        research_data["provider_call_count"] = provider_call_count
+        research_data["provider_call_count_by_provider"] = dict(
+            provider_call_count_by_provider
+        )
+    research_data["provider_timeout_count"] = provider_timeout_count
+    research_data["provider_timeout_count_by_provider"] = dict(
+        provider_timeout_count_by_provider
+    )
+    research_data["search_provider_wall_timeout_ms"] = int(
+        _SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS * 1000
+    )
+    research_data["search_provider_wall_timeout_triggered"] = bool(
+        search_provider_wall_timeout_triggered
+    )
 
     cost_controls["search_queries_used_this_session"] = used_queries + search_calls_used
     if token_budget_exceeded(cost_controls):

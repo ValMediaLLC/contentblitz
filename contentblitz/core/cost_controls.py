@@ -6,7 +6,8 @@ import math
 from copy import deepcopy
 from typing import Any, Dict, Mapping
 
-from contentblitz.config import COST_CONTROLS_DEFAULTS
+from contentblitz.config import COST_CONTROLS_DEFAULTS, MODEL_FALLBACKS
+from contentblitz.core.model_policy import resolve_text_model
 
 DEFAULT_TOKEN_BUDGET_PER_SESSION = 10000
 DEFAULT_SEARCH_QUERY_CAP_PER_SESSION = 5
@@ -14,8 +15,10 @@ DEFAULT_IMAGE_GENERATION_CAP_PER_SESSION = 3
 DEFAULT_MAX_TOTAL_RETRIES_PER_SESSION = 3
 NEAR_TOKEN_BUDGET_RATIO = 0.90
 
-PRIMARY_TEXT_MODEL = "gpt-4o"
-FALLBACK_TEXT_MODEL = "gpt-4o-mini"
+PRIMARY_TEXT_MODEL = str(MODEL_FALLBACKS.get("primary_text_model", "gpt-4o")).strip()
+FALLBACK_TEXT_MODEL = str(
+    MODEL_FALLBACKS.get("fallback_text_model", "gpt-4o-mini")
+).strip()
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -148,11 +151,11 @@ def near_token_budget(cost_controls: Mapping[str, Any]) -> bool:
     return used >= threshold
 
 
-def preferred_text_model(cost_controls: Mapping[str, Any]) -> str:
-    """Choose model based on current token budget position."""
-    return (
-        FALLBACK_TEXT_MODEL if near_token_budget(cost_controls) else PRIMARY_TEXT_MODEL
-    )
+def preferred_text_model(
+    cost_controls: Mapping[str, Any], *, agent_key: str | None = None
+) -> str:
+    """Choose model based on token-budget position and agent model policy."""
+    return resolve_text_model(agent_key, near_budget=near_token_budget(cost_controls))
 
 
 def apply_text_tokens(

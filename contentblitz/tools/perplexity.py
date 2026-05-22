@@ -144,12 +144,20 @@ def _extract_citation_urls(payload: Mapping[str, Any]) -> List[str]:
     return deduped
 
 
-def search_perplexity(query: str, *, max_results: int = 5) -> SearchWebResult:
+def search_perplexity(
+    query: str,
+    *,
+    max_results: int = 5,
+    timeout_seconds: int | float = _DEFAULT_TIMEOUT_SECONDS,
+) -> SearchWebResult:
     if not live_provider_calls_enabled():
         return _degraded_result(
             query=query,
             code="live_calls_disabled",
-            message="Live provider calls are disabled by CONTENTBLITZ_ENABLE_LIVE_CALLS.",
+            message=(
+                "Live provider calls are disabled by "
+                "CONTENTBLITZ_ENABLE_LIVE_CALLS."
+            ),
             recoverable=False,
         )
 
@@ -167,7 +175,10 @@ def search_perplexity(query: str, *, max_results: int = 5) -> SearchWebResult:
         "messages": [
             {
                 "role": "system",
-                "content": "Provide concise factual web-backed information with citations when available.",
+                "content": (
+                    "Provide concise factual web-backed information with citations "
+                    "when available."
+                ),
             },
             {"role": "user", "content": query},
         ],
@@ -179,8 +190,20 @@ def search_perplexity(query: str, *, max_results: int = 5) -> SearchWebResult:
         "User-Agent": "ContentBlitz/phase2-perplexity-fallback",
     }
 
+    safe_timeout_seconds = _DEFAULT_TIMEOUT_SECONDS
+    if isinstance(timeout_seconds, (int, float)) and not isinstance(
+        timeout_seconds,
+        bool,
+    ):
+        safe_timeout_seconds = max(1, int(timeout_seconds))
+
     try:
-        response = _http_post_json(url=_API_ENDPOINT, payload=payload, headers=headers)
+        response = _http_post_json(
+            url=_API_ENDPOINT,
+            payload=payload,
+            headers=headers,
+            timeout_seconds=safe_timeout_seconds,
+        )
     except HTTPError as exc:
         return _degraded_result(
             query=query,

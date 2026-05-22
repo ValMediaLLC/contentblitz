@@ -114,10 +114,32 @@ def _preclassified_state(outputs: list[str]) -> dict:
     )
 
 
+def _normalized_image_outputs(image_outputs: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for raw_output in image_outputs:
+        current = dict(raw_output)
+        current.pop("provider_latency_ms", None)
+        current.pop("provider_latency_by_provider_ms", None)
+        attempts = current.get("image_provider_attempts")
+        if isinstance(attempts, list):
+            safe_attempts: list[dict] = []
+            for raw_attempt in attempts:
+                if not isinstance(raw_attempt, dict):
+                    continue
+                attempt_copy = dict(raw_attempt)
+                attempt_copy.pop("duration_ms", None)
+                safe_attempts.append(attempt_copy)
+            current["image_provider_attempts"] = safe_attempts
+        normalized.append(current)
+    return normalized
+
+
 def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -126,6 +148,9 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     image_client, calls = _make_failing_image_client()
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
     )
 
     graph = build_langgraph()
@@ -148,7 +173,7 @@ def test_parallel_fanout_preserves_text_outputs_when_image_branch_fails(
     assert any(item.get("recoverable") is True for item in result.get("errors", []))
     assert result["cost_controls"]["tokens_used_this_session"] > 0
     assert result["cost_controls"]["total_retries_used_this_session"] == 0
-    assert calls == ["dall-e-3", "dall-e-2"]
+    assert calls == ["stable-image-core", "fal-ai/flux/schnell"]
     assert "recoverable issue" in result.get("final_response", "").lower()
     assert result.get("final_response", "").strip()
 
@@ -157,6 +182,8 @@ def test_parallel_fanout_state_is_deterministic_across_repeated_runs(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -165,6 +192,9 @@ def test_parallel_fanout_state_is_deterministic_across_repeated_runs(
     image_client, _ = _make_failing_image_client()
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
     )
 
     graph = build_langgraph()
@@ -183,7 +213,9 @@ def test_parallel_fanout_state_is_deterministic_across_repeated_runs(
     assert first["quality_scores"] == second["quality_scores"]
     assert first["draft_status"] == second["draft_status"]
     assert first["image_prompts"] == second["image_prompts"]
-    assert first["image_outputs"] == second["image_outputs"]
+    first_image_outputs = _normalized_image_outputs(first["image_outputs"])
+    second_image_outputs = _normalized_image_outputs(second["image_outputs"])
+    assert first_image_outputs == second_image_outputs
     assert first["errors"] == second["errors"]
     assert (
         first["cost_controls"]["tokens_used_this_session"]
@@ -199,6 +231,8 @@ def test_emitted_status_warning_and_prompt_lists_remain_string_only(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setattr(
         generate_text_module,
         "_build_openai_client",
@@ -207,6 +241,9 @@ def test_emitted_status_warning_and_prompt_lists_remain_string_only(
     image_client, _ = _make_failing_image_client()
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: image_client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: image_client
     )
 
     graph = build_langgraph()

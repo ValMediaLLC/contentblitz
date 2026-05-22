@@ -343,7 +343,7 @@ def test_fallback_warnings_are_deduplicated_and_internal_terms_not_exposed() -> 
     status_messages = updates["status_messages"]
 
     assert updates["workflow_status"] == "partial_success"
-    assert final_response.count("OpenAI provider unavailable or quota-limited.") == 1
+    assert final_response.count("Provider unavailable or quota-limited.") == 1
     assert final_response.count("Blog and LinkedIn outputs are fallback outlines.") == 1
     assert (
         final_response.count("Image generation encountered a recoverable issue.") == 1

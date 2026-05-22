@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -241,6 +242,98 @@ def test_safe_node_end_metadata_does_not_mutate_state() -> None:
     assert state == original
 
 
+def test_build_node_timing_metadata_emits_safe_duration_and_timestamps() -> None:
+    started_at = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(milliseconds=375)
+
+    metadata = observability_module.build_node_timing_metadata(
+        node_started_at=started_at,
+        node_ended_at=ended_at,
+        duration_ms=None,
+    )
+
+    assert metadata["node_started_at"].startswith("2026-05-20T12:00:00")
+    assert metadata["node_ended_at"].startswith("2026-05-20T12:00:00.375")
+    assert metadata["duration_ms"] == 375
+
+
+def test_safe_node_end_metadata_includes_timing_and_redacts_error_content() -> None:
+    started_at = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(milliseconds=90)
+    state = {
+        "workflow_status": "running",
+        "requested_outputs": ["blog"],
+    }
+    updates = {
+        "workflow_status": "partial_success",
+        "content_drafts": {
+            "blog": {
+                "body": "## Fallback Blog Outline\nLimited draft body.",
+                "model_used": "gpt-4o",
+                "fallback_generated": True,
+            }
+        },
+        "errors": [
+            {
+                "type": "provider_error",
+                "message": (
+                    "Traceback (most recent call last): OPENAI_API_KEY=sk-secret"
+                ),
+                "recoverable": True,
+            }
+        ],
+    }
+
+    metadata = observability_module.safe_node_end_metadata(
+        state=state,
+        node_name="blog_writer_node",
+        node_status="degraded",
+        updates=updates,
+        node_started_at=started_at,
+        node_ended_at=ended_at,
+        duration_ms=90,
+    )
+    serialized = repr(metadata).lower()
+
+    assert metadata["node_name"] == "blog_writer_node"
+    assert metadata["node_status"] == "degraded"
+    assert metadata["duration_ms"] == 90
+    assert metadata["provider"] == "openai"
+    assert metadata["model"] == "gpt-4o"
+    assert "provider_latency_ms" not in metadata
+    assert "traceback (most recent call last)" not in serialized
+    assert "openai_api_key" not in serialized
+
+
+def test_safe_node_end_metadata_keeps_explicit_provider_latency_only() -> None:
+    started_at = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(milliseconds=200)
+    state = {
+        "workflow_status": "running",
+        "requested_outputs": ["image"],
+        "tool_outputs": {"image_agent": {"provider_latency_ms": 75}},
+    }
+    updates = {
+        "workflow_status": "partial_success",
+        "tool_outputs": {"image_agent": {"provider_latency_ms": 75}},
+    }
+
+    metadata = observability_module.safe_node_end_metadata(
+        state=state,
+        node_name="image_agent_node",
+        node_status="degraded",
+        updates=updates,
+        node_started_at=started_at,
+        node_ended_at=ended_at,
+        duration_ms=200,
+    )
+
+    assert metadata["duration_ms"] == 200
+    assert metadata["provider_latency_ms"] == 75
+    assert metadata["provider_latency_ms"] <= metadata["duration_ms"]
+    assert metadata["provider_latency_ms"] != metadata["duration_ms"]
+
+
 def test_trace_metadata_summarizes_final_response_and_drafts() -> None:
     blog_body = "Blog draft content line.\n" * 120
     final_response = "# Workflow Output\n\n" + ("Final assembled content. " * 160)
@@ -321,6 +414,23 @@ def test_research_summary_preview_is_not_misclassified_as_stack_trace() -> None:
 
     assert preview != REDACTED_STACK_TRACE
     assert "Research summary line one." in preview
+
+
+def test_safe_tool_metadata_preserves_clarification_agent_attribution() -> None:
+    metadata = observability_module.safe_tool_metadata(
+        {
+            "tool_name": "generate_text",
+            "agent_key": "clarification",
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+            "duration_ms": 12,
+        }
+    )
+
+    assert metadata["tool_name"] == "generate_text"
+    assert metadata["agent_key"] == "clarification"
+    assert metadata["agent_key"] != "query_handler"
+    assert metadata["provider"] == "openai"
 
 
 def test_deterministic_prompt_resolved_outputs_appear_in_trace_metadata(

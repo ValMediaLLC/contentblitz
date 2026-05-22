@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, Dict, Iterable, Iterator, List, Mapping
 
 from contentblitz.state import create_initial_state
@@ -81,6 +83,31 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return default
 
 
+def _safe_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return None
+
+
+def _safe_text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _infer_provider_from_model(model: str) -> str:
+    normalized = _safe_text(model).lower()
+    if not normalized:
+        return ""
+    if normalized.startswith("claude"):
+        return "anthropic"
+    if normalized.startswith("gpt-") or normalized.startswith("o"):
+        return "openai"
+    return ""
+
+
 def _normalize_format_list(value: Any) -> List[str]:
     normalized: List[str] = []
     for item in _safe_list(value):
@@ -125,6 +152,133 @@ def _derive_export_error_count(export_metadata: Mapping[str, Any]) -> int:
         for item in error_log
         if isinstance(item, Mapping) and not _is_warning_export_log_entry(item)
     )
+
+
+def _node_provider_and_model(
+    *,
+    node_name: str,
+    updates: Mapping[str, Any],
+) -> tuple[str, str]:
+    provider = ""
+    model = ""
+
+    if node_name == "blog_writer_node":
+        blog = _safe_dict(_safe_dict(updates.get("content_drafts", {})).get("blog", {}))
+        provider = _safe_text(blog.get("provider_used")).lower() or _safe_text(
+            blog.get("provider")
+        ).lower()
+        model = _safe_text(blog.get("model_used"))
+        if not provider:
+            provider = _infer_provider_from_model(model)
+    elif node_name == "linkedin_writer_node":
+        linkedin = _safe_dict(
+            _safe_dict(updates.get("content_drafts", {})).get("linkedin", {})
+        )
+        provider = _safe_text(linkedin.get("provider_used")).lower() or _safe_text(
+            linkedin.get("provider")
+        ).lower()
+        model = _safe_text(linkedin.get("model_used"))
+        if not provider:
+            provider = _infer_provider_from_model(model)
+    elif node_name == "image_agent_node":
+        tool_outputs = _safe_dict(updates.get("tool_outputs", {}))
+        image_tool = _safe_dict(tool_outputs.get("image_agent", {}))
+        provider = _safe_text(image_tool.get("provider")).lower()
+        model = _safe_text(image_tool.get("model"))
+        if not provider:
+            image_outputs = _safe_list(updates.get("image_outputs", []))
+            if image_outputs and isinstance(image_outputs[0], Mapping):
+                provider = _safe_text(image_outputs[0].get("provider")).lower()
+                model = _safe_text(image_outputs[0].get("model"))
+    elif node_name == "research_agent_node":
+        sources = _safe_list(updates.get("sources", []))
+        for item in sources:
+            if not isinstance(item, Mapping):
+                continue
+            provider = _safe_text(item.get("provider") or item.get("source")).lower()
+            if provider:
+                break
+    elif node_name == "query_handler_node":
+        query_handler_output = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("query_handler", {})
+        )
+        provider = _safe_text(query_handler_output.get("provider")).lower()
+        model = _safe_text(query_handler_output.get("model"))
+    elif node_name == "content_strategist_node":
+        strategist_output = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("content_strategist", {})
+        )
+        provider = _safe_text(strategist_output.get("provider")).lower()
+        model = _safe_text(strategist_output.get("model"))
+
+    return provider, model
+
+
+def _explicit_provider_latency_from_updates(
+    *,
+    node_name: str,
+    updates: Mapping[str, Any],
+) -> int | None:
+    return _explicit_provider_performance_from_updates(
+        node_name=node_name,
+        updates=updates,
+    )[0]
+
+
+def _explicit_provider_call_count_from_updates(
+    *,
+    node_name: str,
+    updates: Mapping[str, Any],
+) -> int | None:
+    return _explicit_provider_performance_from_updates(
+        node_name=node_name,
+        updates=updates,
+    )[1]
+
+
+def _explicit_provider_performance_from_updates(
+    *,
+    node_name: str,
+    updates: Mapping[str, Any],
+) -> tuple[int | None, int | None]:
+    def _metrics_from_payload(
+        payload: Mapping[str, Any],
+    ) -> tuple[int | None, int | None]:
+        return (
+            _safe_non_negative_int(payload.get("provider_latency_ms")),
+            _safe_non_negative_int(payload.get("provider_call_count")),
+        )
+
+    direct_latency = _safe_non_negative_int(updates.get("provider_latency_ms"))
+    direct_count = _safe_non_negative_int(updates.get("provider_call_count"))
+    if direct_latency is not None or direct_count is not None:
+        return direct_latency, direct_count
+
+    tool_outputs = _safe_dict(updates.get("tool_outputs", {}))
+    if node_name == "blog_writer_node":
+        blog = _safe_dict(_safe_dict(updates.get("content_drafts", {})).get("blog", {}))
+        return _metrics_from_payload(blog)
+    if node_name == "linkedin_writer_node":
+        linkedin = _safe_dict(
+            _safe_dict(updates.get("content_drafts", {})).get("linkedin", {})
+        )
+        return _metrics_from_payload(linkedin)
+    if node_name == "research_agent_node":
+        research_data = _safe_dict(updates.get("research_data", {}))
+        return (
+            None,
+            _safe_non_negative_int(research_data.get("provider_call_count")),
+        )
+    if node_name == "image_agent_node":
+        image_output = _safe_dict(tool_outputs.get("image_agent", {}))
+        return _metrics_from_payload(image_output)
+    if node_name == "query_handler_node":
+        query_handler_output = _safe_dict(tool_outputs.get("query_handler", {}))
+        return _metrics_from_payload(query_handler_output)
+    if node_name == "content_strategist_node":
+        strategist_output = _safe_dict(tool_outputs.get("content_strategist", {}))
+        return _metrics_from_payload(strategist_output)
+    return None, None
 
 
 def _is_recoverable_error(error: Any) -> bool:
@@ -193,11 +347,22 @@ def _message_for_status(node_name: str, status: str) -> str:
     return f"{node_name}: {status}."
 
 
-def _event_metadata(updates: Mapping[str, Any]) -> Dict[str, Any]:
+def _event_metadata(
+    updates: Mapping[str, Any],
+    *,
+    node_name: str,
+    status: str,
+    node_started_at: str,
+    node_ended_at: str,
+    duration_ms: int,
+) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     workflow_status = str(updates.get("workflow_status", "")).strip()
     if workflow_status:
         metadata["workflow_status"] = workflow_status
+    metadata["node_started_at"] = node_started_at
+    metadata["node_ended_at"] = node_ended_at
+    metadata["duration_ms"] = max(0, int(duration_ms))
     if "retry_requested" in updates:
         metadata["retry_requested"] = bool(updates.get("retry_requested"))
     if "retry_target" in updates:
@@ -205,9 +370,185 @@ def _event_metadata(updates: Mapping[str, Any]) -> Dict[str, Any]:
         if retry_target:
             metadata["retry_target"] = retry_target
     if "research_data" in updates:
-        metadata["research_degraded"] = bool(
-            _safe_dict(updates.get("research_data", {})).get("degraded", False)
+        research_data = _safe_dict(updates.get("research_data", {}))
+        metadata["research_degraded"] = bool(research_data.get("degraded", False))
+        if "cache_hit" in research_data:
+            metadata["cache_hit"] = bool(research_data.get("cache_hit"))
+        provider_latency_total_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_total_ms")
         )
+        if provider_latency_total_ms is not None:
+            metadata["provider_latency_total_ms"] = provider_latency_total_ms
+        provider_latency_wall_ms = _safe_non_negative_int(
+            research_data.get("provider_latency_wall_ms")
+        )
+        if provider_latency_wall_ms is not None:
+            metadata["provider_latency_wall_ms"] = provider_latency_wall_ms
+        latency_by_provider = research_data.get("provider_latency_by_provider_ms")
+        if isinstance(latency_by_provider, Mapping):
+            safe_latency_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_provider[key] = value
+            if safe_latency_by_provider:
+                metadata["provider_latency_by_provider_ms"] = safe_latency_by_provider
+        call_count_by_provider = research_data.get("provider_call_count_by_provider")
+        if isinstance(call_count_by_provider, Mapping):
+            safe_call_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_provider[key] = value
+            if safe_call_count_by_provider:
+                metadata["provider_call_count_by_provider"] = (
+                    safe_call_count_by_provider
+                )
+        provider_timeout_count = _safe_non_negative_int(
+            research_data.get("provider_timeout_count")
+        )
+        if provider_timeout_count is not None:
+            metadata["provider_timeout_count"] = provider_timeout_count
+        timeout_count_by_provider = research_data.get(
+            "provider_timeout_count_by_provider"
+        )
+        if isinstance(timeout_count_by_provider, Mapping):
+            safe_timeout_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in timeout_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_timeout_count_by_provider[key] = value
+            if safe_timeout_count_by_provider:
+                metadata["provider_timeout_count_by_provider"] = (
+                    safe_timeout_count_by_provider
+                )
+        search_provider_wall_timeout_ms = _safe_non_negative_int(
+            research_data.get("search_provider_wall_timeout_ms")
+        )
+        if search_provider_wall_timeout_ms is not None:
+            metadata["search_provider_wall_timeout_ms"] = (
+                search_provider_wall_timeout_ms
+            )
+        if "search_provider_wall_timeout_triggered" in research_data:
+            metadata["search_provider_wall_timeout_triggered"] = bool(
+                research_data.get("search_provider_wall_timeout_triggered")
+            )
+    if node_name == "content_strategist_node":
+        strategist_output = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("content_strategist", {})
+        )
+        provider_latency_total_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_total_ms")
+        )
+        if provider_latency_total_ms is not None:
+            metadata["provider_latency_total_ms"] = provider_latency_total_ms
+        provider_latency_wall_ms = _safe_non_negative_int(
+            strategist_output.get("provider_latency_wall_ms")
+        )
+        if provider_latency_wall_ms is not None:
+            metadata["provider_latency_wall_ms"] = provider_latency_wall_ms
+
+        latency_by_output_type = strategist_output.get(
+            "provider_latency_by_output_type_ms"
+        )
+        if isinstance(latency_by_output_type, Mapping):
+            safe_latency_by_output_type: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_output_type[key] = value
+            if safe_latency_by_output_type:
+                metadata["provider_latency_by_output_type_ms"] = (
+                    safe_latency_by_output_type
+                )
+
+        call_count_by_output_type = strategist_output.get(
+            "provider_call_count_by_output_type"
+        )
+        if isinstance(call_count_by_output_type, Mapping):
+            safe_call_count_by_output_type: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_output_type.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_output_type[key] = value
+            if safe_call_count_by_output_type:
+                metadata["provider_call_count_by_output_type"] = (
+                    safe_call_count_by_output_type
+                )
+    if node_name == "image_agent_node":
+        image_tool = _safe_dict(
+            _safe_dict(updates.get("tool_outputs", {})).get("image_agent", {})
+        )
+
+        latency_by_provider = image_tool.get("provider_latency_by_provider_ms")
+        if isinstance(latency_by_provider, Mapping):
+            safe_latency_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in latency_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_latency_by_provider[key] = value
+            if safe_latency_by_provider:
+                metadata["provider_latency_by_provider_ms"] = safe_latency_by_provider
+
+        call_count_by_provider = image_tool.get("provider_call_count_by_provider")
+        if isinstance(call_count_by_provider, Mapping):
+            safe_call_count_by_provider: Dict[str, int] = {}
+            for raw_key, raw_value in call_count_by_provider.items():
+                key = _safe_text(raw_key).lower()
+                value = _safe_non_negative_int(raw_value)
+                if key and value is not None:
+                    safe_call_count_by_provider[key] = value
+            if safe_call_count_by_provider:
+                metadata["provider_call_count_by_provider"] = (
+                    safe_call_count_by_provider
+                )
+
+        safe_attempts: List[Dict[str, Any]] = []
+        for raw_attempt in _safe_list(image_tool.get("image_provider_attempts", [])):
+            if not isinstance(raw_attempt, Mapping):
+                continue
+            provider_name = _safe_text(raw_attempt.get("provider")).lower()
+            model_name = _safe_text(raw_attempt.get("model"))
+            status_name = _safe_text(raw_attempt.get("status")).lower()
+            error_code = _safe_text(raw_attempt.get("error_code")).lower()
+            duration_value = _safe_non_negative_int(raw_attempt.get("duration_ms"))
+            attempt_metadata: Dict[str, Any] = {}
+            if provider_name:
+                attempt_metadata["provider"] = provider_name
+            if model_name:
+                attempt_metadata["model"] = model_name
+            if status_name:
+                attempt_metadata["status"] = status_name
+            if error_code:
+                attempt_metadata["error_code"] = error_code
+            if duration_value is not None:
+                attempt_metadata["duration_ms"] = duration_value
+            attempt_metadata["fallback"] = bool(raw_attempt.get("fallback", False))
+            if attempt_metadata:
+                safe_attempts.append(attempt_metadata)
+        if safe_attempts:
+            metadata["image_provider_attempts"] = safe_attempts
+
+        primary_provider = _safe_text(image_tool.get("primary_provider")).lower()
+        fallback_provider = _safe_text(image_tool.get("fallback_provider")).lower()
+        if primary_provider:
+            metadata["primary_provider"] = primary_provider
+        if fallback_provider:
+            metadata["fallback_provider"] = fallback_provider
+        if "fallback_provider_attempted" in image_tool:
+            metadata["fallback_provider_attempted"] = bool(
+                image_tool.get("fallback_provider_attempted")
+            )
+        if "fallback_provider_used" in image_tool:
+            metadata["fallback_provider_used"] = bool(
+                image_tool.get("fallback_provider_used")
+            )
     if "export_metadata" in updates:
         export_metadata = _safe_dict(updates.get("export_metadata", {}))
         metadata["export_error_count"] = _derive_export_error_count(export_metadata)
@@ -225,6 +566,24 @@ def _event_metadata(updates: Mapping[str, Any]) -> Dict[str, Any]:
         metadata["failed_export_formats"] = _derive_failed_export_formats(
             export_metadata
         )
+    provider, model = _node_provider_and_model(node_name=node_name, updates=updates)
+    if provider:
+        metadata["provider"] = provider
+    if model:
+        metadata["model"] = model
+    provider_latency_ms = _explicit_provider_latency_from_updates(
+        node_name=node_name,
+        updates=updates,
+    )
+    if provider_latency_ms is not None:
+        metadata["provider_latency_ms"] = provider_latency_ms
+    provider_call_count = _explicit_provider_call_count_from_updates(
+        node_name=node_name,
+        updates=updates,
+    )
+    if provider_call_count is not None:
+        metadata["provider_call_count"] = provider_call_count
+    metadata["node_status"] = str(status).strip().lower()
     return metadata
 
 
@@ -256,6 +615,7 @@ def stream_workflow_progress(
 
     progress_events: List[UIProgressEvent] = []
     latest_state: Dict[str, Any] = deepcopy(initial_state)
+    node_start_times: Dict[str, tuple[float, str]] = {}
 
     for stream_item in graph.stream(
         deepcopy(initial_state),
@@ -276,7 +636,13 @@ def stream_workflow_progress(
                 node_name=node_name,
                 status="running",
                 message=_message_for_status(node_name, "running"),
+                safe_metadata={
+                    "node_started_at": datetime.now(UTC).isoformat(
+                        timespec="milliseconds"
+                    )
+                },
             )
+            node_start_times[node_name] = (monotonic(), running_event.timestamp)
             progress_events.append(running_event)
             yield {"type": "progress", "event": asdict(running_event)}
             continue
@@ -295,11 +661,27 @@ def stream_workflow_progress(
                 continue
             updates = _safe_dict(raw_updates)
             status = _status_from_node_update(node_name, updates)
+            started_perf, started_at_iso = node_start_times.pop(
+                node_name,
+                (monotonic(), ""),
+            )
+            ended_at_iso = datetime.now(UTC).isoformat(timespec="milliseconds")
+            duration_ms = max(0, int((monotonic() - started_perf) * 1000))
+            if not started_at_iso:
+                started_at_iso = ended_at_iso
             completed_event = create_progress_event(
                 node_name=node_name,
                 status=status,
                 message=_message_for_status(node_name, status),
-                safe_metadata=_event_metadata(updates),
+                timestamp=ended_at_iso,
+                safe_metadata=_event_metadata(
+                    updates,
+                    node_name=node_name,
+                    status=status,
+                    node_started_at=started_at_iso,
+                    node_ended_at=ended_at_iso,
+                    duration_ms=duration_ms,
+                ),
             )
             progress_events.append(completed_event)
             yield {"type": "progress", "event": asdict(completed_event)}

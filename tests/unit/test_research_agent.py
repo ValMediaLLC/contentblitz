@@ -1,4 +1,7 @@
+import asyncio
 import json
+import threading
+import time
 
 from contentblitz.agents import research_agent as research_agent_module
 from contentblitz.state import create_initial_state
@@ -63,6 +66,8 @@ def test_cache_hit_skips_search_web(monkeypatch) -> None:
     updates = research_agent_module.research_agent_node(state)
     assert calls["search"] == 0
     assert updates["research_data"]["cache_hit"] is True
+    assert "provider_latency_ms" not in updates["research_data"]
+    assert "provider_call_count" not in updates["research_data"]
     assert updates["sources"][0]["title"] == "Cached"
     _assert_complete_research_data(updates)
 
@@ -75,6 +80,7 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
 
     def fake_search_web(query, depth="standard"):
         calls["search"] += 1
+        time.sleep(0.002)
         return {
             "results": [
                 {
@@ -95,7 +101,359 @@ def test_cache_miss_calls_search_web(monkeypatch) -> None:
     assert "research_data" in updates
     assert isinstance(updates["sources"], list)
     assert updates["cost_controls"]["search_queries_used_this_session"] > 0
+    # Includes query-planning + summary-synthesis generate_text calls.
+    assert updates["research_data"]["provider_call_count"] == calls["search"] + 2
+    assert isinstance(updates["research_data"]["provider_latency_total_ms"], int)
+    assert updates["research_data"]["provider_latency_total_ms"] >= 0
+    assert updates["research_data"]["provider_call_count_by_provider"]["openai"] == 2
+    assert updates["research_data"]["provider_call_count_by_provider"]["serp_api"] == 3
     _assert_complete_research_data(updates)
+
+
+def test_provider_latency_aggregates_text_and_search_calls(monkeypatch) -> None:
+    state = create_initial_state(user_query="future of battery technology")
+    calls = {"text": 0, "search": 0}
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        calls["text"] += 1
+        time.sleep(0.003)
+        if "Generate 3-5 search queries" in prompt:
+            return {
+                "output": json.dumps(
+                    ["battery query 1", "battery query 2", "battery query 3"]
+                )
+            }
+        return {"output": "Synthesized research summary."}
+
+    def fake_search_web(query, depth="standard"):
+        _ = query
+        calls["search"] += 1
+        assert depth == "standard"
+        return {
+            "results": [
+                {
+                    "title": "Battery source",
+                    "url": "https://example.com/battery",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    research_data = updates["research_data"]
+
+    assert calls["text"] == 2
+    assert calls["search"] == 3
+    assert research_data["provider_call_count"] == calls["text"] + calls["search"]
+    assert research_data["provider_latency_total_ms"] > 0
+    assert research_data["provider_latency_wall_ms"] > 0
+    assert research_data["provider_latency_by_provider_ms"]["openai"] > 0
+    assert research_data["provider_latency_by_provider_ms"]["serp_api"] >= 0
+
+
+def test_research_metrics_use_text_provider_field(monkeypatch) -> None:
+    state = create_initial_state(user_query="anthropic provider metrics")
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        time.sleep(0.002)
+        if "Generate 3-5 search queries" in prompt:
+            return {
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-6",
+                "output": json.dumps(["q1", "q2", "q3"]),
+            }
+        return {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "output": "Synthesized research summary.",
+        }
+
+    def fake_search_web(query, depth="standard"):
+        _ = (query, depth)
+        return {
+            "results": [
+                {
+                    "title": "Anthropic metrics source",
+                    "url": "https://example.com/metrics",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    call_counts = updates["research_data"]["provider_call_count_by_provider"]
+    latency = updates["research_data"]["provider_latency_by_provider_ms"]
+
+    assert call_counts["anthropic"] == 2
+    assert "openai" not in call_counts
+    assert latency["anthropic"] > 0
+    assert call_counts["serp_api"] == 3
+
+
+def test_search_fanout_runs_concurrently_and_merges_in_query_order(monkeypatch) -> None:
+    state = create_initial_state(user_query="parallel search fanout")
+    inflight = {"current": 0, "max": 0}
+    lock = threading.Lock()
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        return {"output": "Synthesized research summary."}
+
+    def fake_search_web(query, depth="standard"):
+        assert depth == "standard"
+        with lock:
+            inflight["current"] += 1
+            inflight["max"] = max(inflight["max"], inflight["current"])
+        time.sleep(0.02)
+        with lock:
+            inflight["current"] -= 1
+        return {
+            "results": [
+                {
+                    "title": f"{query} title",
+                    "url": f"https://example.com/{query}",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+
+    assert inflight["max"] >= 2
+    assert updates["research_data"]["queries"] == ["q1", "q2", "q3"]
+    assert [item["title"] for item in updates["sources"][:3]] == [
+        "q1 title",
+        "q2 title",
+        "q3 title",
+    ]
+
+
+def test_search_fanout_wall_timeout_records_timeout_metadata(monkeypatch) -> None:
+    state = create_initial_state(user_query="timeout scenario")
+
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS",
+        0.02,
+    )
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_QUERY_TIMEOUT_SECONDS",
+        0.5,
+    )
+    monkeypatch.setattr(research_agent_module, "_SEARCH_FANOUT_CONCURRENCY", 1)
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        return {"output": "Synthesis summary."}
+
+    def slow_search_web(query, depth="standard"):
+        _ = (query, depth)
+        time.sleep(0.08)
+        return {"results": []}
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", slow_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    research_data = updates["research_data"]
+
+    assert research_data["search_provider_wall_timeout_triggered"] is True
+    assert research_data["search_provider_wall_timeout_ms"] == 20
+    assert research_data["provider_timeout_count"] >= 1
+    assert research_data["provider_timeout_count_by_provider"]["serp_api"] >= 1
+    assert research_data["provider_call_count_by_provider"]["openai"] == 2
+
+
+def test_per_query_timeout_is_passed_to_search_provider_call(monkeypatch) -> None:
+    state = create_initial_state(user_query="per query timeout propagation")
+    monkeypatch.setattr(research_agent_module, "_SEARCH_QUERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS",
+        1.0,
+    )
+
+    timeout_values: list[float] = []
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        return {"output": "Synthesis summary."}
+
+    def fake_search_web(query, depth="standard", timeout_seconds=None):
+        _ = query
+        assert depth == "standard"
+        timeout_values.append(float(timeout_seconds))
+        time.sleep(0.002)
+        return {
+            "results": [
+                {
+                    "title": "Timed source",
+                    "url": "https://example.com/timed",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+
+    assert timeout_values
+    assert all(value > 0 for value in timeout_values)
+    assert all(value <= 0.05 for value in timeout_values)
+    assert updates["research_data"]["provider_timeout_count"] == 0
+
+
+def test_per_query_timeout_marks_serp_call_as_timed_out(monkeypatch) -> None:
+    state = create_initial_state(user_query="slow serp timeout behavior")
+    monkeypatch.setattr(research_agent_module, "_SEARCH_QUERY_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS",
+        1.0,
+    )
+    monkeypatch.setattr(research_agent_module, "_SEARCH_FANOUT_CONCURRENCY", 1)
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1"])}
+        return {"output": "Synthesis summary."}
+
+    def slow_search_web(query, depth="standard", timeout_seconds=None):
+        _ = (query, depth, timeout_seconds)
+        time.sleep(0.08)
+        return {"results": []}
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", slow_search_web)
+
+    updates = research_agent_module.research_agent_node(state)
+    research_data = updates["research_data"]
+
+    assert research_data["provider_timeout_count"] >= 1
+    assert research_data["provider_timeout_count_by_provider"]["serp_api"] >= 1
+    assert research_data["search_provider_wall_timeout_triggered"] is False
+
+
+def test_research_fanout_handles_running_event_loop(monkeypatch) -> None:
+    state = create_initial_state(user_query="event loop compatible fanout")
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        return {"output": "Synthesis summary."}
+
+    def fake_search_web(query, depth="standard", timeout_seconds=None):
+        _ = timeout_seconds
+        return {
+            "results": [
+                {
+                    "title": f"{query} title",
+                    "url": f"https://example.com/{query}",
+                    "snippet": (
+                        "Long enough snippet for non-degraded synthesis quality."
+                    ),
+                }
+            ]
+        }
+
+    def fail_asyncio_run(*args, **kwargs):
+        raise AssertionError("asyncio.run should not be called inside a running loop")
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
+    monkeypatch.setattr(research_agent_module.asyncio, "run", fail_asyncio_run)
+
+    async def _invoke_node():
+        return research_agent_module.research_agent_node(state)
+
+    event_loop = asyncio.new_event_loop()
+    try:
+        updates = event_loop.run_until_complete(_invoke_node())
+    finally:
+        event_loop.close()
+
+    assert updates["workflow_status"] == "research_complete"
+    assert updates["research_data"]["provider_call_count"] >= 3
+    assert updates["sources"]
+
+
+def test_search_wall_timeout_does_not_cap_full_research_node(monkeypatch) -> None:
+    state = create_initial_state(user_query="wall timeout versus node duration")
+
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_PROVIDER_WALL_TIMEOUT_SECONDS",
+        0.03,
+    )
+    monkeypatch.setattr(
+        research_agent_module,
+        "_SEARCH_QUERY_TIMEOUT_SECONDS",
+        0.5,
+    )
+    monkeypatch.setattr(research_agent_module, "_SEARCH_FANOUT_CONCURRENCY", 1)
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (model, metadata)
+        assert agent_key == "research_agent"
+        if "Generate 3-5 search queries" in prompt:
+            return {"output": json.dumps(["q1", "q2", "q3"])}
+        time.sleep(0.05)
+        return {"output": "Synthesis summary that arrives after search timeout."}
+
+    def slow_search_web(query, depth="standard"):
+        _ = (query, depth)
+        time.sleep(0.08)
+        return {"results": []}
+
+    monkeypatch.setattr(research_agent_module, "generate_text", fake_generate_text)
+    monkeypatch.setattr(research_agent_module, "search_web", slow_search_web)
+
+    started_at = time.perf_counter()
+    updates = research_agent_module.research_agent_node(state)
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    research_data = updates["research_data"]
+
+    assert research_data["search_provider_wall_timeout_triggered"] is True
+    assert elapsed_ms > 30
+    assert updates["workflow_status"] == "research_complete"
+    assert research_data["provider_latency_by_provider_ms"]["openai"] > 0
 
 
 def test_degraded_snippets_trigger_fallback(monkeypatch) -> None:
@@ -135,6 +493,9 @@ def test_degraded_snippets_trigger_fallback(monkeypatch) -> None:
     updates = research_agent_module.research_agent_node(state)
     assert "fallback" in depths
     assert updates["research_data"]["fallback_used"] is True
+    counts_by_provider = updates["research_data"]["provider_call_count_by_provider"]
+    assert counts_by_provider["serp_api"] >= 1
+    assert counts_by_provider["perplexity"] >= 1
     _assert_complete_research_data(updates)
 
 

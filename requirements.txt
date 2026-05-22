@@ -1,6 +1,8 @@
 langgraph
 openai
+anthropic
 pytest
 pytest-cov
 python-dotenv
+requests
 streamlit

@@ -983,6 +983,69 @@ def render_usage_summary(render_payload: Mapping[str, Any]) -> None:
     )
 
 
+def _format_duration_ms(value: Any) -> str:
+    if isinstance(value, bool):
+        return "0.0s"
+    if isinstance(value, int):
+        milliseconds = max(0, value)
+    elif isinstance(value, float):
+        milliseconds = max(0, int(value))
+    else:
+        return "0.0s"
+    return f"{milliseconds / 1000:.1f}s"
+
+
+def render_performance_summary(render_payload: Mapping[str, Any]) -> None:
+    summary = render_payload.get("performance_summary", {})
+    if not isinstance(summary, Mapping) or not summary:
+        return
+
+    executed_node_count = int(summary.get("executed_node_count", 0) or 0)
+    timed_node_count = int(summary.get("timed_node_count", 0) or 0)
+    total_duration = _format_duration_ms(summary.get("total_duration_ms", 0))
+    average_duration = _format_duration_ms(summary.get("average_duration_ms", 0))
+    provider_latency_total = _format_duration_ms(
+        summary.get("provider_latency_total_ms", 0)
+    )
+
+    st.subheader("Performance Summary")
+    cards = [
+        ("Executed Nodes", executed_node_count),
+        ("Timed Nodes", timed_node_count),
+        ("Total Duration", total_duration),
+        ("Avg Node Duration", average_duration),
+        ("Provider Latency", provider_latency_total),
+    ]
+    _render_compact_cards(cards, max_value_length=24)
+
+    raw_nodes = summary.get("nodes", [])
+    if not isinstance(raw_nodes, list) or not raw_nodes:
+        return
+    for raw_node in raw_nodes:
+        if not isinstance(raw_node, Mapping):
+            continue
+        node_name = _safe_text(raw_node.get("node_name"))
+        if not node_name:
+            continue
+        status = _safe_text(raw_node.get("status")).lower() or "unknown"
+        duration_label = _format_duration_ms(raw_node.get("duration_ms", 0))
+        details = [f"status={status}", f"duration={duration_label}"]
+        if "provider_latency_ms" in raw_node:
+            details.append(
+                "provider_latency="
+                + _format_duration_ms(raw_node.get("provider_latency_ms"))
+            )
+        if "cache_hit" in raw_node:
+            details.append(f"cache_hit={bool(raw_node.get('cache_hit'))}")
+        provider = _safe_text(raw_node.get("provider"))
+        if provider:
+            details.append(f"provider={provider}")
+        model = _safe_text(raw_node.get("model"))
+        if model:
+            details.append(f"model={model}")
+        st.caption(f"{node_name}: {' | '.join(details)}")
+
+
 def _render_provider_degradation_status(render_payload: Mapping[str, Any]) -> None:
     degradation = render_payload.get("degradation_metadata", {})
     if not isinstance(degradation, Mapping):
@@ -1372,6 +1435,7 @@ def render_collapsible_output_sections(
             )
         )
         render_usage_summary(render_payload)
+        render_performance_summary(render_payload)
         render_result_header(
             {"ui_workflow_status": render_payload.get("workflow_status", "")}
         )

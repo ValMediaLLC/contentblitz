@@ -26,6 +26,7 @@ from contentblitz.ui.status import (
 )
 
 _TERMINAL_FOR_PARTIAL_RENDER = {"completed", "degraded"}
+_PERFORMANCE_TERMINAL_STATUSES = {"completed", "degraded", "failed", "skipped"}
 
 
 def _safe_dict(value: Any) -> dict[str, Any]:
@@ -578,6 +579,98 @@ def _derive_usage_summary(
     }
 
 
+def _derive_performance_summary(state_snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    raw_events = state_snapshot.get("ui_progress_events")
+    if not isinstance(raw_events, list):
+        raw_events = state_snapshot.get("progress_events", [])
+    if not isinstance(raw_events, list):
+        return {}
+
+    per_node: dict[str, dict[str, Any]] = {}
+    node_order: list[str] = []
+
+    for raw_event in raw_events:
+        if not isinstance(raw_event, Mapping):
+            continue
+        node_name = _safe_text(raw_event.get("node_name"))
+        if not node_name:
+            continue
+        status = normalize_progress_status(
+            _safe_text(raw_event.get("status", "pending"))
+        )
+        if node_name not in per_node:
+            node_order.append(node_name)
+            per_node[node_name] = {"node_name": node_name, "status": status}
+        else:
+            per_node[node_name]["status"] = status
+
+        safe_metadata = _safe_dict(raw_event.get("safe_metadata", {}))
+        duration_ms = _safe_int(safe_metadata.get("duration_ms"), default=-1)
+        provider_latency_ms = _safe_int(
+            safe_metadata.get("provider_latency_ms"),
+            default=-1,
+        )
+        provider_latency_total_ms = _safe_int(
+            safe_metadata.get("provider_latency_total_ms"),
+            default=-1,
+        )
+
+        if duration_ms >= 0:
+            per_node[node_name]["duration_ms"] = duration_ms
+        if provider_latency_ms >= 0:
+            per_node[node_name]["provider_latency_ms"] = provider_latency_ms
+        elif provider_latency_total_ms >= 0:
+            per_node[node_name]["provider_latency_ms"] = provider_latency_total_ms
+            per_node[node_name]["provider_latency_total_ms"] = provider_latency_total_ms
+        if "cache_hit" in safe_metadata:
+            per_node[node_name]["cache_hit"] = bool(safe_metadata.get("cache_hit"))
+        provider = _safe_text(safe_metadata.get("provider")).lower()
+        model = _safe_text(safe_metadata.get("model"))
+        if provider:
+            per_node[node_name]["provider"] = provider
+        if model:
+            per_node[node_name]["model"] = model
+
+    if not per_node:
+        return {}
+
+    ordered_nodes = [per_node[name] for name in node_order]
+    timed_nodes = [
+        node
+        for node in ordered_nodes
+        if isinstance(node.get("duration_ms"), int) and node.get("duration_ms", -1) >= 0
+    ]
+    provider_latency_nodes = [
+        node
+        for node in ordered_nodes
+        if isinstance(node.get("provider_latency_ms"), int)
+        and node.get("provider_latency_ms", -1) >= 0
+    ]
+    total_duration_ms = sum(int(node.get("duration_ms", 0)) for node in timed_nodes)
+    total_provider_latency_ms = sum(
+        int(node.get("provider_latency_ms", 0)) for node in provider_latency_nodes
+    )
+
+    terminal_node_count = sum(
+        1
+        for node in ordered_nodes
+        if _safe_text(node.get("status")).lower() in _PERFORMANCE_TERMINAL_STATUSES
+    )
+
+    return {
+        "executed_node_count": len(ordered_nodes),
+        "terminal_node_count": terminal_node_count,
+        "timed_node_count": len(timed_nodes),
+        "total_duration_ms": total_duration_ms,
+        "average_duration_ms": (
+            int(total_duration_ms / len(timed_nodes)) if timed_nodes else 0
+        ),
+        "provider_latency_total_ms": total_provider_latency_ms,
+        "timed_provider_node_count": len(provider_latency_nodes),
+        "nodes": ordered_nodes,
+    }
+
+
 def build_render_payload(
     *,
     state: Mapping[str, Any],
@@ -715,6 +808,7 @@ def build_render_payload(
         ui_workflow_status=ui_workflow_status,
         sources_returned=len(display_sources),
     )
+    performance_summary = _derive_performance_summary(state_snapshot)
     budget_state = _safe_text(usage_summary.get("budget_state")).lower()
     if budget_state == "degraded":
         warnings.append(
@@ -811,6 +905,7 @@ def build_render_payload(
         ),
         "node_statuses": merged_statuses,
         "usage_summary": usage_summary,
+        "performance_summary": performance_summary,
         "export_status": {
             "requested": bool(state_snapshot.get("export_requested", False))
             or bool(_safe_list(export_metadata.get("formats_requested", []))),

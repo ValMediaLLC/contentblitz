@@ -10,7 +10,7 @@ from contentblitz.tools.exports.markdown import build_markdown_export_document
 export_node_module = importlib.import_module("contentblitz.agents.export_node")
 
 _PROVIDER_WARNING = (
-    "OpenAI provider unavailable or quota-limited. "
+    "Provider unavailable or quota-limited. "
     "ContentBlitz generated limited fallback outputs."
 )
 _TEXT_FALLBACK_WARNING = (
@@ -315,12 +315,12 @@ def test_markdown_export_includes_provider_degradation_warning(
     monkeypatch.setenv("CONTENTBLITZ_EXPORT_DIR", str(tmp_path / "exports"))
     state = _base_state(
         tmp_path,
-        status_messages=[
-            (
-                "OpenAI provider unavailable or quota-limited. "
-                "ContentBlitz generated limited fallback outputs."
-            )
-        ],
+            status_messages=[
+                (
+                    "Provider unavailable or quota-limited. "
+                    "ContentBlitz generated limited fallback outputs."
+                )
+            ],
         content_drafts={
             "blog": {
                 "body": "## Fallback Blog Outline\nLimited content.",
@@ -336,7 +336,7 @@ def test_markdown_export_includes_provider_degradation_warning(
     markdown = build_markdown_export_document(state)
 
     assert "## Warnings" in markdown
-    assert "OpenAI provider unavailable or quota-limited." in markdown
+    assert "Provider unavailable or quota-limited." in markdown
     assert _TEXT_FALLBACK_WARNING in markdown
     assert "## Fallback Blog Outline" in markdown
     assert "content_creation" not in markdown.lower()
@@ -386,7 +386,7 @@ def test_markdown_export_dedupes_semantically_overlapping_provider_warnings(
 
     markdown = build_markdown_export_document(state)
 
-    assert markdown.count("OpenAI provider unavailable or quota-limited.") == 1
+    assert markdown.count("Provider unavailable or quota-limited.") == 1
     assert markdown.count("Blog and LinkedIn outputs are fallback outlines.") == 1
     assert markdown.count("Image generation encountered a recoverable issue.") == 1
 

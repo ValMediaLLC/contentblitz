@@ -38,8 +38,10 @@ MODEL_FALLBACKS: Dict[str, str] = {
     "fallback_text_model": "gpt-4o-mini",
     "primary_search_provider": "serp_api",
     "fallback_search_provider": "perplexity",
-    "primary_image_provider": "dall-e-3",
-    "fallback_image_provider": "dall-e-2",
+    "primary_image_provider": "stability_ai",
+    "fallback_image_provider": "fal_ai",
+    "primary_image_model": "stable-image-core",
+    "fallback_image_model": "fal-ai/flux/schnell",
 }
 
 INJECTION_GUARD = {

@@ -38,7 +38,11 @@ def _sample_state() -> dict:
                 "prompt": "Create an image concept...",
                 "error": {
                     "code": "unknown_error",
-                    "message": "{'code': 'configuration_error', 'message': 'OPENAI_API_KEY is not configured.', 'provider': 'openai', 'recoverable': False}",
+                    "message": (
+                        "{'code': 'configuration_error', "
+                        "'message': 'OPENAI_API_KEY is not configured.', "
+                        "'provider': 'openai', 'recoverable': False}"
+                    ),
                     "recoverable": True,
                 },
             },
@@ -83,7 +87,10 @@ def _sample_state() -> dict:
         },
         "errors": [
             {
-                "message": "Traceback (most recent call last):\nOPENAI_API_KEY=sk-secret",
+                "message": (
+                    "Traceback (most recent call last):\n"
+                    "OPENAI_API_KEY=sk-secret"
+                ),
                 "recoverable": False,
             }
         ],
@@ -231,6 +238,57 @@ def test_progress_event_metadata_does_not_override_top_level_status() -> None:
     assert restored["ui_workflow_status"] == "partial_success"
 
 
+def test_progress_event_metadata_preserves_image_provider_attempt_diagnostics() -> None:
+    state = _sample_state()
+    state["ui_progress_events"] = [
+        {
+            "node_name": "image_agent_node",
+            "status": "degraded",
+            "message": "image_agent_node completed with warnings.",
+            "timestamp": "2026-05-11T04:21:38+00:00",
+            "safe_metadata": {
+                "workflow_status": "partial_success",
+                "provider_call_count": 2,
+                "provider_call_count_by_provider": {
+                    "stability_ai": 1,
+                    "fal_ai": 1,
+                },
+                "image_provider_attempts": [
+                    {
+                        "provider": "stability_ai",
+                        "status": "failed",
+                        "error_code": "authentication_failed",
+                    },
+                    {
+                        "provider": "fal_ai",
+                        "status": "failed",
+                        "error_code": "configuration_error",
+                    },
+                ],
+            },
+        }
+    ]
+
+    serialized = serialize_workflow_run(
+        result_state=state,
+        run_id="run-progress-2",
+        session_id="session-progress-2",
+    )
+
+    event_metadata = serialized["progress_events"][0]["safe_metadata"]
+    assert event_metadata["provider_call_count"] == 2
+    assert event_metadata["provider_call_count_by_provider"] == {
+        "stability_ai": 1,
+        "fal_ai": 1,
+    }
+    assert event_metadata["image_provider_attempts"][0]["error_code"] == (
+        "authentication_failed"
+    )
+    assert event_metadata["image_provider_attempts"][1]["error_code"] == (
+        "configuration_error"
+    )
+
+
 def test_export_metadata_status_messages_are_sanitized_on_serialize() -> None:
     state = _sample_state()
     state["export_metadata"] = {
@@ -331,7 +389,7 @@ def test_cost_controls_are_serialized_safely_and_restore_without_provider_detail
         "image_generation_cap_per_session": 3,
         "max_total_retries_per_session": 3,
         "provider_invoice_payload": {"unsafe": True},
-        "secret_pricing_table": "do-not-persist",
+        "secret_pricing_table": "do-not-persist", # pragma: allowlist secret
     }
 
     serialized = serialize_workflow_run(
@@ -359,9 +417,7 @@ def test_cost_controls_are_serialized_safely_and_restore_without_provider_detail
     assert restored["cost_controls"] == controls
 
 
-def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> (
-    None
-):
+def test_serialization_sanitizes_persisted_drafts_and_final_response_for_unsafe_content() -> None:  # noqa: E501
     for export_enabled in (True, False):
         state = _sample_state()
         state["final_response"] = (

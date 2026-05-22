@@ -115,9 +115,14 @@ def _reset_tracing_factory() -> None:
     observability_module.reset_tracer_factory()
 
 
-def _install_text_client(monkeypatch: pytest.MonkeyPatch, content: str) -> None:
+def _install_text_client(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    *,
+    model: str = "gpt-4o-mini",
+) -> None:
     response = SimpleNamespace(
-        model="gpt-4o",
+        model=model,
         choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8, total_tokens=20),
     )
@@ -137,14 +142,17 @@ def _install_image_client_with_fallback(monkeypatch: pytest.MonkeyPatch) -> None
         calls.append(dict(kwargs))
         if len(calls) == 1:
             raise RuntimeError("primary failed")
-        return SimpleNamespace(
-            data=[SimpleNamespace(url="https://img.example/fallback.png")]
-        )
+        return {"images": [{"url": "https://img.example/fallback.png"}]}
 
-    client = SimpleNamespace(images=SimpleNamespace(generate=_generate))
+    client = SimpleNamespace(generate=_generate)
     monkeypatch.setattr(
         generate_image_module,
-        "_build_openai_client",
+        "_build_stability_client",
+        lambda api_key: client,
+    )
+    monkeypatch.setattr(
+        generate_image_module,
+        "_build_fal_client",
         lambda api_key: client,
     )
 
@@ -180,7 +188,7 @@ def test_generate_text_creates_child_span_when_tracing_enabled(
     )
     finish_metadata = tool_finish["metadata"]
     assert finish_metadata["provider"] == "openai"
-    assert finish_metadata["model"] == "gpt-4o"
+    assert finish_metadata["model"] == "gpt-4o-mini"
     assert finish_metadata["total_token_count"] == 20
     assert finish_metadata["retry_attempt"] >= 1
     assert finish_metadata["fallback_used"] is False
@@ -273,7 +281,8 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     _clear_langsmith_env(monkeypatch)
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls-test")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-secret")
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     monkeypatch.setenv("CONTENTBLITZ_ENABLE_LIVE_CALLS", "1")
     _install_image_client_with_fallback(monkeypatch)
 
@@ -284,15 +293,15 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
 
     assert result.degraded is False
-    assert result.model == "dall-e-2"
+    assert result.model == "fal-ai/flux/schnell"
     tool_names = [
         event.get("tool_name")
         for event in recording.events
         if event.get("event") == "tool_start"
     ]
     assert "generate_image" in tool_names
-    assert "dall_e_3" in tool_names
-    assert "dall_e_2_fallback" in tool_names
+    assert "stability_ai" in tool_names
+    assert "fal_ai_fallback" in tool_names
     image_finish = next(
         event
         for event in recording.events
@@ -301,8 +310,8 @@ def test_generate_image_fallback_span_and_no_base64_in_metadata(
     )
     image_metadata = image_finish["metadata"]
     assert image_metadata["fallback_used"] is True
-    assert image_metadata["fallback_model"] == "dall-e-2"
-    assert image_metadata["final_model"] == "dall-e-2"
+    assert image_metadata["fallback_model"] == "fal-ai/flux/schnell"
+    assert image_metadata["final_model"] == "fal-ai/flux/schnell"
     assert image_metadata["image_output_count"] == 1
     flattened = repr(recording.events).lower()
     assert "base64" not in flattened

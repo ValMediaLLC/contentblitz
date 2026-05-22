@@ -95,7 +95,24 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "dall-e-3",
+            "provider_used": "stability_ai",
+            "primary_provider": "stability_ai",
+            "fallback_provider": "fal_ai",
+            "fallback_provider_attempted": False,
+            "fallback_provider_used": False,
+            "provider_call_count": 1,
+            "provider_call_count_by_provider": {"stability_ai": 1},
+            "provider_latency_by_provider_ms": {"stability_ai": 120},
+            "image_provider_attempts": [
+                {
+                    "provider": "stability_ai",
+                    "model": "stable-image-core",
+                    "status": "success",
+                    "error_code": "",
+                    "duration_ms": 120,
+                    "fallback": False,
+                }
+            ],
             "images": [
                 {
                     "url": "https://example.com/success.png",
@@ -115,6 +132,22 @@ def test_successful_image_writes_image_outputs(monkeypatch) -> None:
     assert updates["image_outputs"][0]["status"] == "success"
     assert updates["image_outputs"][0]["url"] == "https://example.com/success.png"
     assert updates["image_outputs"][0]["renderable"] is True
+    assert updates["tool_outputs"]["image_agent"]["provider_call_count"] == 1
+    assert (
+        updates["tool_outputs"]["image_agent"]["provider_call_count_by_provider"]
+        == {"stability_ai": 1}
+    )
+    assert updates["tool_outputs"]["image_agent"]["primary_provider"] == "stability_ai"
+    assert updates["tool_outputs"]["image_agent"]["fallback_provider"] == "fal_ai"
+    assert (
+        updates["tool_outputs"]["image_agent"]["fallback_provider_attempted"] is False
+    )
+    assert updates["tool_outputs"]["image_agent"]["fallback_provider_used"] is False
+    assert len(updates["tool_outputs"]["image_agent"]["image_provider_attempts"]) == 1
+    assert isinstance(
+        updates["tool_outputs"]["image_agent"]["provider_latency_ms"],
+        int,
+    )
     assert updates["draft_status"]["image"] == "complete"
 
 
@@ -124,7 +157,7 @@ def test_successful_local_path_image_writes_renderable_output(monkeypatch) -> No
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "gpt-image-1",
+            "provider_used": "fal_ai",
             "images": [
                 {
                     "local_path": "exports/images/fashion_001.png",
@@ -151,7 +184,53 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
         return {"output": "Enhanced prompt."}
 
     def fake_generate_image(prompt, style="default"):
-        return {"provider_used": "dall-e-3", "images": [], "error": "provider timeout"}
+        return {
+            "provider_used": "stability_ai",
+            "primary_provider": "stability_ai",
+            "fallback_provider": "fal_ai",
+            "fallback_provider_attempted": True,
+            "fallback_provider_used": False,
+            "provider_call_count": 2,
+            "provider_call_count_by_provider": {
+                "stability_ai": 1,
+                "fal_ai": 1,
+            },
+            "provider_latency_by_provider_ms": {
+                "stability_ai": 250,
+                "fal_ai": 220,
+            },
+            "image_provider_attempts": [
+                {
+                    "provider": "stability_ai",
+                    "model": "stable-image-core",
+                    "status": "failed",
+                    "error_code": "authentication_failed",
+                    "duration_ms": 250,
+                    "fallback": False,
+                },
+                {
+                    "provider": "fal_ai",
+                    "model": "fal-ai/flux/schnell",
+                    "status": "failed",
+                    "error_code": "empty_provider_response",
+                    "duration_ms": 220,
+                    "fallback": True,
+                    "response_shape": {
+                        "response_keys": ["images"],
+                        "images_present": True,
+                        "image_count": 1,
+                        "first_image_keys": ["url", "content_type"],
+                        "url_present": False,
+                        "local_path_present": False,
+                        "image_bytes_present": False,
+                        "b64_json_present": False,
+                        "request_id_present": False,
+                    },
+                },
+            ],
+            "images": [],
+            "error": "provider timeout",
+        }
 
     monkeypatch.setattr(image_agent_module, "generate_text", fake_generate_text)
     monkeypatch.setattr(image_agent_module, "generate_image", fake_generate_image)
@@ -160,8 +239,46 @@ def test_failed_image_writes_recoverable_error(monkeypatch) -> None:
     assert updates["image_outputs"][-1]["status"] == "failed"
     assert updates["image_outputs"][-1]["recoverable"] is True
     assert updates["image_outputs"][-1]["error"]["code"] == "unknown_provider_error"
+    assert updates["image_outputs"][-1]["provider_call_count"] == 2
+    assert updates["image_outputs"][-1]["primary_provider"] == "stability_ai"
+    assert updates["image_outputs"][-1]["fallback_provider"] == "fal_ai"
+    assert updates["image_outputs"][-1]["fallback_provider_attempted"] is True
+    assert updates["image_outputs"][-1]["fallback_provider_used"] is False
+    assert (
+        updates["image_outputs"][-1]["provider_call_count_by_provider"]
+        == {
+            "stability_ai": 1,
+            "fal_ai": 1,
+        }
+    )
+    assert len(updates["image_outputs"][-1]["image_provider_attempts"]) == 2
+    assert (
+        updates["image_outputs"][-1]["image_provider_attempts"][1]["response_shape"][
+            "images_present"
+        ]
+        is True
+    )
+    assert (
+        updates["image_outputs"][-1]["image_provider_attempts"][1]["response_shape"][
+            "url_present"
+        ]
+        is False
+    )
     assert "traceback" not in str(updates["image_outputs"][-1]["error"]).lower()
     assert updates["tool_outputs"]["image_agent"]["status"] == "failed"
+    assert updates["tool_outputs"]["image_agent"]["provider_call_count"] == 2
+    assert (
+        updates["tool_outputs"]["image_agent"]["provider_call_count_by_provider"]
+        == {
+            "stability_ai": 1,
+            "fal_ai": 1,
+        }
+    )
+    assert updates["tool_outputs"]["image_agent"]["primary_provider"] == "stability_ai"
+    assert updates["tool_outputs"]["image_agent"]["fallback_provider"] == "fal_ai"
+    assert updates["tool_outputs"]["image_agent"]["fallback_provider_attempted"] is True
+    assert updates["tool_outputs"]["image_agent"]["fallback_provider_used"] is False
+    assert len(updates["tool_outputs"]["image_agent"]["image_provider_attempts"]) == 2
     assert updates["draft_status"]["image"] == "failed"
     assert len(updates["image_prompts"]) >= 1
     assert len(updates["image_outputs"]) >= 1
@@ -208,7 +325,7 @@ def test_non_renderable_asset_id_is_degraded_not_success(monkeypatch) -> None:
 
     def fake_generate_image(prompt, style="default"):
         return {
-            "provider_used": "gpt-image-1",
+            "provider_used": "fal_ai",
             "images": [
                 {
                     "id": "img_asset_only_001",

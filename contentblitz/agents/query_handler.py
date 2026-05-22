@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, Optional
 
 from contentblitz.core.cost_controls import (
@@ -637,18 +639,36 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "export_formats.\n\n"
         f"User query: {effective_query}"
     )
-    model = preferred_text_model(cost_controls)
-    llm_response = generate_text(
-        prompt=prompt,
-        agent_key="query_handler",
-        model=model,
+    model = preferred_text_model(cost_controls, agent_key="query_handler")
+    provider_started_at = perf_counter()
+    llm_response = _safe_dict(
+        generate_text(
+            prompt=prompt,
+            agent_key="query_handler",
+            model=model,
+        )
     )
+    provider_latency_ms = max(0, int((perf_counter() - provider_started_at) * 1000))
+    provider_call_count = 1
+    tool_outputs = deepcopy(_safe_dict(state.get("tool_outputs", {})))
+    query_handler_metrics: Dict[str, Any] = {
+        "provider_latency_ms": provider_latency_ms,
+        "provider_call_count": provider_call_count,
+    }
+    provider = str(llm_response.get("provider", "")).strip().lower()
+    model_used = str(llm_response.get("model", "")).strip()
+    if provider:
+        query_handler_metrics["provider"] = provider
+    if model_used:
+        query_handler_metrics["model"] = model_used
+    tool_outputs["query_handler"] = query_handler_metrics
     cost_controls = apply_text_tokens(cost_controls, llm_response)
     if token_budget_exceeded(cost_controls):
         cost_controls["budget_exceeded"] = True
         return _with_lifecycle_fields(
             {
                 "cost_controls": cost_controls,
+                "tool_outputs": tool_outputs,
                 "errors": _append_budget_error(
                     state,
                     "Session token budget exceeded during query classification.",
@@ -664,4 +684,5 @@ def query_handler_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     classified["routing_decision"] = _determine_routing_decision(classified)
     classified["cost_controls"] = cost_controls
+    classified["tool_outputs"] = tool_outputs
     return _with_lifecycle_fields({**classified, **injection_updates})

@@ -138,6 +138,18 @@ def test_graph_executes_with_tracing_enabled_mocked_tracer(
     assert node_names.issubset(AUTHORITATIVE_NODE_SET)
     assert {"query_handler_node", "clarification_node"}.issubset(node_names)
 
+    node_finish_events = [
+        item for item in recording.events if item.get("event") == "node_finish"
+    ]
+    assert node_finish_events
+    for event in node_finish_events:
+        metadata = event.get("metadata", {})
+        assert isinstance(metadata, dict)
+        assert isinstance(metadata.get("duration_ms"), int)
+        assert int(metadata.get("duration_ms", -1)) >= 0
+        assert metadata.get("node_started_at")
+        assert metadata.get("node_ended_at")
+
 
 def test_tracing_failure_does_not_fail_graph_execution(
     monkeypatch: pytest.MonkeyPatch,

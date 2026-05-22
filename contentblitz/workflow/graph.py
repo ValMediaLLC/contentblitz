@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import perf_counter
 from typing import (
     Annotated,
     Any,
@@ -655,31 +657,47 @@ def _merge_state_updates(
     """
 
     def _wrapped(state: Dict[str, Any]) -> Dict[str, Any]:
+        node_started_at = datetime.now(UTC)
+        started_at_perf = perf_counter()
         tracer = get_workflow_tracer()
         node_span = tracer.start_node(
             node_name=node_name,
-            metadata=safe_node_start_metadata(state=state, node_name=node_name),
+            metadata=safe_node_start_metadata(
+                state=state,
+                node_name=node_name,
+                node_started_at=node_started_at,
+            ),
         )
         try:
             updates = node_fn(state)
         except Exception as error:
+            node_ended_at = datetime.now(UTC)
+            duration_ms = max(0, int((perf_counter() - started_at_perf) * 1000))
             node_span.finish(
                 metadata=safe_node_end_metadata(
                     state=state,
                     node_name=node_name,
                     node_status="failed",
                     updates={},
+                    node_started_at=node_started_at,
+                    node_ended_at=node_ended_at,
+                    duration_ms=duration_ms,
                 ),
                 error=error,
             )
             raise
         if not isinstance(updates, dict):
+            node_ended_at = datetime.now(UTC)
+            duration_ms = max(0, int((perf_counter() - started_at_perf) * 1000))
             node_span.finish(
                 metadata=safe_node_end_metadata(
                     state=state,
                     node_name=node_name,
                     node_status="completed",
                     updates={},
+                    node_started_at=node_started_at,
+                    node_ended_at=node_ended_at,
+                    duration_ms=duration_ms,
                 ),
                 outputs={"update_keys": []},
             )
@@ -698,12 +716,17 @@ def _merge_state_updates(
             "completed_with_warnings",
         }:
             node_status = "degraded"
+        node_ended_at = datetime.now(UTC)
+        duration_ms = max(0, int((perf_counter() - started_at_perf) * 1000))
         node_span.finish(
             metadata=safe_node_end_metadata(
                 state=state,
                 node_name=node_name,
                 node_status=node_status,
                 updates=partial_updates,
+                node_started_at=node_started_at,
+                node_ended_at=node_ended_at,
+                duration_ms=duration_ms,
             ),
             outputs={"update_keys": sorted(partial_updates.keys())},
         )

@@ -75,7 +75,10 @@ def default_text_payload(prompt: str) -> str:
             ]
         )
     if "synthesize a concise research brief from these findings." in lowered:
-        return "Research synthesis from mocked sources with deterministic confidence notes."
+        return (
+            "Research synthesis from mocked sources with deterministic confidence "
+            "notes."
+        )
     if "create a json content brief for 'blog'" in lowered:
         return json.dumps(
             {
@@ -107,13 +110,17 @@ def default_text_payload(prompt: str) -> str:
     if "write an seo-friendly blog draft in markdown." in lowered:
         return (
             "# AI Productivity Workflows\n\n"
-            "Repeatable editorial workflows outperform ad-hoc prompting because ownership, "
+            "Repeatable editorial workflows outperform ad-hoc prompting because "
+            "ownership, "
             "quality gates, and feedback loops are explicit."
         )
     if "write a linkedin post in plain text." in lowered:
         return _long_linkedin_post()
     if "enhance this image generation prompt for clarity and visual detail." in lowered:
-        return "Create a high-detail futuristic apparel campaign scene with cinematic contrast."
+        return (
+            "Create a high-detail futuristic apparel campaign scene with "
+            "cinematic contrast."
+        )
     return "Generic mocked provider output."
 
 
@@ -162,7 +169,10 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
                 {
                     "title": "Primary source A",
                     "link": "https://example.com/source-a",
-                    "snippet": "Detailed source snippet about AI workflow execution and measurable gains.",
+                    "snippet": (
+                        "Detailed source snippet about AI workflow execution and "
+                        "measurable gains."
+                    ),
                     "source": "ExampleA",
                     "date": "2026-05-10",
                 },
@@ -175,7 +185,10 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
                 {
                     "title": "Primary source B",
                     "link": "https://example.com/source-b",
-                    "snippet": "Additional detailed source text for citation validation and synthesis.",
+                    "snippet": (
+                        "Additional detailed source text for citation validation "
+                        "and synthesis."
+                    ),
                     "source": "ExampleB",
                 },
             ]
@@ -187,7 +200,10 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
             "choices": [
                 {
                     "message": {
-                        "content": "Fallback source synthesis for degraded provider conditions.",
+                        "content": (
+                            "Fallback source synthesis for degraded provider "
+                            "conditions."
+                        ),
                     },
                     "citations": [],
                 }
@@ -202,6 +218,8 @@ def install_mock_search(monkeypatch, *, weak_serp: bool = False) -> dict[str, in
 def install_mock_image_client(
     monkeypatch, *, fail_all: bool = False
 ) -> dict[str, list[str]]:
+    monkeypatch.setenv("STABILITY_API_KEY", "stability-test")
+    monkeypatch.setenv("FAL_API_KEY", "fal-test")
     calls = {"models": []}
 
     def generate(**kwargs):
@@ -220,6 +238,9 @@ def install_mock_image_client(
     client = SimpleNamespace(images=SimpleNamespace(generate=generate))
     monkeypatch.setattr(
         generate_image_module, "_build_openai_client", lambda api_key: client
+    )
+    monkeypatch.setattr(
+        generate_image_module, "_build_fal_client", lambda api_key: client
     )
     return calls
 

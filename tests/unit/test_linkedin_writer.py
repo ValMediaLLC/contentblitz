@@ -1,3 +1,5 @@
+import time
+
 from contentblitz.agents import linkedin_writer as linkedin_writer_module
 from contentblitz.state import create_initial_state
 
@@ -329,3 +331,26 @@ def test_degraded_generate_text_creates_marked_linkedin_fallback(monkeypatch) ->
     assert updates["status_messages"][0].startswith(
         "Draft unavailable because text generation is currently limited."
     )
+
+
+def test_multiple_timed_generate_text_calls_aggregate_provider_latency(
+    monkeypatch,
+) -> None:
+    calls = {"count": 0}
+
+    def fake_generate_text(prompt, agent_key, model="gpt-4o", metadata=None):
+        _ = (prompt, agent_key, model, metadata)
+        calls["count"] += 1
+        time.sleep(0.002)
+        if calls["count"] == 1:
+            return {"output": "Too short.\n\n#AI"}
+        return {"output": _long_linkedin_post()}
+
+    monkeypatch.setattr(linkedin_writer_module, "generate_text", fake_generate_text)
+    updates = linkedin_writer_module.linkedin_writer_node(_base_state())
+    linkedin = updates["content_drafts"]["linkedin"]
+
+    assert calls["count"] == 2
+    assert linkedin["provider_call_count"] == 2
+    assert isinstance(linkedin["provider_latency_ms"], int)
+    assert linkedin["provider_latency_ms"] >= 0

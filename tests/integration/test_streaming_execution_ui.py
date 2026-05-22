@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
@@ -304,3 +305,286 @@ def test_streaming_emits_running_event_from_task_start_before_completion(
     statuses = [event.get("status") for event in progress_events]
     assert statuses == ["running", "completed"]
     assert "." in str(progress_events[0].get("timestamp", ""))
+
+
+def test_streaming_completed_events_include_safe_timing_metadata_for_executed_nodes(
+    monkeypatch,
+) -> None:
+    class _FakeGraph:
+        def stream(self, _state, *, stream_mode):
+            assert stream_mode == ["tasks", "updates", "values"]
+            yield ("values", {"workflow_status": "running"})
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "query_handler_node",
+                    "input": {},
+                    "triggers": ["start"],
+                },
+            )
+            yield (
+                "updates",
+                {"query_handler_node": {"workflow_status": "routing_complete"}},
+            )
+            yield (
+                "tasks",
+                {
+                    "id": "task-2",
+                    "name": "research_agent_node",
+                    "input": {},
+                    "triggers": ["start"],
+                },
+            )
+            yield (
+                "updates",
+                {
+                    "research_agent_node": {
+                        "workflow_status": "research_complete",
+                        "research_data": {"degraded": False, "cache_hit": True},
+                        "sources": [
+                            {
+                                "provider": "serp_api",
+                                "title": "Source",
+                                "snippet": "safe snippet",
+                            }
+                        ],
+                    }
+                },
+            )
+            yield (
+                "values",
+                {"workflow_status": "success", "final_response": "done"},
+            )
+
+    monkeypatch.setattr(orchestrator_client_module, "_get_graph", lambda: _FakeGraph())
+
+    progress_events: list[dict[str, Any]] = []
+    for item in stream_workflow_progress(
+        user_query="test",
+        requested_outputs=["blog"],
+        export_requested=False,
+        export_formats=[],
+    ):
+        if item.get("type") != "progress":
+            continue
+        event = item.get("event")
+        if isinstance(event, dict):
+            progress_events.append(event)
+
+    completed_events = [
+        event
+        for event in progress_events
+        if event.get("status") in {"completed", "degraded", "failed", "skipped"}
+    ]
+    assert completed_events
+
+    nodes_with_completed = {event.get("node_name") for event in completed_events}
+    assert {"query_handler_node", "research_agent_node"}.issubset(nodes_with_completed)
+
+    for event in completed_events:
+        safe_metadata = event.get("safe_metadata", {})
+        assert isinstance(safe_metadata, dict)
+        assert safe_metadata.get("node_started_at")
+        assert safe_metadata.get("node_ended_at")
+        assert isinstance(safe_metadata.get("duration_ms"), int)
+        assert int(safe_metadata.get("duration_ms", -1)) >= 0
+        assert safe_metadata.get("node_status") == event.get("status")
+
+    research_event = next(
+        event
+        for event in completed_events
+        if event.get("node_name") == "research_agent_node"
+    )
+    research_metadata = research_event.get("safe_metadata", {})
+    assert research_metadata.get("cache_hit") is True
+    assert research_metadata.get("provider") == "serp_api"
+    assert "provider_latency_ms" not in research_metadata
+
+
+def test_streaming_includes_provider_latency_only_when_explicitly_provided(
+    monkeypatch,
+) -> None:
+    class _FakeGraph:
+        def stream(self, _state, *, stream_mode):
+            assert stream_mode == ["tasks", "updates", "values"]
+            yield ("values", {"workflow_status": "running"})
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "research_agent_node",
+                    "input": {},
+                    "triggers": ["start"],
+                },
+            )
+            yield (
+                "updates",
+                {
+                        "research_agent_node": {
+                            "workflow_status": "research_complete",
+                            "research_data": {
+                                "degraded": False,
+                                "cache_hit": False,
+                                "provider_latency_total_ms": 33,
+                                "provider_latency_wall_ms": 21,
+                                "provider_latency_by_provider_ms": {"serp_api": 28},
+                                "provider_call_count": 2,
+                                "provider_call_count_by_provider": {"serp_api": 2},
+                                "provider_timeout_count": 0,
+                                "provider_timeout_count_by_provider": {},
+                                "search_provider_wall_timeout_ms": 8000,
+                                "search_provider_wall_timeout_triggered": False,
+                            },
+                            "sources": [
+                                {
+                                    "provider": "serp_api",
+                                    "title": "Source",
+                                    "snippet": "safe snippet",
+                                }
+                            ],
+                        }
+                    },
+                )
+            yield ("values", {"workflow_status": "success", "final_response": "done"})
+
+    monkeypatch.setattr(orchestrator_client_module, "_get_graph", lambda: _FakeGraph())
+
+    completed_events: list[dict[str, Any]] = []
+    for item in stream_workflow_progress(
+        user_query="test",
+        requested_outputs=["research"],
+        export_requested=False,
+        export_formats=[],
+    ):
+        if item.get("type") != "progress":
+            continue
+        event = item.get("event")
+        if not isinstance(event, dict):
+            continue
+        if event.get("status") in {"completed", "degraded", "failed", "skipped"}:
+            completed_events.append(event)
+
+    research_event = next(
+        event
+        for event in completed_events
+        if event.get("node_name") == "research_agent_node"
+    )
+    safe_metadata = research_event.get("safe_metadata", {})
+    assert safe_metadata.get("duration_ms") >= 0
+    assert safe_metadata.get("provider_latency_total_ms") == 33
+    assert safe_metadata.get("provider_latency_wall_ms") == 21
+    assert (
+        safe_metadata.get("provider_latency_by_provider_ms", {}).get("serp_api")
+        == 28
+    )
+
+
+def test_streaming_image_node_persists_provider_attempt_diagnostics(
+    monkeypatch,
+) -> None:
+    class _FakeGraph:
+        def stream(self, _state, *, stream_mode):
+            assert stream_mode == ["tasks", "updates", "values"]
+            yield ("values", {"workflow_status": "running"})
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "image_agent_node",
+                    "input": {},
+                    "triggers": ["start"],
+                },
+            )
+            yield (
+                "updates",
+                {
+                    "image_agent_node": {
+                        "workflow_status": "partial_success",
+                        "tool_outputs": {
+                            "image_agent": {
+                                "status": "failed",
+                                "provider": "fal_ai",
+                                "model": "fal-ai/flux/schnell",
+                                "provider_call_count": 2,
+                                "provider_call_count_by_provider": {
+                                    "stability_ai": 1,
+                                    "fal_ai": 1,
+                                },
+                                "provider_latency_by_provider_ms": {
+                                    "stability_ai": 420,
+                                    "fal_ai": 510,
+                                },
+                                "image_provider_attempts": [
+                                    {
+                                        "provider": "stability_ai",
+                                        "model": "stable-image-core",
+                                        "status": "failed",
+                                        "error_code": "authentication_failed",
+                                        "duration_ms": 420,
+                                        "fallback": False,
+                                    },
+                                    {
+                                        "provider": "fal_ai",
+                                        "model": "fal-ai/flux/schnell",
+                                        "status": "failed",
+                                        "error_code": "configuration_error",
+                                        "duration_ms": 510,
+                                        "fallback": True,
+                                    },
+                                ],
+                                "primary_provider": "stability_ai",
+                                "fallback_provider": "fal_ai",
+                                "fallback_provider_attempted": True,
+                                "fallback_provider_used": False,
+                            }
+                        },
+                        "image_outputs": [{"status": "failed"}],
+                    }
+                },
+            )
+            yield (
+                "values",
+                {"workflow_status": "partial_success", "final_response": "done"},
+            )
+
+    monkeypatch.setattr(orchestrator_client_module, "_get_graph", lambda: _FakeGraph())
+
+    completed_events: list[dict[str, Any]] = []
+    for item in stream_workflow_progress(
+        user_query="image test",
+        requested_outputs=["image"],
+        export_requested=False,
+        export_formats=[],
+    ):
+        if item.get("type") != "progress":
+            continue
+        event = item.get("event")
+        if not isinstance(event, dict):
+            continue
+        if event.get("status") in {"completed", "degraded", "failed", "skipped"}:
+            completed_events.append(event)
+
+    image_event = next(
+        event
+        for event in completed_events
+        if event.get("node_name") == "image_agent_node"
+    )
+    safe_metadata = image_event.get("safe_metadata", {})
+    assert safe_metadata.get("provider_call_count") == 2
+    assert safe_metadata.get("provider_call_count_by_provider") == {
+        "stability_ai": 1,
+        "fal_ai": 1,
+    }
+    assert safe_metadata.get("provider_latency_by_provider_ms") == {
+        "stability_ai": 420,
+        "fal_ai": 510,
+    }
+    assert safe_metadata.get("primary_provider") == "stability_ai"
+    assert safe_metadata.get("fallback_provider") == "fal_ai"
+    assert safe_metadata.get("fallback_provider_attempted") is True
+    assert safe_metadata.get("fallback_provider_used") is False
+    attempts = safe_metadata.get("image_provider_attempts")
+    assert isinstance(attempts, list)
+    assert attempts[0]["error_code"] == "authentication_failed"
+    assert attempts[1]["error_code"] == "configuration_error"

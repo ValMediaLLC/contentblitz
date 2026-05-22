@@ -51,7 +51,9 @@ def test_research_agent_fallback_writes_perplexity_source_metadata_and_updates_c
                 {
                     "title": "Perplexity fallback",
                     "url": None,
-                    "snippet": "This fallback snippet is long and usable for synthesis.",
+                    "snippet": (
+                        "This fallback snippet is long and usable for synthesis."
+                    ),
                     "citation_available": False,
                 }
             ]
@@ -60,7 +62,7 @@ def test_research_agent_fallback_writes_perplexity_source_metadata_and_updates_c
     monkeypatch.setattr(research_agent_module, "search_web", fake_search_web)
 
     updates = research_agent_module.research_agent_node(state)
-    assert calls == ["standard", "fallback"]
+    assert calls == ["standard", "standard"]
     assert updates["research_data"]["fallback_used"] is True
     assert updates["cost_controls"]["search_queries_used_this_session"] == 2
 

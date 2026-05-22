@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, List, Mapping
 
+from contentblitz.config import MODEL_FALLBACKS
 from contentblitz.core.cost_controls import (
     apply_text_tokens,
     image_cap_reached,
@@ -108,7 +110,7 @@ def _enhance_prompt(
         generate_text(
             prompt=prompt,
             agent_key="image_agent",
-            model=preferred_text_model(cost_controls),
+            model=preferred_text_model(cost_controls, agent_key="image_agent"),
         )
     )
     enhanced = str(response.get("output", "")).strip()
@@ -150,7 +152,7 @@ def _normalize_provider(response: Mapping[str, Any]) -> str:
     primary = str(response.get("provider_primary", "")).strip()
     if primary:
         return primary
-    return "dall-e-3"
+    return str(MODEL_FALLBACKS.get("primary_image_provider", "stability_ai")).strip()
 
 
 def _append_recoverable_image_error(
@@ -181,6 +183,123 @@ def _safe_image_error_payload(raw_error: Any) -> Dict[str, Any]:
         "message": message,
         "recoverable": recoverable,
     }
+
+
+def _safe_response_shape(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        return {}
+    safe_shape: Dict[str, Any] = {}
+    response_keys = [
+        _safe_text(item)
+        for item in _safe_list(raw.get("response_keys", []))[:20]
+        if _safe_text(item)
+    ]
+    if response_keys:
+        safe_shape["response_keys"] = response_keys
+    first_image_keys = [
+        _safe_text(item)
+        for item in _safe_list(raw.get("first_image_keys", []))[:20]
+        if _safe_text(item)
+    ]
+    if first_image_keys:
+        safe_shape["first_image_keys"] = first_image_keys
+    for key in (
+        "images_present",
+        "url_present",
+        "local_path_present",
+        "image_bytes_present",
+        "b64_json_present",
+        "request_id_present",
+    ):
+        if key in raw:
+            safe_shape[key] = bool(raw.get(key))
+    if "image_count" in raw:
+        safe_shape["image_count"] = max(0, int(raw.get("image_count") or 0))
+    return safe_shape
+
+
+def _provider_perf_metrics(
+    *,
+    provider_latency_ms: int | None,
+    provider_call_count: int,
+    image_response: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    response = image_response if isinstance(image_response, Mapping) else {}
+    response_count = int(response.get("provider_call_count") or 0)
+    effective_count = response_count if response_count > 0 else provider_call_count
+    if effective_count <= 0:
+        return {}
+
+    safe_latency = (
+        0 if provider_latency_ms is None else max(0, int(provider_latency_ms))
+    )
+    metadata: Dict[str, Any] = {
+        "provider_call_count": max(0, int(effective_count)),
+        "provider_latency_ms": safe_latency,
+    }
+    raw_call_count_by_provider = _safe_dict(
+        response.get("provider_call_count_by_provider", {})
+    )
+    call_count_by_provider: Dict[str, int] = {}
+    for provider_name, count_value in raw_call_count_by_provider.items():
+        safe_name = _safe_text(provider_name)
+        if not safe_name:
+            continue
+        call_count_by_provider[safe_name] = max(0, int(count_value or 0))
+    if call_count_by_provider:
+        metadata["provider_call_count_by_provider"] = call_count_by_provider
+
+    raw_latency_by_provider = _safe_dict(
+        response.get("provider_latency_by_provider_ms", {})
+    )
+    latency_by_provider: Dict[str, int] = {}
+    for provider_name, latency_value in raw_latency_by_provider.items():
+        safe_name = _safe_text(provider_name)
+        if not safe_name:
+            continue
+        latency_by_provider[safe_name] = max(0, int(latency_value or 0))
+    if latency_by_provider:
+        metadata["provider_latency_by_provider_ms"] = latency_by_provider
+
+    safe_attempts: List[Dict[str, Any]] = []
+    for raw_attempt in _safe_list(response.get("image_provider_attempts", [])):
+        if not isinstance(raw_attempt, Mapping):
+            continue
+        safe_attempts.append(
+            {
+                "provider": _safe_text(raw_attempt.get("provider")),
+                "model": _safe_text(raw_attempt.get("model")),
+                "status": _safe_text(raw_attempt.get("status")) or "failed",
+                "error_code": _safe_text(raw_attempt.get("error_code")),
+                "duration_ms": max(0, int(raw_attempt.get("duration_ms") or 0)),
+                "fallback": bool(raw_attempt.get("fallback")),
+            }
+        )
+        safe_response_shape = _safe_response_shape(raw_attempt.get("response_shape"))
+        if safe_response_shape:
+            safe_attempts[-1]["response_shape"] = safe_response_shape
+    if safe_attempts:
+        metadata["image_provider_attempts"] = safe_attempts
+
+    primary_provider = _safe_text(
+        response.get("primary_provider") or response.get("provider_primary")
+    )
+    fallback_provider = _safe_text(
+        response.get("fallback_provider") or response.get("provider_fallback")
+    )
+    if primary_provider:
+        metadata["primary_provider"] = primary_provider
+    if fallback_provider:
+        metadata["fallback_provider"] = fallback_provider
+    if "fallback_provider_attempted" in response:
+        metadata["fallback_provider_attempted"] = bool(
+            response.get("fallback_provider_attempted")
+        )
+    if "fallback_provider_used" in response:
+        metadata["fallback_provider_used"] = bool(
+            response.get("fallback_provider_used")
+        )
+    return metadata
 
 
 # TODO(provider):
@@ -261,9 +380,27 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     used = int(cost_controls.get("image_generations_used_this_session", 0))
 
+    provider_latency_ms: int | None = None
+    provider_call_count = 0
     try:
+        provider_started_at = perf_counter()
         image_response = _safe_dict(generate_image(prompt=enhanced_prompt, style=style))
+        provider_latency_ms = max(
+            0,
+            int((perf_counter() - provider_started_at) * 1000),
+        )
+        provider_call_count = max(
+            0,
+            int(image_response.get("provider_call_count") or 0),
+        )
+        if provider_call_count <= 0:
+            provider_call_count = 1
     except Exception:  # pragma: no cover - defensive path
+        provider_latency_ms = max(
+            0,
+            int((perf_counter() - provider_started_at) * 1000),
+        )
+        provider_call_count = 1
         failure_message = _SAFE_IMAGE_PROVIDER_WARNING
         failure_payload = {
             "status": "failed",
@@ -274,7 +411,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "recoverable": True,
             },
             "prompt": enhanced_prompt,
-            "provider": "dall-e-3",
+            "provider": _normalize_provider({}),
         }
         image_outputs.append(failure_payload)
         tool_outputs["image_agent"] = {
@@ -283,6 +420,11 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "reason": "unknown_provider_error",
             "attempted": True,
             "provider_status": "degraded",
+            **_provider_perf_metrics(
+                provider_latency_ms=provider_latency_ms,
+                provider_call_count=provider_call_count,
+                image_response={},
+            ),
         }
         return {
             "image_prompts": image_prompts,
@@ -296,6 +438,11 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     provider = _normalize_provider(image_response)
     raw_images = _safe_list(image_response.get("images", []))
+    provider_metadata = _provider_perf_metrics(
+        provider_latency_ms=provider_latency_ms,
+        provider_call_count=provider_call_count,
+        image_response=image_response,
+    )
 
     sanitized_images: List[Dict[str, Any]] = []
     for raw_image in raw_images:
@@ -322,6 +469,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "error": error_payload,
             "prompt": enhanced_prompt,
             "provider": provider,
+            **provider_metadata,
         }
         image_outputs.append(failure_payload)
         tool_outputs["image_agent"] = {
@@ -330,6 +478,7 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "reason": failure_reason,
             "attempted": True,
             "provider_status": "degraded",
+            **provider_metadata,
         }
         return {
             "image_prompts": image_prompts,
@@ -380,6 +529,11 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "provider_status": "degraded",
             "images_generated": len(sanitized_images),
             "renderable_images": renderable_count,
+            **_provider_perf_metrics(
+                provider_latency_ms=provider_latency_ms,
+                provider_call_count=provider_call_count,
+                image_response=image_response,
+            ),
         }
         return {
             "image_prompts": image_prompts,
@@ -399,6 +553,11 @@ def image_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "provider_status": "ok",
         "images_generated": len(sanitized_images),
         "renderable_images": renderable_count,
+        **_provider_perf_metrics(
+            provider_latency_ms=provider_latency_ms,
+            provider_call_count=provider_call_count,
+            image_response=image_response,
+        ),
     }
     return {
         "image_prompts": image_prompts,
