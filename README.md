@@ -1,3 +1,14 @@
+---
+title: Contentblitz
+emoji: 🔥
+colorFrom: pink
+colorTo: indigo
+sdk: docker
+pinned: false
+license: mit
+short_description: LangGraph-based multi-agent content orchestration system
+---
+
 # ContentBlitz
 
 ContentBlitz is a LangGraph-based multi-agent content orchestration system with a Phase 3 Streamlit UI, export pipeline, persistence/restore flow, and deterministic non-live validation.
