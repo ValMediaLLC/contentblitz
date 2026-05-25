@@ -78,6 +78,9 @@ class _DummyStreamlit:
         self.expander_calls.append({"label": str(label), "expanded": bool(expanded)})
         return _DummyContextManager()
 
+    def container(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
+        return _DummyContextManager()
+
     def write(self, value: Any, *_args: Any, **_kwargs: Any) -> None:
         self.markdown_calls.append(str(value))
 
@@ -609,7 +612,7 @@ def test_running_node_renders_immediately_with_in_progress_style(monkeypatch) ->
 
     rendered = "\n".join(dummy_st.markdown_calls)
     assert "query_handler_node" in rendered
-    assert "◎" in rendered
+    assert "cbx-node-status-dot" in rendered
     assert "cbx-node-status-running" in rendered
     assert "cbx-node-progress-running" in rendered
 
@@ -914,7 +917,7 @@ def test_completed_node_row_uses_horizontal_layout_and_right_status_badge(
     assert "cbx-node-status-row" in rendered
     assert "cbx-node-progress-track" in rendered
     assert "cbx-node-status-badge" in rendered
-    assert "✓" in rendered
+    assert "\u2713" in rendered
     assert "Elapsed 0.0s" in rendered
     assert "1.2s" in rendered
     assert "width:100%;" in rendered
@@ -979,6 +982,12 @@ def test_performance_summary_renders_safe_cards(monkeypatch) -> None:
                         "provider": "serp_api",
                         "provider_latency_ms": 1200,
                         "cache_hit": False,
+                        "model": "claude-haiku-4-5-20251001",
+                    },
+                    {
+                        "node_name": "export_node",
+                        "status": "skipped",
+                        "duration_ms": 0,
                     },
                 ],
             }
@@ -987,7 +996,16 @@ def test_performance_summary_renders_safe_cards(monkeypatch) -> None:
 
     assert "Performance Summary" in dummy_st.subheader_calls
     assert any("Executed Nodes" in call for call in dummy_st.markdown_calls)
+    assert any("Executed Steps" in call for call in dummy_st.markdown_calls)
     assert any("Total Duration" in call for call in dummy_st.markdown_calls)
+    assert any("Aggregate Provider Time" in call for call in dummy_st.markdown_calls)
+    assert any("cbx-perf-table-wrap" in call for call in dummy_st.markdown_calls)
+    assert any("cbx-perf-table" in call for call in dummy_st.markdown_calls)
+    assert any("query_handler_node" in call for call in dummy_st.markdown_calls)
+    assert any("research_agent_node" in call for call in dummy_st.markdown_calls)
+    assert not any("export_node" in call for call in dummy_st.markdown_calls)
+    assert any("cbx-cache-badge-miss" in call for call in dummy_st.markdown_calls)
+    assert any("claude-haiku-4-5" in call for call in dummy_st.markdown_calls)
 
 
 def test_truncate_display_value_caps_text_safely() -> None:

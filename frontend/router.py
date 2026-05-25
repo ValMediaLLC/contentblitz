@@ -18,13 +18,13 @@ class PageRoute:
 
 
 ROUTES: List[PageRoute] = [
-    PageRoute(key="run", title="Run Workflow", renderer=run_workflow.render),
+    PageRoute(key="run", title="Create", renderer=run_workflow.render),
     PageRoute(key="history", title="History", renderer=history.render),
     PageRoute(key="about", title="About", renderer=about.render),
 ]
 
 ROUTE_LABELS: Dict[str, str] = {
-    "run": ":material/rocket_launch: Run Workflow",
+    "run": ":material/rocket_launch: Create",
     "history": ":material/history: History",
     "about": ":material/info: About",
 }

@@ -5,4 +5,4 @@ pytest
 pytest-cov
 python-dotenv
 requests
-streamlit
+streamlit==1.57.0

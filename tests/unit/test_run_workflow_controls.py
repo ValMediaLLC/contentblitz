@@ -32,6 +32,7 @@ class _DummyStreamlit:
     text_area_value: str = "Create a blog and export as PDF."
     button_result: bool = True
     caption_calls: List[str] = field(default_factory=list)
+    markdown_calls: List[str] = field(default_factory=list)
     info_calls: List[str] = field(default_factory=list)
     placeholder_empty_calls: int = 0
 
@@ -41,6 +42,9 @@ class _DummyStreamlit:
     def caption(self, value: str, *_args: Any, **_kwargs: Any) -> None:
         self.caption_calls.append(str(value))
 
+    def markdown(self, value: Any, *_args: Any, **_kwargs: Any) -> None:
+        self.markdown_calls.append(str(value))
+
     def container(self, *_args: Any, **_kwargs: Any) -> _DummyContextManager:
         return _DummyContextManager()
 
@@ -49,6 +53,9 @@ class _DummyStreamlit:
 
     def button(self, *_args: Any, **_kwargs: Any) -> bool:
         return self.button_result
+
+    def pills(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
 
     def empty(self) -> _DummyPlaceholder:
         return _DummyPlaceholder(parent=self)
@@ -307,7 +314,7 @@ def test_active_submitted_run_uses_user_query_submission_flag(monkeypatch) -> No
 
     assert len(live_state_calls) == 1
     assert live_state_calls[0]["execution_status"] == "running"
-    assert run_workflow_page._EMPTY_RESULT_PROMPT not in dummy_st.info_calls
+    assert dummy_st.info_calls == []
 
 
 def test_prompt_note_mentions_backend_deterministic_outputs(monkeypatch) -> None:
@@ -327,7 +334,7 @@ def test_prompt_note_mentions_backend_deterministic_outputs(monkeypatch) -> None
     run_workflow_page.render()
 
     assert any(
-        "including blog, LinkedIn, research, image, or export format"
+        "Generate blogs, LinkedIn posts, research reports, image concepts,"
         in message
-        for message in dummy_st.caption_calls
+        for message in dummy_st.markdown_calls
     )
