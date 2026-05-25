@@ -1,4 +1,4 @@
-"""Presentation helpers for workflow results."""
+﻿"""Presentation helpers for workflow results."""
 
 from __future__ import annotations
 
@@ -21,7 +21,12 @@ from contentblitz.core.warnings import (
 from contentblitz.tools.exports.filenames import resolve_export_dir
 from contentblitz.ui.error_display import redact_sensitive_text
 from contentblitz.ui.observability import build_observability_diagnostics
-from contentblitz.ui.progress import normalize_progress_status, validate_node_name
+from contentblitz.ui.progress import (
+    VALID_PROGRESS_STATUSES,
+    normalize_progress_status,
+    validate_node_name,
+)
+from contentblitz.workflow.routing import AUTHORITATIVE_NODES
 
 _DEBUG_TRACEBACK_MARKERS = (
     "traceback (most recent call last):",
@@ -95,6 +100,7 @@ _WRITER_IMAGE_NODE_NAMES = {
     "linkedin_writer_node",
     "image_agent_node",
 }
+_SAFE_NODE_DISPLAY_STATUSES = set(VALID_PROGRESS_STATUSES)
 
 
 def _safe_text(value: Any) -> str:
@@ -344,8 +350,9 @@ def _render_section(title: str, body: str) -> None:
     )
     if not safe_title or not safe_body:
         return
-    st.markdown(f"#### {safe_title}")
-    st.markdown(safe_body)
+    with st.container(border=True):
+        st.markdown(f"#### {safe_title}")
+        st.markdown(safe_body)
 
 
 @dataclass
@@ -519,6 +526,7 @@ class _NodeExecutionRow:
     progress_percent: int
     elapsed_label: str
     duration_seconds: float
+    sequence_index: int | None = None
 
 
 def _parse_event_timestamp(value: Any) -> datetime | None:
@@ -559,12 +567,12 @@ def _node_duration_seconds(node_name: str) -> float:
 def _node_status_icon(status: str) -> str:
     normalized = _normalized_status_key(status)
     if normalized == "running":
-        return "◎"
+        return '<span class="cbx-node-status-dot" aria-hidden="true"></span>'
     if normalized in {"completed", "degraded"}:
-        return "✓"
+        return "\u2713"
     if normalized == "failed":
         return "!"
-    return "·"
+    return "\u00b7"
 
 
 def _node_elapsed_label(
@@ -648,11 +656,18 @@ def _pipeline_summary_state(
 
 def _node_progress_percent(status: str) -> int:
     normalized = _normalized_status_key(status)
-    if normalized in {"completed", "failed", "degraded"}:
+    if normalized in {"completed", "failed", "degraded", "skipped"}:
         return 100
     if normalized in _RUNNING_EVENT_STATUSES:
         return 55
     return 0
+
+
+def _coerce_safe_node_status(status: Any) -> str:
+    normalized = _normalized_status_key(status)
+    if normalized in _SAFE_NODE_DISPLAY_STATUSES:
+        return normalized
+    return "pending"
 
 
 def _node_status_class(status: str) -> str:
@@ -768,9 +783,51 @@ def _build_node_execution_rows(
                 elapsed_seconds=_elapsed_seconds_for_row(index),
             ),
             duration_seconds=_node_duration_seconds(node_name),
+            sequence_index=None,
         )
         for index, (node_name, record) in enumerate(rows)
     ]
+
+
+def _build_authoritative_node_execution_rows(
+    progress_events: list[Mapping[str, Any]],
+    *,
+    node_statuses: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+) -> list[_NodeExecutionRow]:
+    event_rows = _build_node_execution_rows(progress_events, now=now)
+    by_node = {row.node_name: row for row in event_rows}
+    status_map = dict(node_statuses or {})
+    rows: list[_NodeExecutionRow] = []
+    for index, node_name in enumerate(AUTHORITATIVE_NODES, start=1):
+        existing = by_node.get(node_name)
+        if existing is not None:
+            rows.append(
+                _NodeExecutionRow(
+                    node_name=existing.node_name,
+                    status=_coerce_safe_node_status(existing.status),
+                    progress_percent=_node_progress_percent(existing.status),
+                    elapsed_label=existing.elapsed_label,
+                    duration_seconds=existing.duration_seconds,
+                    sequence_index=index,
+                )
+            )
+            continue
+        status = _coerce_safe_node_status(status_map.get(node_name, "pending"))
+        elapsed_seconds = 0.0
+        if status in {"completed", "failed", "degraded", "skipped"}:
+            elapsed_seconds = _node_duration_seconds(node_name)
+        rows.append(
+            _NodeExecutionRow(
+                node_name=node_name,
+                status=status,
+                progress_percent=_node_progress_percent(status),
+                elapsed_label=_node_elapsed_label(elapsed_seconds=elapsed_seconds),
+                duration_seconds=_node_duration_seconds(node_name),
+                sequence_index=index,
+            )
+        )
+    return rows
 
 
 def render_node_execution_statuses(
@@ -778,10 +835,205 @@ def render_node_execution_statuses(
     *,
     live_timers: bool = False,
     empty_message: str = "No node execution events available yet.",
+    node_statuses: Mapping[str, Any] | None = None,
+    include_authoritative_sequence: bool = False,
+    show_full_orchestration_graph: bool = False,
 ) -> None:
+    stage_labels = {
+        "query_handler_node": "Understanding Request",
+        "clarification_node": "Asking for Clarification",
+        "research_agent_node": "Researching Sources",
+        "content_strategist_node": "Building Content Strategy",
+        "blog_writer_node": "Writing Blog Draft",
+        "linkedin_writer_node": "Writing LinkedIn Post",
+        "image_agent_node": "Creating Image Concepts",
+        "quality_validator_node": "Validating Quality",
+        "retry_router_node": "Reviewing Retry Needs",
+        "output_assembler_node": "Preparing Final Deliverables",
+        "export_node": "Exporting Files",
+        "error_handler_node": "Handling Workflow Issue",
+    }
+
+    def _with_reindexed_rows(rows: list[_NodeExecutionRow]) -> list[_NodeExecutionRow]:
+        reindexed: list[_NodeExecutionRow] = []
+        for index, row in enumerate(rows, start=1):
+            reindexed.append(
+                _NodeExecutionRow(
+                    node_name=row.node_name,
+                    status=row.status,
+                    progress_percent=row.progress_percent,
+                    elapsed_label=row.elapsed_label,
+                    duration_seconds=row.duration_seconds,
+                    sequence_index=index,
+                )
+            )
+        return reindexed
+
+    def _node_status_pill(
+        status: Any,
+        *,
+        neutral_pending_skipped: bool = False,
+    ) -> str:
+        normalized = _normalized_status_key(status)
+        if neutral_pending_skipped and normalized in {"pending", "skipped"}:
+            label = _status_label(_safe_text(status))
+            return (
+                '<span class="cbx-status-pill cbx-status-neutral">'
+                '<span class="cbx-status-pill-dot" aria-hidden="true"></span>'
+                f'<span class="cbx-status-pill-text">{html.escape(label)}</span>'
+                "</span>"
+            )
+        return _status_pill_html(status)
+
+    def _build_default_rows() -> list[_NodeExecutionRow]:
+        rows = _build_node_execution_rows(progress_events, now=now)
+        seen_nodes = {row.node_name for row in rows}
+        status_map = dict(node_statuses or {})
+        for node_name in AUTHORITATIVE_NODES:
+            if node_name in seen_nodes:
+                continue
+            status = _coerce_safe_node_status(status_map.get(node_name, "pending"))
+            if status not in _VISIBLE_NODE_EVENT_STATUSES:
+                continue
+            elapsed_seconds = 0.0
+            if status in {"completed", "degraded", "failed"}:
+                elapsed_seconds = _node_duration_seconds(node_name)
+            rows.append(
+                _NodeExecutionRow(
+                    node_name=node_name,
+                    status=status,
+                    progress_percent=_node_progress_percent(status),
+                    elapsed_label=_node_elapsed_label(elapsed_seconds=elapsed_seconds),
+                    duration_seconds=_node_duration_seconds(node_name),
+                    sequence_index=None,
+                )
+            )
+        return _with_reindexed_rows(rows)
+
+    def _render_panel(
+        *,
+        rows: list[_NodeExecutionRow],
+        use_friendly_labels: bool,
+        show_canonical_metadata: bool,
+        neutral_pending_skipped: bool = False,
+        secondary: bool = False,
+    ) -> None:
+        running_nodes = [
+            row.node_name
+            for row in rows
+            if _normalized_status_key(row.status) == "running"
+        ]
+        active_running_node = running_nodes[-1] if running_nodes else ""
+        panel_classes = ["cbx-node-status-panel"]
+        if secondary:
+            panel_classes.append("cbx-node-status-panel-secondary")
+        if active_running_node:
+            panel_classes.append("cbx-node-panel-running")
+        rendered_rows: list[str] = []
+        for row in rows:
+            status_key = _normalized_status_key(row.status)
+            status_class = _node_status_class(row.status)
+            progress_style = (
+                f"--cbx-node-duration:{row.duration_seconds:.1f}s;"
+                f"width:{row.progress_percent}%;"
+            )
+            is_running = status_key in _RUNNING_EVENT_STATUSES
+            progress_modifier = " cbx-node-progress-running" if is_running else ""
+            row_modifier = " cbx-node-row-running" if progress_modifier else ""
+            active_modifier = (
+                " cbx-node-row-active" if row.node_name == active_running_node else ""
+            )
+            icon_class = f"cbx-node-icon-{status_key}"
+            elapsed_modifier = " cbx-node-elapsed-running" if progress_modifier else ""
+            hide_running_badge = bool(
+                is_running and use_friendly_labels and not secondary
+            )
+            badge_modifier = (
+                " cbx-node-status-badge-hidden" if hide_running_badge else ""
+            )
+            node_label = (
+                stage_labels.get(row.node_name, row.node_name)
+                if use_friendly_labels
+                else row.node_name
+            )
+            title_class = (
+                "cbx-node-title cbx-node-title-friendly"
+                if use_friendly_labels
+                else "cbx-node-title"
+            )
+            numbered_label = (
+                f"{row.sequence_index:02d}. {node_label}"
+                if row.sequence_index is not None
+                else node_label
+            )
+            metadata_html = ""
+            if show_canonical_metadata and node_label != row.node_name:
+                metadata_html = (
+                    f'<div class="cbx-node-meta">{html.escape(row.node_name)}</div>'
+                )
+            pill_html = (
+                ""
+                if hide_running_badge
+                else _node_status_pill(
+                    row.status,
+                    neutral_pending_skipped=neutral_pending_skipped,
+                )
+            )
+            rendered_rows.append(
+                (
+                    f'<li class="cbx-node-status-row{row_modifier}{active_modifier}">'
+                    f'<div class="cbx-node-status-icon {icon_class}">'
+                    f"{_node_status_icon(row.status)}"
+                    "</div>"
+                    '<div class="cbx-node-name">'
+                    f'<div class="{title_class}" '
+                    f'title="{html.escape(row.node_name, quote=True)}">'
+                    f"{html.escape(numbered_label)}</div>"
+                    f"{metadata_html}"
+                    "</div>"
+                    '<div class="cbx-node-progress-track">'
+                    f'<div class="cbx-node-progress-fill '
+                    f'{status_class}{progress_modifier}" '
+                    f'style="{progress_style}"></div>'
+                    "</div>"
+                    f'<div class="cbx-node-status-badge{badge_modifier}">'
+                    f"{pill_html}"
+                    "</div>"
+                    f'<div class="cbx-node-elapsed{elapsed_modifier}">'
+                    f"{html.escape(row.elapsed_label)}</div>"
+                    "</li>"
+                )
+            )
+
+        panel_class_attr = " ".join(panel_classes)
+        st.markdown(
+            (
+                f'<div class="{panel_class_attr}">'
+                '<ul class="cbx-node-status-list">'
+                + "".join(rendered_rows)
+                + "</ul>"
+                + '<div class="cbx-node-timer">'
+                + "Elapsed "
+                + _pipeline_elapsed_label_from_events(progress_events, now=now)
+                + "</div>"
+                + "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
     st.subheader("Node Execution Status")
     now = datetime.now(UTC) if live_timers else None
-    rows = _build_node_execution_rows(progress_events, now=now)
+    if include_authoritative_sequence:
+        rows = _with_reindexed_rows(
+            _build_authoritative_node_execution_rows(
+                progress_events,
+                node_statuses=node_statuses,
+                now=now,
+            )
+        )
+    else:
+        rows = _build_default_rows()
+
     if not rows:
         st.caption(empty_message)
         if live_timers:
@@ -793,55 +1045,31 @@ def render_node_execution_statuses(
                 ),
                 unsafe_allow_html=True,
             )
-        return
-
-    rendered_rows: list[str] = []
-    for row in rows:
-        status_class = _node_status_class(row.status)
-        progress_style = (
-            f"--cbx-node-duration:{row.duration_seconds:.1f}s;"
-            f"width:{row.progress_percent}%;"
+    else:
+        _render_panel(
+            rows=rows,
+            use_friendly_labels=not include_authoritative_sequence,
+            show_canonical_metadata=False,
         )
-        progress_modifier = " cbx-node-progress-running" if _normalized_status_key(
-            row.status
-        ) in _RUNNING_EVENT_STATUSES else ""
-        row_modifier = " cbx-node-row-running" if progress_modifier else ""
-        icon_class = f"cbx-node-icon-{_normalized_status_key(row.status)}"
-        elapsed_modifier = " cbx-node-elapsed-running" if progress_modifier else ""
-        rendered_rows.append(
-            (
-                f'<li class="cbx-node-status-row{row_modifier}">'
-                f'<div class="cbx-node-status-icon {icon_class}">'
-                f"{_node_status_icon(row.status)}"
-                "</div>"
-                f'<div class="cbx-node-name">{html.escape(row.node_name)}</div>'
-                '<div class="cbx-node-progress-track">'
-                f'<div class="cbx-node-progress-fill '
-                f'{status_class}{progress_modifier}" '
-                f'style="{progress_style}"></div>'
-                "</div>"
-                '<div class="cbx-node-status-badge">'
-                f"{_status_pill_html(row.status)}"
-                "</div>"
-                f'<div class="cbx-node-elapsed{elapsed_modifier}">'
-                f"{html.escape(row.elapsed_label)}</div>"
-                "</li>"
+
+    if show_full_orchestration_graph and not include_authoritative_sequence:
+        with st.expander("Show full orchestration graph", expanded=False):
+            st.caption(
+                "Raw orchestration statuses across all authoritative workflow nodes."
             )
-        )
-
-    st.markdown(
-        (
-            '<div class="cbx-node-status-panel">'
-            '<ul class="cbx-node-status-list">'
-            + "".join(rendered_rows)
-            + "</ul>"
-            '<div class="cbx-node-timer">'
-            f"Elapsed {_pipeline_elapsed_label_from_events(progress_events, now=now)}"
-            "</div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+            _render_panel(
+                rows=_with_reindexed_rows(
+                    _build_authoritative_node_execution_rows(
+                        progress_events,
+                        node_statuses=node_statuses,
+                        now=now,
+                    )
+                ),
+                use_friendly_labels=False,
+                show_canonical_metadata=False,
+                neutral_pending_skipped=True,
+                secondary=True,
+            )
 
 
 def render_progress_events(events: list[Mapping[str, Any]]) -> None:
@@ -995,6 +1223,23 @@ def _format_duration_ms(value: Any) -> str:
     return f"{milliseconds / 1000:.1f}s"
 
 
+def _short_model_display_name(model_name: Any) -> str:
+    raw_model = _safe_text(model_name)
+    if not raw_model:
+        return "n/a"
+    compact = re.sub(r"-(?:20\d{6}|\d{8,})$", "", raw_model)
+    display_source = compact or raw_model
+    return _truncate_display_value(display_source, max_length=22)
+
+
+def _cache_hit_badge_html(*, has_cache_hit: bool, cache_hit_value: Any) -> str:
+    if not has_cache_hit:
+        return '<span class="cbx-cache-badge cbx-cache-badge-na">n/a</span>'
+    if bool(cache_hit_value):
+        return '<span class="cbx-cache-badge cbx-cache-badge-hit">hit</span>'
+    return '<span class="cbx-cache-badge cbx-cache-badge-miss">miss</span>'
+
+
 def render_performance_summary(render_payload: Mapping[str, Any]) -> None:
     summary = render_payload.get("performance_summary", {})
     if not isinstance(summary, Mapping) or not summary:
@@ -1011,39 +1256,101 @@ def render_performance_summary(render_payload: Mapping[str, Any]) -> None:
     st.subheader("Performance Summary")
     cards = [
         ("Executed Nodes", executed_node_count),
-        ("Timed Nodes", timed_node_count),
+        ("Executed Steps", timed_node_count),
         ("Total Duration", total_duration),
         ("Avg Node Duration", average_duration),
-        ("Provider Latency", provider_latency_total),
+        ("Aggregate Provider Time", provider_latency_total),
     ]
     _render_compact_cards(cards, max_value_length=24)
 
     raw_nodes = summary.get("nodes", [])
     if not isinstance(raw_nodes, list) or not raw_nodes:
         return
+
+    table_rows: list[str] = []
     for raw_node in raw_nodes:
         if not isinstance(raw_node, Mapping):
             continue
         node_name = _safe_text(raw_node.get("node_name"))
         if not node_name:
             continue
+
         status = _safe_text(raw_node.get("status")).lower() or "unknown"
+        if _normalized_status_key(status) == "skipped":
+            continue
         duration_label = _format_duration_ms(raw_node.get("duration_ms", 0))
-        details = [f"status={status}", f"duration={duration_label}"]
-        if "provider_latency_ms" in raw_node:
-            details.append(
-                "provider_latency="
-                + _format_duration_ms(raw_node.get("provider_latency_ms"))
+        provider_latency_label = (
+            _format_duration_ms(raw_node.get("provider_latency_ms"))
+            if "provider_latency_ms" in raw_node
+            else "n/a"
+        )
+        cache_hit_badge = _cache_hit_badge_html(
+            has_cache_hit="cache_hit" in raw_node,
+            cache_hit_value=raw_node.get("cache_hit"),
+        )
+        provider = _safe_text(raw_node.get("provider")) or "n/a"
+        provider_display = _truncate_display_value(provider, max_length=14)
+        model = _safe_text(raw_node.get("model")) or "n/a"
+        model_display = _short_model_display_name(model)
+        escaped_node_name = html.escape(node_name)
+        escaped_node_title = html.escape(node_name, quote=True)
+        escaped_duration_label = html.escape(duration_label)
+        escaped_provider_latency_label = html.escape(provider_latency_label)
+        escaped_provider_title = html.escape(provider, quote=True)
+        escaped_provider_display = html.escape(provider_display)
+        escaped_model_title = html.escape(model, quote=True)
+        escaped_model_display = html.escape(model_display)
+        provider_class = (
+            "cbx-perf-cell-provider cbx-perf-cell-muted"
+            if provider == "n/a"
+            else "cbx-perf-cell-provider"
+        )
+        model_class = (
+            "cbx-perf-cell-model cbx-perf-cell-mono cbx-perf-cell-muted"
+            if model == "n/a"
+            else "cbx-perf-cell-model cbx-perf-cell-mono"
+        )
+
+        table_rows.append(
+            (
+                "<tr>"
+                f'<td class="cbx-perf-cell-mono" title="{escaped_node_title}">'
+                f"{escaped_node_name}</td>"
+                f'<td class="cbx-perf-cell-status">{_status_pill_html(status)}</td>'
+                f'<td class="cbx-perf-cell-mono">{escaped_duration_label}</td>'
+                f'<td class="cbx-perf-cell-mono">'
+                f"{escaped_provider_latency_label}</td>"
+                f'<td class="cbx-perf-cell-cache">{cache_hit_badge}</td>'
+                f'<td class="{provider_class}" title="{escaped_provider_title}">'
+                f"{escaped_provider_display}</td>"
+                f'<td class="{model_class}" title="{escaped_model_title}">'
+                f"{escaped_model_display}</td>"
+                "</tr>"
             )
-        if "cache_hit" in raw_node:
-            details.append(f"cache_hit={bool(raw_node.get('cache_hit'))}")
-        provider = _safe_text(raw_node.get("provider"))
-        if provider:
-            details.append(f"provider={provider}")
-        model = _safe_text(raw_node.get("model"))
-        if model:
-            details.append(f"model={model}")
-        st.caption(f"{node_name}: {' | '.join(details)}")
+        )
+
+    if not table_rows:
+        return
+
+    st.markdown(
+        (
+            '<div class="cbx-perf-table-wrap">'
+            '<table class="cbx-perf-table">'
+            "<thead><tr>"
+            "<th>Node</th>"
+            "<th>Status</th>"
+            "<th>Duration</th>"
+            "<th>Provider Latency</th>"
+            "<th>Cache Hit</th>"
+            "<th>Provider</th>"
+            "<th>Model</th>"
+            "</tr></thead>"
+            "<tbody>"
+            + "".join(table_rows)
+            + "</tbody></table></div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_provider_degradation_status(render_payload: Mapping[str, Any]) -> None:
@@ -1273,25 +1580,6 @@ def _render_debug_panel(
     raw_submission: Mapping[str, Any] | None,
 ) -> None:
     with st.expander("Debug / Advanced", expanded=False):
-        if progress_events:
-            st.markdown("#### Progress Events")
-            for event in progress_events:
-                if not isinstance(event, Mapping):
-                    continue
-                timestamp = _safe_text(event.get("timestamp", ""))
-                node_name = _safe_text(event.get("node_name", ""))
-                status = _status_label(_safe_text(event.get("status", "pending")))
-                message = _safe_text(event.get("message", ""))
-                details = " | ".join(
-                    [
-                        item
-                        for item in [timestamp, node_name, status, message]
-                        if item
-                    ]
-                )
-                if details:
-                    st.caption(details)
-
         if raw_submission is not None:
             st.markdown("#### Last Submitted Options")
             st.json(_sanitize_debug_value(raw_submission), expanded=True)
@@ -1425,7 +1713,11 @@ def render_collapsible_output_sections(
             result=indicator_result,
             progress_events=progress_events,
         )
-        render_node_execution_statuses(progress_events)
+        render_node_execution_statuses(
+            progress_events,
+            node_statuses=node_statuses,
+            show_full_orchestration_graph=True,
+        )
         render_observability_section()
         _render_provider_degradation_status(render_payload)
         render_status_messages(
@@ -1455,7 +1747,8 @@ def render_collapsible_output_sections(
                 _strip_wrapping_markdown_fence(rendered.blog)
             )
             if blog_body:
-                st.markdown(blog_body)
+                with st.container(border=True):
+                    st.markdown(blog_body)
 
     if has_linkedin:
         with st.expander("LinkedIn", expanded=False):
@@ -1470,7 +1763,8 @@ def render_collapsible_output_sections(
                 _strip_wrapping_markdown_fence(rendered.linkedin)
             )
             if linkedin_body:
-                st.markdown(linkedin_body)
+                with st.container(border=True):
+                    st.markdown(linkedin_body)
 
     if has_images:
         with st.expander("Images", expanded=False):
@@ -1494,7 +1788,8 @@ def render_collapsible_output_sections(
                     _strip_wrapping_markdown_fence(rendered.research)
                 )
                 if research_body:
-                    st.markdown(research_body)
+                    with st.container(border=True):
+                        st.markdown(research_body)
             for heading, body in rendered.additional:
                 _render_section(heading, body)
 
