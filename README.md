@@ -11,17 +11,17 @@ short_description: LangGraph-based multi-agent content orchestration system
 
 # ContentBlitz
 
-ContentBlitz is a LangGraph-based multi-agent content orchestration system with a Phase 3 Streamlit UI, export pipeline, persistence/restore flow, and deterministic non-live validation.
+ContentBlitz is a LangGraph-based multi-agent content orchestration system with a Streamlit UI, export pipeline, persistence/restore flow, and deterministic mocked validation as the default safety gate.
 
 ## Current Implementation
 
 - 12-node authoritative workflow graph is active.
 - Provider-backed tools are integrated for:
-  - OpenAI text generation (`gpt-4o` with `gpt-4o-mini` fallback)
+  - text generation with model policy defaults (`gpt-4o` with `gpt-4o-mini` fallback by default)
   - SERP search with Perplexity fallback
-  - OpenAI image generation (`dall-e-3` with `dall-e-2` fallback)
-- Phase 3 UI shell is implemented:
-  - Run Workflow page
+  - Stability AI image generation with fal.ai fallback
+- Streamlit UI tabs are implemented:
+  - Create
   - History/restore page
   - About page
 - Export formats implemented:
@@ -33,6 +33,7 @@ ContentBlitz is a LangGraph-based multi-agent content orchestration system with 
   - export payload validation
 - Session persistence and restore are implemented with safe serialization.
 - Unit/integration tests are deterministic and non-live by default.
+- Performance summary and timing metadata are exposed through safe UI rendering from orchestration progress metadata.
 
 ## Setup
 
@@ -62,6 +63,8 @@ Core provider and optional live-test flags:
 OPENAI_API_KEY=
 SERP_API_KEY=
 PERPLEXITY_API_KEY=
+STABILITY_API_KEY=
+FAL_API_KEY=
 CONTENTBLITZ_RUN_LIVE_TESTS=0
 CONTENTBLITZ_RUN_LIVE_IMAGE_TESTS=0
 CONTENTBLITZ_ENABLE_LIVE_CALLS=1
@@ -88,6 +91,15 @@ Notes:
 Runtime controls:
 
 - `CONTENTBLITZ_ENABLE_LIVE_CALLS` is the global provider-call gate used by text/search/image tools.
+
+Text model policy controls:
+
+```env
+CONTENTBLITZ_TEXT_PROVIDER=openai
+CONTENTBLITZ_TEXT_MODEL_DEFAULT=gpt-4o
+CONTENTBLITZ_TEXT_MODEL_FALLBACK=gpt-4o-mini
+CONTENTBLITZ_AGENT_MODEL_POLICY=
+```
 
 Cache configuration (optional; default backend remains in-memory if unset):
 
@@ -137,6 +149,12 @@ Unit and integration suite:
 pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
 ```
 
+Mocked performance regression contracts:
+
+```bash
+pytest tests/integration/test_phase4_performance_contracts.py tests/integration/test_phase5_performance_baseline.py
+```
+
 Phase 4 observability validation (non-live by default):
 
 ```bash
@@ -162,6 +180,13 @@ Optional live smoke:
 python scripts/dev/smoke_phase2_live.py --dry-run
 ```
 
+Optional live performance smoke (manual, opt-in):
+
+```bash
+CONTENTBLITZ_ENABLE_LIVE_CALLS=1 python scripts/dev/smoke_query_handler.py
+CONTENTBLITZ_RUN_LIVE_TESTS=1 pytest tests/live/test_live_generate_text.py tests/live/test_live_search_web.py -rs
+```
+
 ## Frontend Run Command
 
 ```bash
@@ -185,6 +210,9 @@ Live calls are blocked when `CONTENTBLITZ_ENABLE_LIVE_CALLS=0`.
 - `docs/PROVIDER_CONTRACTS.md`
 - `docs/CACHE_ARCHITECTURE.md`
 - `docs/COST_CONTROLS.md`
+- `docs/PERFORMANCE_ARCHITECTURE.md`
+- `docs/PROVIDER_MODEL_POLICY.md`
+- `docs/IMAGE_PROVIDER_STRATEGY.md`
 - `docs/OBSERVABILITY.md`
 - `docs/PHASE4_OBSERVABILITY.md`
 - `docs/TESTING_STRATEGY.md`
