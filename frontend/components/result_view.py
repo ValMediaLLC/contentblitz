@@ -1,4 +1,4 @@
-﻿"""Presentation helpers for workflow results."""
+"""Presentation helpers for workflow results."""
 
 from __future__ import annotations
 
