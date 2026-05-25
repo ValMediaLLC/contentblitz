@@ -98,13 +98,13 @@ Research cache is read before provider fan-out:
 
 Primary mocked regression coverage:
 
-- `tests/integration/test_phase4_performance_contracts.py`
+- `tests/integration/test_phase5_performance_contracts.py`
 - `tests/integration/test_phase5_performance_baseline.py`
 
 Run only performance contract tests:
 
 ```bash
-pytest tests/integration/test_phase4_performance_contracts.py tests/integration/test_phase5_performance_baseline.py
+pytest tests/integration/test_phase5_performance_contracts.py tests/integration/test_phase5_performance_baseline.py
 ```
 
 Run full unit/integration suite with coverage:

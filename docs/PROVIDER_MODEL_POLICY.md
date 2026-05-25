@@ -84,6 +84,6 @@ CONTENTBLITZ_TEXT_MODEL_RESEARCH_AGENT_FALLBACK=claude-haiku-4-5-20251001
 Model policy behavior is validated by:
 
 - `tests/unit/test_model_policy.py`
-- `tests/integration/test_phase4_performance_contracts.py`
+- `tests/integration/test_phase5_performance_contracts.py`
 
 These tests verify deterministic selection and agent-side policy usage without requiring live provider calls.

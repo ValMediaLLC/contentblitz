@@ -88,4 +88,4 @@ Coverage references:
 
 - `tests/unit/test_generate_image.py`
 - `tests/integration/test_provider_contracts.py`
-- `tests/integration/test_phase4_performance_contracts.py`
+- `tests/integration/test_phase5_performance_contracts.py`

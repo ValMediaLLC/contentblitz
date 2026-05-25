@@ -152,7 +152,7 @@ pytest tests/unit tests/integration --cov=contentblitz --cov-report=term-missing
 Mocked performance regression contracts:
 
 ```bash
-pytest tests/integration/test_phase4_performance_contracts.py tests/integration/test_phase5_performance_baseline.py
+pytest tests/integration/test_phase5_performance_contracts.py tests/integration/test_phase5_performance_baseline.py
 ```
 
 Phase 4 observability validation (non-live by default):
