@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from contentblitz.ui.rendering import build_render_payload
@@ -39,8 +41,37 @@ def _summary_label(summary: dict[str, object]) -> str:
     return f"{timestamp} | {status} | outputs={outputs} | {query_preview}"
 
 
+def _history_status_tone_class(status: str) -> str:
+    normalized = _normalize_history_status(status)
+    if normalized in {"success", "completed"}:
+        return "cbx-status-green"
+    if normalized in {"failed", "error"}:
+        return "cbx-status-red"
+    return "cbx-status-orange"
+
+
+def _history_status_pill_html(status: str) -> str:
+    normalized = _normalize_history_status(status) or "unknown"
+    label = normalized.replace("_", " ")
+    return (
+        f'<span class="cbx-status-pill {_history_status_tone_class(normalized)}">'
+        '<span class="cbx-status-pill-dot" aria-hidden="true"></span>'
+        f'<span class="cbx-status-pill-text">{html.escape(label)}</span>'
+        "</span>"
+    )
+
+
 def render() -> None:
     st.header("Run History")
+    st.markdown(
+        (
+            "<p class='cbx-page-intro'>"
+            "Review persisted workflow runs, inspect outcomes, and restore state into "
+            "the current browser session."
+            "</p>"
+        ),
+        unsafe_allow_html=True,
+    )
 
     persistence_messages = get_persistence_messages()
     for message in persistence_messages:
@@ -52,6 +83,36 @@ def render() -> None:
     if not summaries:
         st.info("No saved workflow runs were found yet.")
     else:
+        preview_cards: list[str] = []
+        for summary in summaries[:6]:
+            workflow_status = str(summary.get("workflow_status", "unknown"))
+            updated_at = (
+                str(summary.get("updated_at", "")).strip() or "unknown-time"
+            )
+            query_preview = (
+                str(summary.get("user_query_preview", "")).strip()
+                or "No query preview available."
+            )
+            status_pill = _history_status_pill_html(workflow_status)
+            updated_at_html = html.escape(updated_at)
+            query_preview_html = html.escape(query_preview)
+            preview_cards.append(
+                (
+                    "<article class='cbx-history-card'>"
+                    f"<div>{status_pill}</div>"
+                    f"<p class='cbx-history-card-meta'>{updated_at_html}</p>"
+                    f"<p class='cbx-history-card-query'>{query_preview_html}</p>"
+                    "</article>"
+                )
+            )
+        st.markdown(
+            (
+                "<section class='cbx-history-grid'>"
+                + "".join(preview_cards)
+                + "</section>"
+            ),
+            unsafe_allow_html=True,
+        )
         run_ids = [
             str(item.get("run_id", "")).strip()
             for item in summaries
@@ -141,6 +202,20 @@ def render() -> None:
         query = str(item.get("user_query", "")).strip()
         outputs = item.get("requested_outputs", [])
         status = _normalize_history_status(item.get("workflow_status", ""))
+        timestamp_html = html.escape(timestamp or "unknown-time")
+        query_html = html.escape(query or "No query provided.")
+        outputs_html = html.escape(str(outputs))
+        st.markdown(
+            (
+                "<article class='cbx-history-timeline-card'>"
+                f"<div>{_history_status_pill_html(status)}</div>"
+                f"<p class='cbx-history-card-meta'>{timestamp_html}</p>"
+                f"<p class='cbx-history-card-query'>{query_html}</p>"
+                f"<p class='cbx-history-card-meta'>outputs: {outputs_html}</p>"
+                "</article>"
+            ),
+            unsafe_allow_html=True,
+        )
         st.markdown(
             f"- `{timestamp}` | status: `{status or 'unknown'}` | "
             f"outputs: `{outputs}` | query: {query}"

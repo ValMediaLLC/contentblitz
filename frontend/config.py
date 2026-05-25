@@ -12,7 +12,8 @@ class FrontendConfig:
     app_icon: str = "CB"
     page_title_suffix: str = "Phase 3 UI Shell"
     default_query_placeholder: str = (
-        "Write a short LinkedIn post about AI content workflows."
+        "Write a research-backed LinkedIn post about AI workflow"
+        " automation for marketing agencies."
     )
     default_outputs: Tuple[str, ...] = ("blog", "linkedin")
     available_outputs: Tuple[str, ...] = ("research", "blog", "linkedin", "image")

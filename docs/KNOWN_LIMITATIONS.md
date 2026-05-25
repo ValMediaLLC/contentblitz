@@ -16,6 +16,17 @@ Implications:
 - degraded provider responses can appear during transient outages
 - CI-safe coverage focuses on mocked deterministic tests
 
+## Performance Metrics Interpretation
+
+Performance fields are contract-oriented and safe for comparisons within deterministic test runs, but they are not benchmark-grade telemetry.
+
+Implications:
+
+- aggregate provider time can exceed wall-clock duration when calls run concurrently
+- local mocked timings reflect machine scheduler behavior and synthetic waits
+- timing totals should not be interpreted as guaranteed live-provider throughput
+- no release claims should be based only on mocked timing deltas
+
 ## Lightweight Guardrails (Not Full Moderation)
 
 Prompt-injection detection, output sanitization, citation validation, and export validation are deterministic and rule-based.
@@ -70,6 +81,16 @@ Implications:
 
 - live smoke checks are useful for manual operational validation
 - release safety is enforced primarily through unit/integration contract suites
+
+## Optional Live Performance Smoke Is Manual
+
+Performance smoke checks that use real providers are opt-in and manual.
+
+Implications:
+
+- live performance verification requires credentials, network availability, and explicit flags
+- results can vary by provider health, quota state, and region
+- mocked contract tests remain the default CI gate for performance metadata semantics
 
 ## LangSmith Tracing Is Optional and Credential-Gated
 

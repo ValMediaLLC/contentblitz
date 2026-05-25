@@ -46,8 +46,48 @@ from frontend.session import (
     set_status_messages,
 )
 
-_EMPTY_RESULT_PROMPT = "Run the workflow to view outputs."
 _WAITING_FOR_EVENT_MESSAGE = "Waiting for first workflow event..."
+_QUERY_INPUT_KEY = "cbx_query_input"
+_QUICK_START_KEY = "cbx_quick_start"
+_QUICK_START_PROMPTS: dict[str, str] = {
+    "Blog Article": (
+        "Write a research-backed blog article about AI workflow automation for "
+        "marketing teams. Include key trends, practical examples, and a clear "
+        "implementation checklist."
+    ),
+    "LinkedIn Post": (
+        "Write a concise LinkedIn post about how AI content workflows reduce "
+        "rework for marketing teams, with a strong hook and 4-5 relevant hashtags."
+    ),
+    "Research Report": (
+        "Produce a research report on 2026 AI content operations trends for B2B "
+        "companies, including market signals, risks, and recommended next steps."
+    ),
+    "Image Concepts": (
+        "Generate image concepts for a futuristic marketing campaign featuring "
+        "AI-powered content operations dashboards, cinematic lighting, and clean "
+        "brand styling."
+    ),
+    "Multi-Format Campaign": (
+        "Create a multi-format campaign package about AI-native marketing "
+        "workflows: a blog article, LinkedIn post, research summary, and image "
+        "concepts, plus export-ready Markdown and PDF outputs."
+    ),
+}
+_EMPTY_STATE_IDEAS: tuple[tuple[str, str], ...] = (
+    (
+        "Thought Leadership Launch",
+        "Blog + LinkedIn + export pack for an AI workflow operations point of view.",
+    ),
+    (
+        "Weekly Research Brief",
+        "Concise trend summary for marketing leaders with citations and action steps.",
+    ),
+    (
+        "Campaign Concept Sprint",
+        "Multi-format narrative with image concepts for a single campaign theme.",
+    ),
+)
 
 
 def _is_workflow_started_message(message: str) -> bool:
@@ -94,6 +134,7 @@ def _render_active_execution_state(
     execution_status: str,
     progress_events: list[dict[str, Any]],
     status_messages: list[str],
+    node_statuses: dict[str, str] | None = None,
 ) -> None:
     if container is not None:
         container.empty()
@@ -111,6 +152,8 @@ def _render_active_execution_state(
                 progress_events,
                 live_timers=True,
                 empty_message=_WAITING_FOR_EVENT_MESSAGE,
+                node_statuses=node_statuses or {},
+                show_full_orchestration_graph=True,
             )
             rendered_messages: set[str] = set()
             for message in status_messages:
@@ -153,21 +196,75 @@ def _extract_submission_options_from_result(
     }
 
 
-def render() -> None:
-    st.header("Run Workflow")
-    st.caption(
-        "Describe what you want generated, including blog, LinkedIn, research, "
-        "image, or export format if needed."
+def _set_quick_start_prompt_from_selection() -> None:
+    selected = st.session_state.get(_QUICK_START_KEY)
+    if not isinstance(selected, str):
+        return
+    prompt = _QUICK_START_PROMPTS.get(selected, "").strip()
+    if prompt:
+        st.session_state[_QUERY_INPUT_KEY] = prompt
+
+
+def _render_idle_examples() -> None:
+    cards = "".join(
+        (
+            "<article class='cbx-idle-example-card'>"
+            f"<p class='cbx-idle-example-title'>{title}</p>"
+            f"<p class='cbx-idle-example-copy'>{summary}</p>"
+            "</article>"
+        )
+        for title, summary in _EMPTY_STATE_IDEAS
+    )
+    st.markdown(
+        (
+            "<section class='cbx-idle-examples'>"
+            "<p class='cbx-idle-examples-title'>Recent workflow ideas</p>"
+            "<div class='cbx-idle-examples-grid'>"
+            f"{cards}"
+            "</div>"
+            "</section>"
+        ),
+        unsafe_allow_html=True,
     )
 
-    with st.container(border=True):
-        query = st.text_area(
-            "Prompt",
-            value="",
-            placeholder=FRONTEND_CONFIG.default_query_placeholder,
-            height=120,
+
+def render() -> None:
+    if _QUERY_INPUT_KEY not in st.session_state:
+        st.session_state[_QUERY_INPUT_KEY] = ""
+
+    with st.container(border=True, key="cbx_run_form_card"):
+        st.markdown(
+            (
+                "<p class='cbx-form-header'>Describe your content request</p>"
+                "<p class='cbx-form-helper'>"
+                "Generate blogs, LinkedIn posts, research reports, image concepts, "
+                "and export-ready deliverables."
+                "</p>"
+            ),
+            unsafe_allow_html=True,
         )
-        run_clicked = st.button("Run ContentBlitz", type="primary")
+        query = st.text_area(
+            "Describe your content request",
+            placeholder=FRONTEND_CONFIG.default_query_placeholder,
+            height=116,
+            key=_QUERY_INPUT_KEY,
+            label_visibility="collapsed",
+        )
+        st.pills(
+            "Quick-start suggestions",
+            options=list(_QUICK_START_PROMPTS.keys()),
+            selection_mode="single",
+            default=None,
+            key=_QUICK_START_KEY,
+            on_change=_set_quick_start_prompt_from_selection,
+            label_visibility="collapsed",
+            width="stretch",
+        )
+        run_clicked = st.button(
+            "Generate Content",
+            type="primary",
+            key="cbx_run_submit",
+        )
 
     if run_clicked:
         safe_query = str(query).strip()
@@ -193,6 +290,7 @@ def render() -> None:
                     execution_status="running",
                     progress_events=progress_events,
                     status_messages=get_status_messages(),
+                    node_statuses=node_statuses,
                 )
                 final_result: dict[str, object] = {}
                 event_queue: Queue[dict[str, Any]] = Queue()
@@ -267,6 +365,7 @@ def render() -> None:
                             execution_status="running",
                             progress_events=progress_events,
                             status_messages=get_status_messages(),
+                            node_statuses=node_statuses,
                         )
                         last_live_render_at = current_time
 
@@ -384,9 +483,10 @@ def render() -> None:
                 execution_status=execution_status,
                 progress_events=progress_events,
                 status_messages=get_status_messages(),
+                node_statuses=node_statuses,
             )
             return
-        st.info(_EMPTY_RESULT_PROMPT)
+        _render_idle_examples()
         return
 
     render_payload = build_render_payload(

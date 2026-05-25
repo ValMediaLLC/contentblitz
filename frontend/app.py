@@ -41,25 +41,9 @@ def main() -> None:
     apply_frontend_theme()
     initialize_session_state()
 
-    logo_col, heading_col = st.columns([1.0, 2.6], vertical_alignment="center")
-    with logo_col:
-        st.image(
-            str(PROJECT_ROOT / FRONTEND_CONFIG.logo_path),
-            use_container_width=True,
-        )
-    with heading_col:
-        st.markdown(
-            (
-                f"### {FRONTEND_CONFIG.app_title}\n"
-                f"<p class='cbx-hero-subtitle'>{FRONTEND_CONFIG.page_title_suffix}</p>"
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.logo(
+    st.image(
         str(PROJECT_ROOT / FRONTEND_CONFIG.logo_path),
-        icon_image=str(PROJECT_ROOT / FRONTEND_CONFIG.logo_icon_path),
-        size="large",
+        width=280,
     )
     render_router()
 
