@@ -22,4 +22,4 @@ jobs:
 
           git remote add hf https://ValCorp:$HF_TOKEN@huggingface.co/spaces/ValCorp/contentblitz
 
-          git push hf main
+          git push hf main:main --force
