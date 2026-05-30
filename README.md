@@ -35,6 +35,57 @@ ContentBlitz is a LangGraph-based multi-agent content orchestration system with 
 - Unit/integration tests are deterministic and non-live by default.
 - Performance summary and timing metadata are exposed through safe UI rendering from orchestration progress metadata.
 
+## Node Architecture
+
+```mermaid
+flowchart TD
+    START([START]) --> QH[query_handler_node]
+    QH --> CL[clarification_node]
+    QH --> IA[image_agent_node]
+    QH --> RA[research_agent_node]
+    QH --> CS[content_strategist_node]
+    QH --> EH
+
+    CL --> END_NODE([END])
+
+    RA --> CS
+    RA --> OA[output_assembler_node]
+    RA --> EH
+
+    CS --> BW[blog_writer_node]
+    CS --> LW[linkedin_writer_node]
+    CS --> IA
+    CS --> EH
+
+    BW --> QV[quality_validator_node]
+    LW --> QV
+    IA --> QV
+
+    QV --> RR[retry_router_node]
+    QV --> OA
+    QV --> EH
+
+    RR --> BW
+    RR --> LW
+    RR --> IA
+    RR --> OA
+
+    OA --> EX[export_node]
+    OA --> EH
+
+    EX --> END_NODE
+    EH[error_handler_node] --> END_NODE
+```
+
+### Current Application Flow
+
+- `query_handler_node` is the entry router for clarification, image, research, or strategist paths.
+- `research_agent_node` either continues to strategist or bypasses to assembler for research-only requests.
+- `content_strategist_node` fans out to `blog_writer_node`, `linkedin_writer_node`, and/or `image_agent_node`.
+- `quality_validator_node` routes either to `retry_router_node`, `output_assembler_node`, or `error_handler_node`.
+- `retry_router_node` loops targeted retries back to writer/image nodes, or returns to assembler.
+- `output_assembler_node` sends exportable output to `export_node`, with failures routed to `error_handler_node`.
+
 ## Setup
 
 ```bash
